@@ -1,0 +1,66 @@
+.editor-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.editor-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.editor-empty h1 {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.editor-empty .hint {
+  font-size: 12px;
+}
+
+.editor-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  min-height: 36px;
+  padding-right: 8px;
+}
+
+.editor-tab {
+  padding: 8px 14px;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.editor-tab.dirty {
+  font-style: italic;
+}
+
+.save-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 4px 10px;
+}
+
+.save-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.editor-host {
+  flex: 1;
+  min-height: 0;
+}
