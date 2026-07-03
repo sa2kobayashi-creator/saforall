@@ -1,0 +1,6 @@
+RewriteEngine On
+
+# 実在するファイル / ディレクトリはそのまま返す
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L,QSA]

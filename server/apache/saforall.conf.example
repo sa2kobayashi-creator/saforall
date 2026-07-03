@@ -1,0 +1,15 @@
+# XAMPP の Apache に追加する設定例
+# 1. この内容を C:\xampp\apache\conf\extra\httpd-saforall.conf などに保存
+# 2. C:\xampp\apache\conf\httpd.conf の末尾に次を追加:
+#    Include conf/extra/httpd-saforall.conf
+# 3. Apache を再起動
+#
+# パスは環境に合わせて変更してください。
+
+Alias /saforall "D:/Development/saforall/server/public"
+
+<Directory "D:/Development/saforall/server/public">
+    Options Indexes FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>

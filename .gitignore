@@ -27,6 +27,9 @@ Thumbs.db
 .env.*
 !.env.example
 
+# XAMPP / PHP local config
+server/config/database.php
+
 # TypeScript
 *.tsbuildinfo
 
