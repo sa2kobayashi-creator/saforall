@@ -10,6 +10,10 @@
 .chat-header {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .chat-header strong {
@@ -17,9 +21,41 @@
   margin-bottom: 4px;
 }
 
-.chat-context {
+.chat-context,
+.chat-session {
+  display: block;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.chat-session {
+  margin-top: 2px;
+}
+
+.chat-error {
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #2a1515;
+  color: var(--danger);
+  border: 1px solid #5a2a2a;
+}
+
+.chat-backend {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.chat-backend.ok {
+  background: #1f3d2a;
+  color: #9fdfb0;
+}
+
+.chat-backend.ng {
+  background: #3d3218;
+  color: #f0d48a;
 }
 
 .chat-messages {

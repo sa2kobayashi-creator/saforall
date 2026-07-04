@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { readFile, writeFile, readdir, stat } from 'fs/promises'
+import { apiRequest, checkHealth, streamChat } from './api'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -78,3 +79,26 @@ ipcMain.handle('fs:stat', async (_event, filePath: string) => {
     mtimeMs: info.mtimeMs
   }
 })
+
+ipcMain.handle('api:health', async () => checkHealth())
+
+ipcMain.handle(
+  'api:request',
+  async (
+    _event,
+    method: string,
+    path: string,
+    body?: unknown,
+    options?: { timeoutMs?: number }
+  ) => apiRequest(method, path, body, options)
+)
+
+ipcMain.handle(
+  'api:chatStream',
+  async (event, requestId: string, body: unknown) => {
+    await streamChat(body, (streamEvent) => {
+      event.sender.send('api:chatStream:event', { requestId, event: streamEvent })
+    })
+    return true
+  }
+)

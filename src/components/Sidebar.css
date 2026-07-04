@@ -64,6 +64,10 @@
   overflow: auto;
 }
 
+.file-list.nested {
+  padding: 0;
+}
+
 .file-item {
   width: 100%;
   display: flex;
@@ -76,7 +80,7 @@
   color: var(--text);
 }
 
-.file-item:hover:not(:disabled) {
+.file-item:hover {
   background: #2a2d2e;
 }
 
@@ -84,13 +88,18 @@
   background: #37373d;
 }
 
-.file-item:disabled {
-  cursor: default;
-  opacity: 0.85;
-}
-
 .file-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-meta {
+  padding: 2px 12px 2px 28px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.file-meta.error {
+  color: var(--danger);
 }

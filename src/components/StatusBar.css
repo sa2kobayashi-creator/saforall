@@ -1,16 +1,54 @@
 .status-bar {
   height: 24px;
-  background: #007acc;
   color: white;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 10px;
   font-size: 12px;
+}
+
+.status-bar.online {
+  background: #007acc;
+}
+
+.status-bar.offline {
+  background: #6b4f00;
 }
 
 .status-message {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+.status-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.backend-status {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.15);
+  color: inherit;
+  border-radius: 4px;
+  padding: 0 8px;
+  height: 18px;
+  line-height: 16px;
+}
+
+.backend-status:hover {
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.backend-status.ok {
+  border-color: rgba(180, 255, 180, 0.5);
+}
+
+.backend-status.ng {
+  border-color: rgba(255, 210, 120, 0.7);
 }

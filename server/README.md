@@ -73,6 +73,22 @@ http://localhost/saforall/api/health
 | --- | --- | --- |
 | GET | `/` または `/api` | サービス情報 |
 | GET | `/api/health` | 生存確認 + DB 接続確認 |
+| GET / PUT | `/api/settings` | 設定の取得・更新（API キー生値は返さない） |
+| GET / POST | `/api/workspaces` | 最近のワークスペース一覧・登録 |
+| GET / POST | `/api/chat/sessions` | 会話セッション一覧・作成 |
+| GET / POST | `/api/chat/sessions/{id}/messages` | メッセージ取得・追加 |
+| POST | `/api/ai/chat` | LLM プロキシ（一括応答） |
+| POST | `/api/ai/chat/stream` | LLM プロキシ（SSE ストリーミング） |
+
+### LLM 設定
+
+1. アプリの設定（⚙）または `PUT /api/settings` で次を保存する
+   - `llm.base_url`（例: `https://api.openai.com/v1`）
+   - `llm.model`（例: `gpt-4o-mini`）
+   - `llm.api_key`
+2. チャットから質問すると `POST /api/ai/chat/stream` が外部 LLM をストリーミング呼び出し、結果を MySQL に保存する
+
+OpenAI 互換 API（ローカル LLM の OpenAI 互換エンドポイントなど）も `base_url` を変えれば利用できます。
 
 ## ディレクトリ
 

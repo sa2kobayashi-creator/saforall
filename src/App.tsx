@@ -1,10 +1,11 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ActivityBar } from './components/ActivityBar'
 import { Sidebar } from './components/Sidebar'
 import { EditorPane } from './components/EditorPane'
 import { ChatPanel } from './components/ChatPanel'
+import { SettingsPanel } from './components/SettingsPanel'
 import { StatusBar } from './components/StatusBar'
-import type { OpenFile } from './types'
+import type { BackendStatus, OpenFile, WorkspaceRecord } from './types'
 import './App.css'
 
 function languageFromPath(filePath: string): string {
@@ -27,19 +28,77 @@ function languageFromPath(filePath: string): string {
   return map[ext ?? ''] ?? 'plaintext'
 }
 
+const initialBackend: BackendStatus = {
+  connected: false,
+  checking: true,
+  message: 'バックエンド確認中…',
+  baseUrl: ''
+}
+
 export default function App() {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
+  const [workspaceId, setWorkspaceId] = useState<number | null>(null)
   const [openFile, setOpenFile] = useState<OpenFile | null>(null)
   const [chatOpen, setChatOpen] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
+  const [backend, setBackend] = useState<BackendStatus>(initialBackend)
+
+  const checkBackend = useCallback(async () => {
+    setBackend((current) => ({ ...current, checking: true }))
+    try {
+      const result = await window.saforall.health()
+      setBackend({
+        connected: result.connected,
+        checking: false,
+        message: result.message,
+        baseUrl: result.baseUrl
+      })
+      if (!result.connected) {
+        setStatus((current) =>
+          current.startsWith('バックエンド') || current === 'フォルダを開いて始めましょう'
+            ? `${result.message}（編集は利用できます）`
+            : current
+        )
+      }
+    } catch (error) {
+      setBackend({
+        connected: false,
+        checking: false,
+        message: String(error),
+        baseUrl: ''
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    void checkBackend()
+    const timer = window.setInterval(() => {
+      void checkBackend()
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [checkBackend])
 
   const openWorkspace = useCallback(async () => {
     const path = await window.saforall.openDirectory()
     if (!path) return
     setWorkspacePath(path)
+    setWorkspaceId(null)
     setOpenFile(null)
     setStatus(`ワークスペース: ${path}`)
-  }, [])
+
+    if (!backend.connected) return
+
+    const result = await window.saforall.request<{ workspace: WorkspaceRecord }>(
+      'POST',
+      '/workspaces',
+      { path }
+    )
+    if (result.ok && result.data?.workspace) {
+      setWorkspaceId(Number(result.data.workspace.id))
+      setStatus(`ワークスペース: ${path}（DB #${result.data.workspace.id}）`)
+    }
+  }, [backend.connected])
 
   const openFileAt = useCallback(async (filePath: string) => {
     try {
@@ -78,8 +137,10 @@ export default function App() {
       <div className="app-body">
         <ActivityBar
           chatOpen={chatOpen}
+          settingsOpen={settingsOpen}
           onToggleChat={() => setChatOpen((v) => !v)}
           onOpenWorkspace={openWorkspace}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
         <Sidebar
           workspacePath={workspacePath}
@@ -94,9 +155,27 @@ export default function App() {
             onSave={saveFile}
           />
         </main>
-        {chatOpen && <ChatPanel file={openFile} />}
+        {chatOpen && (
+          <ChatPanel
+            file={openFile}
+            backendConnected={backend.connected}
+            workspaceId={workspaceId}
+          />
+        )}
       </div>
-      <StatusBar message={status} dirty={openFile?.dirty ?? false} />
+      <StatusBar
+        message={status}
+        dirty={openFile?.dirty ?? false}
+        backend={backend}
+        onRecheckBackend={() => {
+          void checkBackend()
+        }}
+      />
+      <SettingsPanel
+        open={settingsOpen}
+        backendConnected={backend.connected}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   )
 }

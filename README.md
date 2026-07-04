@@ -32,7 +32,10 @@ npm run dev
 1. XAMPP で **Apache** と **MySQL** を起動
 2. `server/sql/schema.sql` を phpMyAdmin などで実行
 3. Apache に `server/public` を公開（手順は [server/README.md](server/README.md)）
-4. ブラウザで確認: http://localhost/saforall/api/health
+4. ブラウザで確認: http://localhost:8081/saforall/api/health  
+   （Apache のポートが 80 の場合は `:8081` を外す）
+
+バックエンド URL は環境変数 `SAFORALL_API_BASE_URL` で変更できます（既定は上記）。
 
 ## スクリプト
 

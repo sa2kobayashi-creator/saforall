@@ -2,11 +2,19 @@ import './ActivityBar.css'
 
 type Props = {
   chatOpen: boolean
+  settingsOpen: boolean
   onToggleChat: () => void
   onOpenWorkspace: () => void
+  onOpenSettings: () => void
 }
 
-export function ActivityBar({ chatOpen, onToggleChat, onOpenWorkspace }: Props) {
+export function ActivityBar({
+  chatOpen,
+  settingsOpen,
+  onToggleChat,
+  onOpenWorkspace,
+  onOpenSettings
+}: Props) {
   return (
     <aside className="activity-bar" aria-label="アクティビティバー">
       <button
@@ -24,6 +32,14 @@ export function ActivityBar({ chatOpen, onToggleChat, onOpenWorkspace }: Props) 
         onClick={onToggleChat}
       >
         ✨
+      </button>
+      <button
+        type="button"
+        className={`activity-btn ${settingsOpen ? 'active' : ''}`}
+        title="設定"
+        onClick={onOpenSettings}
+      >
+        ⚙
       </button>
     </aside>
   )
