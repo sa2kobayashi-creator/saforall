@@ -10,6 +10,7 @@ type DirEntry = {
 type Props = {
   workspacePath: string | null
   activePath: string | null
+  width: number
   onOpenWorkspace: () => void
   onOpenFile: (path: string) => void
 }
@@ -96,6 +97,7 @@ function TreeNode({ entry, depth, activePath, onOpenFile }: TreeNodeProps) {
 export function Sidebar({
   workspacePath,
   activePath,
+  width,
   onOpenWorkspace,
   onOpenFile
 }: Props) {
@@ -131,7 +133,7 @@ export function Sidebar({
     : null
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ width }}>
       <div className="sidebar-header">
         <span>{workspaceName ?? 'EXPLORER'}</span>
         <button type="button" onClick={onOpenWorkspace} title="フォルダを開く">

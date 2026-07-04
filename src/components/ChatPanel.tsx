@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { MessageContent } from './MessageContent'
 import type { ChatMessage, ChatMessageRecord, ChatSessionRecord, OpenFile } from '../types'
 import './ChatPanel.css'
 
@@ -6,13 +7,15 @@ type Props = {
   file: OpenFile | null
   backendConnected: boolean
   workspaceId: number | null
+  width: number
+  onApplyCode: (code: string, pathHint?: string) => void
 }
 
 const welcomeMessage: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
   content:
-    'saforall へようこそ。設定で API キーを保存すると、AI がストリーミングで回答します。会話は MySQL に保存されます。'
+    'saforall へようこそ。AI のコードブロックには「適用」ボタンが出ます。アクティブなタブ、またはパス付きフェンス（例: ```ts src/app.ts）へ反映できます。'
 }
 
 function toChatMessage(row: ChatMessageRecord): ChatMessage {
@@ -23,7 +26,13 @@ function toChatMessage(row: ChatMessageRecord): ChatMessage {
   }
 }
 
-export function ChatPanel({ file, backendConnected, workspaceId }: Props) {
+export function ChatPanel({
+  file,
+  backendConnected,
+  workspaceId,
+  width,
+  onApplyCode
+}: Props) {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage])
   const [sessionId, setSessionId] = useState<number | null>(null)
@@ -297,7 +306,7 @@ export function ChatPanel({ file, backendConnected, workspaceId }: Props) {
   }
 
   return (
-    <aside className="chat-panel" aria-label="AI チャット">
+    <aside className="chat-panel" aria-label="AI チャット" style={{ width }}>
       <div className="chat-header">
         <div>
           <strong>AI</strong>
@@ -317,7 +326,15 @@ export function ChatPanel({ file, backendConnected, workspaceId }: Props) {
         {messages.map((message) => (
           <div key={message.id} className={`chat-bubble ${message.role}`}>
             <div className="chat-role">{message.role === 'user' ? 'You' : 'AI'}</div>
-            <div className="chat-content">{message.content}</div>
+            {message.role === 'assistant' ? (
+              <MessageContent
+                content={message.content}
+                showApply={message.id !== 'welcome'}
+                onApplyCode={onApplyCode}
+              />
+            ) : (
+              <div className="chat-content">{message.content}</div>
+            )}
           </div>
         ))}
         {thinking && (

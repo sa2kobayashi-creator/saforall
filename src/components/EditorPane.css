@@ -30,29 +30,90 @@
 
 .editor-tabs {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
+  gap: 8px;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   min-height: 36px;
   padding-right: 8px;
 }
 
+.editor-tab-list {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  min-width: 0;
+  flex: 1;
+}
+
 .editor-tab {
-  padding: 8px 14px;
+  position: relative;
+  display: flex;
+  align-items: center;
   border-right: 1px solid var(--border);
+  background: transparent;
+  flex-shrink: 0;
+  min-width: 88px;
+}
+
+.editor-tab.active {
   background: var(--bg);
 }
 
-.editor-tab.dirty {
+.editor-tab.dirty .editor-tab-label {
   font-style: italic;
 }
 
+.editor-tab-label {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 4px 8px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+
+.editor-tab-close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 4px 10px 4px 4px;
+  border-radius: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.editor-tab-close:hover {
+  background: #3a3a3a;
+  color: var(--text);
+}
+
+.editor-tab-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.editor-tab-resize:hover,
+.editor-tab:hover .editor-tab-resize {
+  background: rgba(0, 120, 212, 0.45);
+}
+
 .save-btn {
+  align-self: center;
   border: 1px solid var(--border);
   background: var(--bg);
   border-radius: 4px;
   padding: 4px 10px;
+  flex-shrink: 0;
 }
 
 .save-btn:hover {
