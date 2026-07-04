@@ -61,7 +61,7 @@ final class LlmClient
         $httpStatus = 0;
         $streamError = null;
 
-        curl_setopt_array($ch, [
+        $options = [
             CURLOPT_POST => true,
             CURLOPT_HTTPHEADER => [
                 'Content-Type: application/json',
@@ -117,7 +117,9 @@ final class LlmClient
                 }
                 return strlen($headerLine);
             },
-        ]);
+        ];
+
+        curl_setopt_array($ch, $options + self::sslOptions());
 
         $ok = curl_exec($ch);
         $errno = curl_errno($ch);
@@ -183,7 +185,7 @@ final class LlmClient
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 90,
             CURLOPT_CONNECTTIMEOUT => 10,
-        ]);
+        ] + self::sslOptions());
 
         $raw = curl_exec($ch);
         $errno = curl_errno($ch);
@@ -209,5 +211,22 @@ final class LlmClient
         }
 
         return $raw;
+    }
+
+    /** @return array<int, mixed> */
+    private static function sslOptions(): array
+    {
+        $caPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'certs' . DIRECTORY_SEPARATOR . 'cacert.pem';
+        if (!is_file($caPath)) {
+            throw new RuntimeException(
+                'CA 証明書が見つかりません: server/certs/cacert.pem を配置してください'
+            );
+        }
+
+        return [
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_CAINFO => $caPath,
+        ];
     }
 }

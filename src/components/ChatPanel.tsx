@@ -175,91 +175,122 @@ export function ChatPanel({ file, backendConnected, workspaceId }: Props) {
       const id = await ensureSession()
       if (id === null) return
 
+      const payload = {
+        session_id: id,
+        message: text,
+        context: file
+          ? {
+              path: file.path,
+              content: file.content,
+              language: file.language
+            }
+          : null
+      }
+
+      // preload は HMR されないため、古いプロセスでは chatStream が無いことがある
+      if (typeof window.saforall.chatStream !== 'function') {
+        const result = await window.saforall.request<{
+          user_message: ChatMessageRecord
+          assistant_message: ChatMessageRecord
+        }>('POST', '/ai/chat', payload, { timeoutMs: 120_000 })
+
+        if (!result.ok || !result.data) {
+          const message = result.error?.message ?? 'AI 応答に失敗しました'
+          setError(message)
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: `エラー: ${message}`
+            }
+          ])
+          return
+        }
+
+        setMessages((prev) => {
+          const withoutLocalUser = prev.filter((message) => message.id !== localUser.id)
+          return [
+            ...withoutLocalUser,
+            toChatMessage(result.data!.user_message),
+            toChatMessage(result.data!.assistant_message)
+          ]
+        })
+        return
+      }
+
       const streamAssistantId = `stream-${crypto.randomUUID()}`
       let sawAssistant = false
 
-      await window.saforall.chatStream(
-        {
-          session_id: id,
-          message: text,
-          context: file
-            ? {
-                path: file.path,
-                content: file.content,
-                language: file.language
-              }
-            : null
-        },
-        {
-          onEvent: (event) => {
-            if (event.type === 'user_message') {
-              setThinking(false)
-              const savedUser = toChatMessage(event.message as unknown as ChatMessageRecord)
-              setMessages((prev) =>
-                prev.map((message) =>
-                  message.id === localUser.id ? savedUser : message
-                )
+      await window.saforall.chatStream(payload, {
+        onEvent: (event) => {
+          if (event.type === 'user_message') {
+            setThinking(false)
+            const savedUser = toChatMessage(event.message as unknown as ChatMessageRecord)
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === localUser.id ? savedUser : message
               )
+            )
+            return
+          }
+
+          if (event.type === 'delta') {
+            setThinking(false)
+            if (!sawAssistant) {
+              sawAssistant = true
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: streamAssistantId,
+                  role: 'assistant',
+                  content: event.text
+                }
+              ])
               return
             }
 
-            if (event.type === 'delta') {
-              setThinking(false)
-              if (!sawAssistant) {
-                sawAssistant = true
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: streamAssistantId,
-                    role: 'assistant',
-                    content: event.text
-                  }
-                ])
-                return
-              }
-
-              setMessages((prev) =>
-                prev.map((message) =>
-                  message.id === streamAssistantId
-                    ? { ...message, content: message.content + event.text }
-                    : message
-                )
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === streamAssistantId
+                  ? { ...message, content: message.content + event.text }
+                  : message
               )
-              return
-            }
+            )
+            return
+          }
 
-            if (event.type === 'done') {
-              const savedAssistant = toChatMessage(
-                event.assistant_message as unknown as ChatMessageRecord
+          if (event.type === 'done') {
+            const savedAssistant = toChatMessage(
+              event.assistant_message as unknown as ChatMessageRecord
+            )
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === streamAssistantId ? savedAssistant : message
               )
-              setMessages((prev) =>
-                prev.map((message) =>
-                  message.id === streamAssistantId ? savedAssistant : message
-                )
-              )
-              return
-            }
+            )
+            return
+          }
 
-            if (event.type === 'error') {
-              setThinking(false)
-              setError(event.message)
-              setMessages((prev) => {
-                const withoutStream = prev.filter(
-                  (message) => message.id !== streamAssistantId
-                )
-                return [
-                  ...withoutStream,
-                  {
-                    id: crypto.randomUUID(),
-                    role: 'assistant',
-                    content: `エラー: ${event.message}`
-                  }
-                ]
-              })
-            }
+          if (event.type === 'error') {
+            setThinking(false)
+            setError(event.message)
+            setMessages((prev) => {
+              const withoutStream = prev.filter(
+                (message) => message.id !== streamAssistantId
+              )
+              return [
+                ...withoutStream,
+                {
+                  id: crypto.randomUUID(),
+                  role: 'assistant',
+                  content: `エラー: ${event.message}`
+                }
+              ]
+            })
           }
         }
-      )
+      })
     } finally {
       setThinking(false)
     }

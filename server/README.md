@@ -90,6 +90,17 @@ http://localhost/saforall/api/health
 
 OpenAI 互換 API（ローカル LLM の OpenAI 互換エンドポイントなど）も `base_url` を変えれば利用できます。
 
+### SSL 証明書エラーが出る場合
+
+XAMPP では次のエラーになることがあります。
+
+```text
+SSL certificate problem: unable to get local issuer certificate
+```
+
+`server/certs/cacert.pem` を同梱済みです。PHP はこれを自動参照します。  
+Apache を再起動したうえで、もう一度チャットしてください。
+
 ## ディレクトリ
 
 | パス | 内容 |
