@@ -1,7 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join } from 'path'
-import { readFile, writeFile, readdir, stat } from 'fs/promises'
+import { dirname, join } from 'path'
+import { mkdir, readFile, writeFile, readdir, stat } from 'fs/promises'
 import { apiRequest, checkHealth, streamChat } from './api'
+import {
+  createTerminalSession,
+  killAllTerminals,
+  killTerminal,
+  resizeTerminal,
+  writeTerminal
+} from './terminal'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -36,7 +43,12 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  killAllTerminals()
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  killAllTerminals()
 })
 
 ipcMain.handle('dialog:openDirectory', async () => {
@@ -52,6 +64,7 @@ ipcMain.handle('fs:readFile', async (_event, filePath: string) => {
 })
 
 ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {
+  await mkdir(dirname(filePath), { recursive: true })
   await writeFile(filePath, content, 'utf-8')
   return true
 })
@@ -102,3 +115,27 @@ ipcMain.handle(
     return true
   }
 )
+
+ipcMain.handle(
+  'terminal:create',
+  async (_event, options?: { cwd?: string; cols?: number; rows?: number }) =>
+    createTerminalSession(options?.cwd, options?.cols, options?.rows)
+)
+
+ipcMain.handle('terminal:write', async (_event, id: string, data: string) => {
+  writeTerminal(id, data)
+  return true
+})
+
+ipcMain.handle(
+  'terminal:resize',
+  async (_event, id: string, cols: number, rows: number) => {
+    resizeTerminal(id, cols, rows)
+    return true
+  }
+)
+
+ipcMain.handle('terminal:kill', async (_event, id: string) => {
+  killTerminal(id)
+  return true
+})

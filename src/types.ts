@@ -11,6 +11,14 @@ export type ChatMessage = {
   content: string
 }
 
+/** Ask: 都度確認 / Agent: コード・コマンドを自動適用・実行 */
+export type ChatMode = 'ask' | 'agent'
+
+export type ApplyCodeOptions = {
+  /** true のとき確認ダイアログやパス入力を出さず自動適用 */
+  auto?: boolean
+}
+
 export type BackendStatus = {
   connected: boolean
   checking: boolean

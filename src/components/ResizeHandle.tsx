@@ -2,21 +2,22 @@ import { useEffect, useRef, useState } from 'react'
 import './ResizeHandle.css'
 
 type Props = {
-  direction: 'horizontal'
+  direction: 'horizontal' | 'vertical'
   onResize: (delta: number) => void
   title?: string
 }
 
 export function ResizeHandle({ direction, onResize, title }: Props) {
   const [dragging, setDragging] = useState(false)
-  const lastX = useRef(0)
+  const lastPos = useRef(0)
 
   useEffect(() => {
     if (!dragging) return
 
     const onMove = (event: MouseEvent) => {
-      const delta = event.clientX - lastX.current
-      lastX.current = event.clientX
+      const current = direction === 'horizontal' ? event.clientX : event.clientY
+      const delta = current - lastPos.current
+      lastPos.current = current
       if (delta !== 0) onResize(delta)
     }
 
@@ -24,7 +25,8 @@ export function ResizeHandle({ direction, onResize, title }: Props) {
 
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-    document.body.style.cursor = 'col-resize'
+    document.body.style.cursor =
+      direction === 'horizontal' ? 'col-resize' : 'row-resize'
     document.body.style.userSelect = 'none'
 
     return () => {
@@ -33,7 +35,7 @@ export function ResizeHandle({ direction, onResize, title }: Props) {
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
-  }, [dragging, onResize])
+  }, [dragging, direction, onResize])
 
   return (
     <div
@@ -41,7 +43,8 @@ export function ResizeHandle({ direction, onResize, title }: Props) {
       title={title}
       onMouseDown={(event) => {
         event.preventDefault()
-        lastX.current = event.clientX
+        lastPos.current =
+          direction === 'horizontal' ? event.clientX : event.clientY
         setDragging(true)
       }}
     />

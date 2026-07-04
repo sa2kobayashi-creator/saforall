@@ -16,7 +16,27 @@
   right: -2px;
 }
 
+.resize-handle.vertical {
+  height: 4px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: transparent;
+  position: relative;
+  z-index: 5;
+}
+
+.resize-handle.vertical::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2px;
+  bottom: -2px;
+}
+
 .resize-handle.horizontal:hover,
-.resize-handle.horizontal.dragging {
+.resize-handle.horizontal.dragging,
+.resize-handle.vertical:hover,
+.resize-handle.vertical.dragging {
   background: var(--accent);
 }

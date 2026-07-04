@@ -90,6 +90,40 @@ const api = {
         resolve()
       })
     })
+  },
+  createTerminal: (options?: {
+    cwd?: string
+    cols?: number
+    rows?: number
+  }): Promise<{ id: string; backend: 'node-pty' | 'child_process' }> =>
+    ipcRenderer.invoke('terminal:create', options),
+  writeTerminal: (id: string, data: string): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:write', id, data),
+  resizeTerminal: (id: string, cols: number, rows: number): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:resize', id, cols, rows),
+  killTerminal: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:kill', id),
+  onTerminalData: (callback: (payload: { id: string; data: string }) => void) => {
+    const listener = (
+      _event: unknown,
+      payload: { id: string; data: string }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('terminal:data', listener)
+    return () => ipcRenderer.removeListener('terminal:data', listener)
+  },
+  onTerminalExit: (
+    callback: (payload: { id: string; exitCode: number }) => void
+  ) => {
+    const listener = (
+      _event: unknown,
+      payload: { id: string; exitCode: number }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('terminal:exit', listener)
+    return () => ipcRenderer.removeListener('terminal:exit', listener)
   }
 }
 

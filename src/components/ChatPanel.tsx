@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { ConfirmDialog } from './ConfirmDialog'
 import { MessageContent } from './MessageContent'
-import type { ChatMessage, ChatMessageRecord, ChatSessionRecord, OpenFile } from '../types'
+import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
+import type {
+  ApplyCodeOptions,
+  ChatMessage,
+  ChatMessageRecord,
+  ChatMode,
+  ChatSessionRecord,
+  OpenFile
+} from '../types'
 import './ChatPanel.css'
 
 type Props = {
@@ -8,14 +17,19 @@ type Props = {
   backendConnected: boolean
   workspaceId: number | null
   width: number
-  onApplyCode: (code: string, pathHint?: string) => void
+  onApplyCode: (
+    code: string,
+    pathHint?: string,
+    language?: string,
+    options?: ApplyCodeOptions
+  ) => void | Promise<void>
 }
 
 const welcomeMessage: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
   content:
-    'saforall へようこそ。AI のコードブロックには「適用」ボタンが出ます。アクティブなタブ、またはパス付きフェンス（例: ```ts src/app.ts）へ反映できます。'
+    'Ask モードは適用・実行の前に確認します。Agent モードは応答後にコード適用とコマンド実行を自動で行います。'
 }
 
 function toChatMessage(row: ChatMessageRecord): ChatMessage {
@@ -24,6 +38,11 @@ function toChatMessage(row: ChatMessageRecord): ChatMessage {
     role: row.role,
     content: row.content
   }
+}
+
+function loadMode(): ChatMode {
+  const saved = window.localStorage.getItem('saforall-chat-mode')
+  return saved === 'agent' ? 'agent' : 'ask'
 }
 
 export function ChatPanel({
@@ -39,11 +58,64 @@ export function ChatPanel({
   const [loading, setLoading] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [mode, setMode] = useState<ChatMode>(loadMode)
+  const [autoAppliedIds, setAutoAppliedIds] = useState<Record<string, boolean>>({})
+  const [pendingAction, setPendingAction] = useState<{
+    code: string
+    pathHint?: string
+    language?: string
+    kind: 'run' | 'apply'
+  } | null>(null)
+
+  const modeRef = useRef(mode)
+  modeRef.current = mode
 
   const contextLabel = useMemo(() => {
     if (!file) return 'コンテキストなし'
     return file.path.split(/[/\\]/).pop() ?? file.path
   }, [file])
+
+  const changeMode = (next: ChatMode) => {
+    setMode(next)
+    window.localStorage.setItem('saforall-chat-mode', next)
+  }
+
+  const runAgentActions = useCallback(
+    async (messageId: string, content: string) => {
+      if (modeRef.current !== 'agent') return
+
+      const parts = parseMessageParts(content)
+      let count = 0
+      for (const part of parts) {
+        if (part.type !== 'code') continue
+        count += 1
+        await onApplyCode(part.code, part.pathHint, part.language, { auto: true })
+        await new Promise((resolve) => window.setTimeout(resolve, 350))
+      }
+
+      if (count > 0) {
+        setAutoAppliedIds((current) => ({ ...current, [messageId]: true }))
+      }
+    },
+    [onApplyCode]
+  )
+
+  const requestApply = useCallback(
+    (code: string, pathHint?: string, language?: string) => {
+      if (modeRef.current === 'agent') {
+        void onApplyCode(code, pathHint, language, { auto: true })
+        return
+      }
+
+      setPendingAction({
+        code,
+        pathHint,
+        language,
+        kind: isShellLanguage(language) ? 'run' : 'apply'
+      })
+    },
+    [onApplyCode]
+  )
 
   const ensureSession = useCallback(async (): Promise<number | null> => {
     if (!backendConnected) return null
@@ -196,7 +268,6 @@ export function ChatPanel({
           : null
       }
 
-      // preload は HMR されないため、古いプロセスでは chatStream が無いことがある
       if (typeof window.saforall.chatStream !== 'function') {
         const result = await window.saforall.request<{
           user_message: ChatMessageRecord
@@ -217,19 +288,23 @@ export function ChatPanel({
           return
         }
 
+        const assistant = toChatMessage(result.data.assistant_message)
         setMessages((prev) => {
           const withoutLocalUser = prev.filter((message) => message.id !== localUser.id)
           return [
             ...withoutLocalUser,
             toChatMessage(result.data!.user_message),
-            toChatMessage(result.data!.assistant_message)
+            assistant
           ]
         })
+        await runAgentActions(assistant.id, assistant.content)
         return
       }
 
       const streamAssistantId = `stream-${crypto.randomUUID()}`
       let sawAssistant = false
+      let finalAssistantId: string | null = null
+      let finalAssistantContent: string | null = null
 
       await window.saforall.chatStream(payload, {
         onEvent: (event) => {
@@ -273,6 +348,8 @@ export function ChatPanel({
             const savedAssistant = toChatMessage(
               event.assistant_message as unknown as ChatMessageRecord
             )
+            finalAssistantId = savedAssistant.id
+            finalAssistantContent = savedAssistant.content
             setMessages((prev) =>
               prev.map((message) =>
                 message.id === streamAssistantId ? savedAssistant : message
@@ -300,6 +377,10 @@ export function ChatPanel({
           }
         }
       })
+
+      if (finalAssistantId && finalAssistantContent) {
+        await runAgentActions(finalAssistantId, finalAssistantContent)
+      }
     } finally {
       setThinking(false)
     }
@@ -315,9 +396,35 @@ export function ChatPanel({
             <span className="chat-session">session #{sessionId}</span>
           )}
         </div>
-        <span className={`chat-backend ${backendConnected ? 'ok' : 'ng'}`}>
-          {backendConnected ? 'API 接続済み' : 'API 未接続'}
-        </span>
+        <div className="chat-header-right">
+          <div className="mode-switch" role="group" aria-label="チャットモード">
+            <button
+              type="button"
+              className={mode === 'ask' ? 'active' : ''}
+              onClick={() => changeMode('ask')}
+              title="適用・実行の前に確認します"
+            >
+              Ask
+            </button>
+            <button
+              type="button"
+              className={mode === 'agent' ? 'active' : ''}
+              onClick={() => changeMode('agent')}
+              title="応答後にコード適用とコマンド実行を自動で行います"
+            >
+              Agent
+            </button>
+          </div>
+          <span className={`chat-backend ${backendConnected ? 'ok' : 'ng'}`}>
+            {backendConnected ? 'API 接続済み' : 'API 未接続'}
+          </span>
+        </div>
+      </div>
+
+      <div className={`mode-banner ${mode}`}>
+        {mode === 'ask'
+          ? 'Ask: 適用 / 実行のたびに確認します'
+          : 'Agent: 応答に含まれるコードとコマンドを自動で適用・実行します'}
       </div>
 
       {error && <div className="chat-error">{error}</div>}
@@ -330,7 +437,9 @@ export function ChatPanel({
               <MessageContent
                 content={message.content}
                 showApply={message.id !== 'welcome'}
-                onApplyCode={onApplyCode}
+                mode={mode}
+                autoApplied={autoAppliedIds[message.id] === true}
+                onApplyCode={requestApply}
               />
             ) : (
               <div className="chat-content">{message.content}</div>
@@ -350,7 +459,13 @@ export function ChatPanel({
           value={input}
           onChange={(event) => setInput(event.target.value)}
           placeholder={
-            thinking ? '応答待ち…' : loading ? '履歴読み込み中…' : 'コードについて質問する…'
+            thinking
+              ? '応答待ち…'
+              : loading
+                ? '履歴読み込み中…'
+                : mode === 'agent'
+                  ? 'Agent に依頼する…'
+                  : 'コードについて質問する…'
           }
           rows={3}
           disabled={thinking || loading}
@@ -365,6 +480,26 @@ export function ChatPanel({
           送信
         </button>
       </form>
+
+      <ConfirmDialog
+        open={pendingAction !== null}
+        title={pendingAction?.kind === 'run' ? 'コマンドを実行しますか？' : 'コードを適用しますか？'}
+        message={
+          pendingAction
+            ? pendingAction.kind === 'run'
+              ? `次のコマンドをターミナルで実行します。\n\n${pendingAction.code}`
+              : `次のコードをファイルに適用します。\n${pendingAction.pathHint ? `パス: ${pendingAction.pathHint}\n` : ''}\n${pendingAction.code.slice(0, 400)}${pendingAction.code.length > 400 ? '…' : ''}`
+            : ''
+        }
+        confirmLabel={pendingAction?.kind === 'run' ? '実行する' : '適用する'}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={() => {
+          if (!pendingAction) return
+          const action = pendingAction
+          setPendingAction(null)
+          void onApplyCode(action.code, action.pathHint, action.language)
+        }}
+      />
     </aside>
   )
 }

@@ -92,6 +92,11 @@ final class ChatService
             'あなたは saforall という AI コードエディタのアシスタントです。',
             '簡潔で正確に、コードに即して日本語で答えてください。',
             '必要ならコードブロックを使ってください。',
+            '実行環境は Windows + PowerShell です。apt-get / sudo / pip / flask は使わないでください。',
+            'このリポジトリの ToDo サンプルは Node.js (Express) です。起動は todo-app で npm start、URL は http://localhost:3000 です。',
+            'example.com や github.com/username などのプレースホルダ URL は使わないでください。',
+            'シェルコマンドのコードブロックに $ プロンプトを付けないでください。',
+            'ファイル用コードブロックにはパスを付けてください（例: ```javascript todo-app/index.js）。',
         ];
 
         $context = $body['context'] ?? null;

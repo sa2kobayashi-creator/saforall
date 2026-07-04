@@ -1,13 +1,22 @@
-import { parseMessageParts } from '../lib/codeBlocks'
+import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
+import type { ChatMode } from '../types'
 import './MessageContent.css'
 
 type Props = {
   content: string
   showApply: boolean
-  onApplyCode: (code: string, pathHint?: string) => void
+  mode: ChatMode
+  autoApplied?: boolean
+  onApplyCode: (code: string, pathHint?: string, language?: string) => void
 }
 
-export function MessageContent({ content, showApply, onApplyCode }: Props) {
+export function MessageContent({
+  content,
+  showApply,
+  mode,
+  autoApplied = false,
+  onApplyCode
+}: Props) {
   const parts = parseMessageParts(content)
 
   return (
@@ -22,25 +31,36 @@ export function MessageContent({ content, showApply, onApplyCode }: Props) {
           )
         }
 
+        const shell = isShellLanguage(part.language)
+        const actionLabel = shell ? '実行' : '適用'
+        const actionTitle =
+          mode === 'ask'
+            ? shell
+              ? '確認してからターミナルで実行'
+              : '確認してからファイルに適用'
+            : shell
+              ? 'ターミナルでコマンドを実行'
+              : part.pathHint
+                ? `${part.pathHint} に保存して適用`
+                : 'ファイルに保存して適用'
+
         return (
           <div key={`code-${index}`} className="code-block">
             <div className="code-block-header">
               <span className="code-block-meta">
                 {part.language}
                 {part.pathHint ? ` · ${part.pathHint}` : ''}
+                {shell ? ' · コマンド' : ''}
+                {autoApplied ? ' · 自動適用済み' : ''}
               </span>
               {showApply && (
                 <button
                   type="button"
-                  className="apply-btn"
-                  onClick={() => onApplyCode(part.code, part.pathHint)}
-                  title={
-                    part.pathHint
-                      ? `${part.pathHint} に適用`
-                      : 'アクティブなファイルに適用'
-                  }
+                  className={`apply-btn ${shell ? 'run' : ''}`}
+                  onClick={() => onApplyCode(part.code, part.pathHint, part.language)}
+                  title={actionTitle}
                 >
-                  適用
+                  {mode === 'ask' ? `${actionLabel}…` : actionLabel}
                 </button>
               )}
             </div>

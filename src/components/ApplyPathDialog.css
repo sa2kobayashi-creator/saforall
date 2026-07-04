@@ -1,0 +1,67 @@
+.apply-path-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+}
+
+.apply-path-dialog {
+  width: min(440px, calc(100% - 32px));
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.apply-path-dialog h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.apply-path-dialog p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.apply-path-dialog input {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 10px;
+}
+
+.apply-path-dialog input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.apply-path-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.apply-path-actions button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+
+.apply-path-actions .primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.apply-path-actions .primary:disabled {
+  opacity: 0.5;
+}

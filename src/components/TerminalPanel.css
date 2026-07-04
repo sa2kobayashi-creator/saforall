@@ -1,0 +1,77 @@
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+  background: #0c0c0c;
+  border-top: 1px solid var(--border);
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  background: #181818;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.terminal-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.terminal-title strong {
+  font-size: 12px;
+}
+
+.terminal-title span {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.terminal-actions button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.terminal-actions button:hover {
+  border-color: var(--accent);
+}
+
+.terminal-error {
+  padding: 4px 8px;
+  color: var(--danger);
+  background: #2a1515;
+  font-size: 12px;
+}
+
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 8px 8px;
+}
+
+.terminal-host .xterm {
+  height: 100%;
+}
+
+.terminal-host .xterm-viewport {
+  overflow-y: auto !important;
+}

@@ -48,6 +48,12 @@
   filter: brightness(1.1);
 }
 
+.apply-btn.run {
+  border-color: #3d9a5f;
+  background: #1f3d2a;
+  color: #9fdfb0;
+}
+
 .code-block-body {
   margin: 0;
   padding: 10px;

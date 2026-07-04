@@ -1,4 +1,5 @@
 .chat-panel {
+  position: relative;
   background: var(--bg-chat);
   border-left: 1px solid var(--border);
   display: flex;
@@ -9,12 +10,55 @@
 }
 
 .chat-header {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+}
+
+.chat-header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.mode-switch button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 3px 10px;
+  font-size: 11px;
+}
+
+.mode-switch button.active {
+  background: var(--accent-soft);
+  color: #d7ecff;
+}
+
+.mode-banner {
+  padding: 6px 12px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mode-banner.ask {
+  background: #2a2418;
+  color: #f0d48a;
+}
+
+.mode-banner.agent {
+  background: #1a2a22;
+  color: #9fdfb0;
 }
 
 .chat-header strong {

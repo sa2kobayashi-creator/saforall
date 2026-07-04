@@ -6,9 +6,24 @@ import { ChatPanel } from './components/ChatPanel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { StatusBar } from './components/StatusBar'
 import { ResizeHandle } from './components/ResizeHandle'
-import { isAbsolutePath, joinPath } from './lib/codeBlocks'
+import { TerminalPanel } from './components/TerminalPanel'
+import { ApplyPathDialog } from './components/ApplyPathDialog'
+import {
+  defaultFileName,
+  formatCommandForTerminal,
+  isAbsolutePath,
+  isSafeAutoShellCommand,
+  isShellLanguage,
+  joinPath,
+  shouldAppendToFile
+} from './lib/codeBlocks'
 import { languageFromPath } from './lib/language'
-import type { BackendStatus, OpenFile, WorkspaceRecord } from './types'
+import type {
+  ApplyCodeOptions,
+  BackendStatus,
+  OpenFile,
+  WorkspaceRecord
+} from './types'
 import './App.css'
 
 const initialBackend: BackendStatus = {
@@ -25,10 +40,19 @@ export default function App() {
   const [activePath, setActivePath] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [terminalOpen, setTerminalOpen] = useState(false)
+  const [pendingCommand, setPendingCommand] = useState<string | null>(null)
+  const [applyDialog, setApplyDialog] = useState<{
+    code: string
+    language?: string
+    defaultPath: string
+  } | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
   const [sidebarWidth, setSidebarWidth] = useState(260)
   const [chatWidth, setChatWidth] = useState(340)
+  const [terminalHeight, setTerminalHeight] = useState(220)
   const [tabWidths, setTabWidths] = useState<Record<string, number>>({})
 
   const activeFile = useMemo(
@@ -177,51 +201,171 @@ export default function App() {
     [tabs, activePath]
   )
 
-  const applyCode = useCallback(
-    (code: string, pathHint?: string) => {
-      let targetPath = activePath
+  const showNotice = useCallback((message: string) => {
+    setNotice(message)
+    setStatus(message)
+    window.setTimeout(() => {
+      setNotice((current) => (current === message ? null : current))
+    }, 4000)
+  }, [])
 
-      if (pathHint) {
-        if (isAbsolutePath(pathHint)) {
-          targetPath = pathHint
-        } else if (workspacePath) {
-          targetPath = joinPath(workspacePath, pathHint)
-        } else {
-          setStatus('相対パスを適用するにはワークスペースを開いてください')
-          return
-        }
-      }
-
-      if (!targetPath) {
-        setStatus('適用先がありません。ファイルを開くか、コードブロックにパスを付けてください')
+  const runCommand = useCallback(
+    (code: string, options?: ApplyCodeOptions) => {
+      const command = formatCommandForTerminal(code)
+      if (!command.trim()) {
+        showNotice(
+          options?.auto
+            ? 'Agent: 実行できないコマンドのためスキップしました'
+            : '実行するコマンドが空です'
+        )
         return
       }
 
+      // Agent 自動実行は npm/node など安全なコマンドのみ
+      if (options?.auto && !isSafeAutoShellCommand(command)) {
+        showNotice(
+          `Agent: 安全のため自動実行しませんでした（Ask で手動実行可）: ${command.slice(0, 60)}`
+        )
+        return
+      }
+
+      setTerminalOpen(true)
+      setPendingCommand(command)
+      showNotice('ターミナルでコマンドを実行します…')
+    },
+    [showNotice]
+  )
+
+  const writeCodeToFile = useCallback(
+    async (targetPath: string, code: string) => {
+      let existing = ''
+      try {
+        existing = await window.saforall.readFile(targetPath)
+      } catch {
+        existing = ''
+      }
+
+      const append = shouldAppendToFile(existing, code)
+      const content = append
+        ? `${existing.replace(/\s*$/, '')}\n\n${code}\n`
+        : code
+
+      await window.saforall.writeFile(targetPath, content)
+      const next: OpenFile = {
+        path: targetPath,
+        content,
+        language: languageFromPath(targetPath),
+        dirty: false
+      }
       setTabs((current) => {
         const exists = current.some((tab) => tab.path === targetPath)
         if (exists) {
-          return current.map((tab) =>
-            tab.path === targetPath
-              ? { ...tab, content: code, dirty: true }
-              : tab
-          )
+          return current.map((tab) => (tab.path === targetPath ? next : tab))
         }
-
-        return [
-          ...current,
-          {
-            path: targetPath,
-            content: code,
-            language: languageFromPath(targetPath),
-            dirty: true
-          }
-        ]
+        return [...current, next]
       })
       setActivePath(targetPath)
-      setStatus(`コードを適用しました: ${targetPath}（未保存）`)
+      showNotice(
+        append
+          ? `追記して保存しました: ${targetPath}`
+          : `ファイルに保存しました: ${targetPath}`
+      )
     },
-    [activePath, workspacePath]
+    [showNotice]
   )
+
+  const resolveDefaultRelativePath = useCallback(
+    (language?: string) => {
+      if (workspacePath && /todo-app$/i.test(workspacePath.replace(/[\\/]+$/, ''))) {
+        return defaultFileName(language)
+      }
+      return `todo-app/${defaultFileName(language)}`
+    },
+    [workspacePath]
+  )
+
+  const applyCode = useCallback(
+    async (
+      code: string,
+      pathHint?: string,
+      language?: string,
+      options?: ApplyCodeOptions
+    ) => {
+      const auto = options?.auto === true
+
+      if (isShellLanguage(language)) {
+        runCommand(code, options)
+        return
+      }
+
+      if (pathHint) {
+        if (!workspacePath && !isAbsolutePath(pathHint)) {
+          showNotice('相対パスを適用するには、先にフォルダを開いてください')
+          return
+        }
+        const targetPath = isAbsolutePath(pathHint)
+          ? pathHint
+          : joinPath(workspacePath!, pathHint)
+        try {
+          await writeCodeToFile(targetPath, code)
+        } catch (error) {
+          showNotice(`適用失敗: ${String(error)}`)
+        }
+        return
+      }
+
+      if (activePath) {
+        try {
+          await writeCodeToFile(activePath, code)
+        } catch (error) {
+          showNotice(`適用失敗: ${String(error)}`)
+        }
+        return
+      }
+
+      if (!workspacePath) {
+        showNotice('先に左の「フォルダを開く」でワークスペースを選んでください')
+        return
+      }
+
+      const suggested = resolveDefaultRelativePath(language)
+
+      // Agent モードはダイアログを出さず既定パスへ自動保存
+      if (auto) {
+        try {
+          await writeCodeToFile(joinPath(workspacePath, suggested), code)
+        } catch (error) {
+          showNotice(`自動適用失敗: ${String(error)}`)
+        }
+        return
+      }
+
+      setApplyDialog({
+        code,
+        language,
+        defaultPath: suggested
+      })
+    },
+    [
+      activePath,
+      workspacePath,
+      runCommand,
+      writeCodeToFile,
+      showNotice,
+      resolveDefaultRelativePath
+    ]
+  )
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === '`') {
+        event.preventDefault()
+        setTerminalOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   return (
     <div className="app-shell">
@@ -229,9 +373,11 @@ export default function App() {
         <ActivityBar
           chatOpen={chatOpen}
           settingsOpen={settingsOpen}
+          terminalOpen={terminalOpen}
           onToggleChat={() => setChatOpen((v) => !v)}
           onOpenWorkspace={openWorkspace}
           onOpenSettings={() => setSettingsOpen(true)}
+          onToggleTerminal={() => setTerminalOpen((open) => !open)}
         />
         <Sidebar
           workspacePath={workspacePath}
@@ -248,21 +394,44 @@ export default function App() {
           }}
         />
         <main className="main-pane">
-          <EditorPane
-            tabs={tabs}
-            activePath={activePath}
-            tabWidths={tabWidths}
-            onSelectTab={(path) => {
-              setActivePath(path)
-              setStatus(path)
-            }}
-            onCloseTab={closeTab}
-            onResizeTab={(path, width) => {
-              setTabWidths((current) => ({ ...current, [path]: width }))
-            }}
-            onChange={updateContent}
-            onSave={saveFile}
-          />
+          <div className="editor-area">
+            <EditorPane
+              tabs={tabs}
+              activePath={activePath}
+              tabWidths={tabWidths}
+              onSelectTab={(path) => {
+                setActivePath(path)
+                setStatus(path)
+              }}
+              onCloseTab={closeTab}
+              onResizeTab={(path, width) => {
+                setTabWidths((current) => ({ ...current, [path]: width }))
+              }}
+              onChange={updateContent}
+              onSave={saveFile}
+            />
+          </div>
+          {terminalOpen && (
+            <>
+              <ResizeHandle
+                direction="vertical"
+                title="ターミナルの高さを変更"
+                onResize={(delta) => {
+                  setTerminalHeight((height) =>
+                    Math.min(500, Math.max(120, height - delta))
+                  )
+                }}
+              />
+              <TerminalPanel
+                open={terminalOpen}
+                height={terminalHeight}
+                cwd={workspacePath}
+                pendingCommand={pendingCommand}
+                onCommandSent={() => setPendingCommand(null)}
+                onClose={() => setTerminalOpen(false)}
+              />
+            </>
+          )}
         </main>
         {chatOpen && (
           <>
@@ -297,6 +466,26 @@ export default function App() {
         backendConnected={backend.connected}
         onClose={() => setSettingsOpen(false)}
       />
+      <ApplyPathDialog
+        open={applyDialog !== null}
+        defaultPath={applyDialog?.defaultPath ?? 'todo-app/index.js'}
+        onCancel={() => {
+          setApplyDialog(null)
+          showNotice('適用をキャンセルしました')
+        }}
+        onConfirm={(relativePath) => {
+          if (!applyDialog || !workspacePath) return
+          const targetPath = isAbsolutePath(relativePath)
+            ? relativePath
+            : joinPath(workspacePath, relativePath)
+          const { code } = applyDialog
+          setApplyDialog(null)
+          void writeCodeToFile(targetPath, code).catch((error) => {
+            showNotice(`適用失敗: ${String(error)}`)
+          })
+        }}
+      />
+      {notice && <div className="app-notice">{notice}</div>}
     </div>
   )
 }
