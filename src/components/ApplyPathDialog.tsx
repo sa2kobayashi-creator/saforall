@@ -33,7 +33,7 @@ export function ApplyPathDialog({ open, defaultPath, onCancel, onConfirm }: Prop
           autoFocus
           value={path}
           onChange={(event) => setPath(event.target.value)}
-          placeholder="todo-app/index.js"
+          placeholder="index.js"
         />
         <div className="apply-path-actions">
           <button type="button" onClick={onCancel}>

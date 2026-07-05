@@ -275,13 +275,8 @@ export default function App() {
   )
 
   const resolveDefaultRelativePath = useCallback(
-    (language?: string) => {
-      if (workspacePath && /todo-app$/i.test(workspacePath.replace(/[\\/]+$/, ''))) {
-        return defaultFileName(language)
-      }
-      return `todo-app/${defaultFileName(language)}`
-    },
-    [workspacePath]
+    (language?: string) => defaultFileName(language),
+    []
   )
 
   const applyCode = useCallback(
@@ -468,7 +463,7 @@ export default function App() {
       />
       <ApplyPathDialog
         open={applyDialog !== null}
-        defaultPath={applyDialog?.defaultPath ?? 'todo-app/index.js'}
+        defaultPath={applyDialog?.defaultPath ?? 'index.js'}
         onCancel={() => {
           setApplyDialog(null)
           showNotice('適用をキャンセルしました')
