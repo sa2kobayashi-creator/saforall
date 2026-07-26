@@ -1,4 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import {
+  DEFAULT_LLM_MODEL,
+  LLM_MODEL_OPTIONS,
+  isKnownLlmModel
+} from '../lib/llmModels'
 import './SettingsPanel.css'
 
 type Props = {
@@ -9,13 +14,18 @@ type Props = {
 
 type SettingsMap = Record<string, string | boolean>
 
+const CUSTOM_VALUE = '__custom__'
+
 export function SettingsPanel({ open, backendConnected, onClose }: Props) {
   const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1')
-  const [model, setModel] = useState('gpt-4o-mini')
+  const [model, setModel] = useState(DEFAULT_LLM_MODEL)
+  const [useCustomModel, setUseCustomModel] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [apiKeySet, setApiKeySet] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  const modelSelectValue = useCustomModel ? CUSTOM_VALUE : model
 
   useEffect(() => {
     if (!open || !backendConnected) return
@@ -32,8 +42,10 @@ export function SettingsPanel({ open, backendConnected, onClose }: Props) {
       if (typeof settings['llm.base_url'] === 'string') {
         setBaseUrl(settings['llm.base_url'])
       }
-      if (typeof settings['llm.model'] === 'string') {
-        setModel(settings['llm.model'])
+      if (typeof settings['llm.model'] === 'string' && settings['llm.model'].trim() !== '') {
+        const saved = settings['llm.model'].trim()
+        setModel(saved)
+        setUseCustomModel(!isKnownLlmModel(saved))
       }
       setApiKeySet(settings['llm.api_key_set'] === true)
       setApiKey('')
@@ -54,12 +66,18 @@ export function SettingsPanel({ open, backendConnected, onClose }: Props) {
       return
     }
 
+    const resolvedModel = model.trim()
+    if (resolvedModel === '') {
+      setStatus('Model を入力してください')
+      return
+    }
+
     setSaving(true)
     setStatus(null)
 
     const settings: Record<string, string> = {
       'llm.base_url': baseUrl.trim(),
-      'llm.model': model.trim()
+      'llm.model': resolvedModel
     }
     if (apiKey.trim() !== '') {
       settings['llm.api_key'] = apiKey.trim()
@@ -73,6 +91,7 @@ export function SettingsPanel({ open, backendConnected, onClose }: Props) {
       return
     }
 
+    setUseCustomModel(!isKnownLlmModel(resolvedModel))
     if (apiKey.trim() !== '') {
       setApiKeySet(true)
       setApiKey('')
@@ -108,12 +127,40 @@ export function SettingsPanel({ open, backendConnected, onClose }: Props) {
 
           <label>
             Model
-            <input
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-              placeholder="gpt-4o-mini"
-            />
+            <select
+              value={modelSelectValue}
+              onChange={(event) => {
+                const next = event.target.value
+                if (next === CUSTOM_VALUE) {
+                  setUseCustomModel(true)
+                  if (isKnownLlmModel(model)) {
+                    setModel('')
+                  }
+                  return
+                }
+                setUseCustomModel(false)
+                setModel(next)
+              }}
+            >
+              {LLM_MODEL_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+              <option value={CUSTOM_VALUE}>カスタム…</option>
+            </select>
           </label>
+
+          {useCustomModel && (
+            <label>
+              カスタム Model ID
+              <input
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                placeholder="例: gpt-4o-mini"
+              />
+            </label>
+          )}
 
           <label>
             API Key {apiKeySet ? '（設定済み・変更時のみ入力）' : '（未設定）'}

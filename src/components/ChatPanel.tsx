@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { ConfirmDialog } from './ConfirmDialog'
 import { MessageContent } from './MessageContent'
 import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
+import {
+  DEFAULT_LLM_MODEL,
+  LLM_MODEL_OPTIONS,
+  isKnownLlmModel
+} from '../lib/llmModels'
 import type {
   ApplyCodeOptions,
   ChatMessage,
@@ -59,6 +64,8 @@ export function ChatPanel({
   const [thinking, setThinking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<ChatMode>(loadMode)
+  const [model, setModel] = useState(DEFAULT_LLM_MODEL)
+  const [modelSaving, setModelSaving] = useState(false)
   const [autoAppliedIds, setAutoAppliedIds] = useState<Record<string, boolean>>({})
   const [pendingAction, setPendingAction] = useState<{
     code: string
@@ -69,6 +76,46 @@ export function ChatPanel({
 
   const modeRef = useRef(mode)
   modeRef.current = mode
+
+  useEffect(() => {
+    if (!backendConnected) return
+
+    let cancelled = false
+    ;(async () => {
+      const result = await window.saforall.request<{
+        settings: Record<string, string | boolean>
+      }>('GET', '/settings')
+      if (cancelled || !result.ok || !result.data?.settings) return
+      const saved = result.data.settings['llm.model']
+      if (typeof saved === 'string' && saved.trim() !== '') {
+        setModel(saved.trim())
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [backendConnected])
+
+  const changeModel = async (next: string) => {
+    const trimmed = next.trim()
+    if (trimmed === '' || trimmed === model) return
+
+    const previous = model
+    setModel(trimmed)
+    if (!backendConnected) return
+
+    setModelSaving(true)
+    const result = await window.saforall.request('PUT', '/settings', {
+      settings: { 'llm.model': trimmed }
+    })
+    setModelSaving(false)
+
+    if (!result.ok) {
+      setModel(previous)
+      setError(result.error?.message ?? 'モデルの保存に失敗しました')
+    }
+  }
 
   const contextLabel = useMemo(() => {
     if (!file) return 'コンテキストなし'
@@ -397,6 +444,24 @@ export function ChatPanel({
           )}
         </div>
         <div className="chat-header-right">
+          <label className="model-select">
+            <span className="sr-only">Model</span>
+            <select
+              value={model}
+              disabled={!backendConnected || modelSaving}
+              title="使用する LLM モデル"
+              onChange={(event) => void changeModel(event.target.value)}
+            >
+              {!isKnownLlmModel(model) && model.trim() !== '' && (
+                <option value={model}>{model}</option>
+              )}
+              {LLM_MODEL_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="mode-switch" role="group" aria-label="チャットモード">
             <button
               type="button"

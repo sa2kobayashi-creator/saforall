@@ -1,0 +1,14 @@
+---
+description: todo-app（Sa2 ToDo）の継続作業時は HANDOFF を参照
+alwaysApply: true
+---
+
+# Sa2 ToDo 引き継ぎ（todo-app）
+
+このワークスペース（saforall）から ToDo アプリを触る場合、実コードは **`D:\Development\todo-app`** にある。
+
+作業開始前に必ず読む:
+
+**`D:\Development\todo-app\HANDOFF.md`**
+
+同じ修正の繰り返しを防ぐため、ユーザー要望・実装済み・失敗原因・明日のチェックリストが記載されている。
