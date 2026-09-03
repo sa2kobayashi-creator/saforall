@@ -68,6 +68,7 @@ final class LlmClient
         $assistant = '';
         $httpStatus = 0;
         $streamError = null;
+        $rawBody = '';
 
         $headers = array_merge(
             [
@@ -89,12 +90,14 @@ final class LlmClient
                 &$buffer,
                 &$assistant,
                 &$streamError,
+                &$rawBody,
                 $onDelta
             ): int {
                 if ($streamError !== null) {
                     return 0;
                 }
 
+                $rawBody .= $chunk;
                 $buffer .= $chunk;
                 while (($pos = strpos($buffer, "\n")) !== false) {
                     $line = trim(substr($buffer, 0, $pos));
@@ -140,7 +143,9 @@ final class LlmClient
         curl_close($ch);
 
         if ($streamError !== null) {
-            throw new RuntimeException($streamError);
+            throw new RuntimeException(
+                $streamError . '（model=' . $model . ', endpoint=' . self::endpointHost($url) . '）'
+            );
         }
 
         if ($ok === false || $errno !== 0) {
@@ -148,11 +153,7 @@ final class LlmClient
         }
 
         if ($httpStatus > 0 && ($httpStatus < 200 || $httpStatus >= 300)) {
-            $hint = '';
-            if ($httpStatus === 410) {
-                $hint = '（モデルまたはエンドポイントが廃止されている可能性があります。設定で Gemini モデルを 2.5 / 3.5 系に変更してください）';
-            }
-            throw new RuntimeException('LLM API エラー (HTTP ' . $httpStatus . ')' . $hint);
+            throw new RuntimeException(self::formatHttpError($httpStatus, $model, $url, $rawBody));
         }
 
         if (trim($assistant) === '') {
@@ -222,19 +223,58 @@ final class LlmClient
         }
 
         if ($status < 200 || $status >= 300) {
-            /** @var array<string, mixed>|null $decoded */
-            $decoded = json_decode($raw, true);
-            $message = 'LLM API エラー (HTTP ' . $status . ')';
-            if (is_array($decoded) && isset($decoded['error']) && is_array($decoded['error'])) {
-                $detail = $decoded['error']['message'] ?? null;
-                if (is_string($detail) && $detail !== '') {
-                    $message .= ': ' . $detail;
-                }
-            }
-            throw new RuntimeException($message);
+            throw new RuntimeException(
+                self::formatHttpError($status, $model, $url, is_string($raw) ? $raw : '')
+            );
         }
 
         return $raw;
+    }
+
+    private static function endpointHost(string $url): string
+    {
+        $parts = parse_url($url);
+        if (!is_array($parts)) {
+            return $url;
+        }
+        $host = (string) ($parts['host'] ?? '');
+        $path = (string) ($parts['path'] ?? '');
+        return $host . $path;
+    }
+
+    private static function formatHttpError(
+        int $status,
+        string $model,
+        string $url,
+        string $rawBody
+    ): string {
+        $message = 'LLM API エラー (HTTP ' . $status . ')';
+        $message .= ' model=' . $model;
+        $message .= ' endpoint=' . self::endpointHost($url);
+
+        /** @var array<string, mixed>|null $decoded */
+        $decoded = json_decode($rawBody, true);
+        if (is_array($decoded) && isset($decoded['error']) && is_array($decoded['error'])) {
+            $detail = $decoded['error']['message'] ?? null;
+            if (is_string($detail) && $detail !== '') {
+                $message .= ': ' . $detail;
+            }
+        }
+
+        if ($status === 404) {
+            $host = strtolower((string) (parse_url($url, PHP_URL_HOST) ?? ''));
+            if (str_contains($host, 'groq.com')) {
+                $message .= '。いま Base URL は Groq です。gpt-* は使えません。'
+                    . 'OpenAI を使うなら Base URL を https://api.openai.com/v1 に戻し、OpenAI の API キーを保存してください。'
+                    . 'Groq のまま使うなら「最新を取得」で llama などの ID を選んでください。';
+            } elseif (str_contains($host, 'openai.com')) {
+                $message .= '。モデルがこのキーで使えない可能性があります。「最新を取得」で一覧から選んでください。';
+            } else {
+                $message .= '。Base URL（' . $host . '）とそのホスト向けのモデル ID が一致しているか確認してください。';
+            }
+        }
+
+        return $message;
     }
 
     /** @return array<int, mixed> */

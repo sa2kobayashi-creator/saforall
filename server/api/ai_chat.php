@@ -7,6 +7,7 @@ require_once dirname(__DIR__) . '/src/AppSettings.php';
 require_once dirname(__DIR__) . '/src/UsageService.php';
 require_once dirname(__DIR__) . '/src/AiRouter.php';
 require_once dirname(__DIR__) . '/src/LlmClient.php';
+require_once dirname(__DIR__) . '/src/GeminiClient.php';
 require_once dirname(__DIR__) . '/src/ChatService.php';
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
@@ -22,13 +23,19 @@ if ($prepared['engine'] === 'cursor') {
 }
 
 try {
-    $assistantText = LlmClient::chat(
-        $prepared['base_url'],
-        $prepared['api_key'],
-        $prepared['model'],
-        $prepared['messages'],
-        $prepared['extra_headers']
-    );
+    $assistantText = $prepared['engine'] === 'gemini'
+        ? GeminiClient::chat(
+            $prepared['api_key'],
+            $prepared['model'],
+            $prepared['messages']
+        )
+        : LlmClient::chat(
+            $prepared['base_url'],
+            $prepared['api_key'],
+            $prepared['model'],
+            $prepared['messages'],
+            $prepared['extra_headers']
+        );
 } catch (Throwable $e) {
     Response::error('LLM_REQUEST_FAILED', $e->getMessage(), 502);
 }

@@ -191,11 +191,6 @@ final class ChatService
 
         if ($engine === 'gemini') {
             $apiKey = AppSettings::secret($settings, 'llm.gemini.api_key', 'GEMINI_API_KEY');
-            $baseUrl = AppSettings::str(
-                $settings,
-                'llm.gemini.base_url',
-                'https://generativelanguage.googleapis.com/v1beta/openai'
-            );
             if ($apiKey === '') {
                 Response::error(
                     'LLM_NOT_CONFIGURED',
@@ -206,7 +201,8 @@ final class ChatService
             return [
                 'model' => $model,
                 'api_key' => $apiKey,
-                'base_url' => $baseUrl,
+                // 公式 generateContent を使用（OpenAI 互換エンドポイントは使わない）
+                'base_url' => 'gemini-native',
                 'extra_headers' => [],
             ];
         }
@@ -266,6 +262,7 @@ final class ChatService
         if ($baseUrl === '') {
             $baseUrl = AppSettings::str($settings, 'llm.base_url', 'https://api.openai.com/v1');
         }
+        $baseUrl = self::normalizeOpenAiCompatibleBaseUrl($baseUrl);
         if ($apiKey === '') {
             Response::error(
                 'LLM_NOT_CONFIGURED',
@@ -279,6 +276,37 @@ final class ChatService
             'base_url' => $baseUrl,
             'extra_headers' => [],
         ];
+    }
+
+    /**
+     * OpenAI 互換 Base URL を正規化する。
+     * - 末尾の /chat/completions を除去
+     * - api.openai.com で /v1 が無い場合は付与
+     */
+    public static function normalizeOpenAiCompatibleBaseUrl(string $baseUrl): string
+    {
+        $url = trim($baseUrl);
+        if ($url === '') {
+            return 'https://api.openai.com/v1';
+        }
+
+        $url = rtrim($url, '/');
+        $url = preg_replace('#/chat/completions$#i', '', $url) ?? $url;
+        $url = preg_replace('#/completions$#i', '', $url) ?? $url;
+        $url = rtrim($url, '/');
+
+        $parts = parse_url($url);
+        if (!is_array($parts) || !isset($parts['scheme'], $parts['host'])) {
+            return 'https://api.openai.com/v1';
+        }
+
+        $host = strtolower((string) $parts['host']);
+        $path = (string) ($parts['path'] ?? '');
+        if ($host === 'api.openai.com' && !preg_match('#/v[0-9]+(?:/|$)#', $path)) {
+            return 'https://api.openai.com/v1';
+        }
+
+        return $url;
     }
 
     /** @return array<string, mixed> */

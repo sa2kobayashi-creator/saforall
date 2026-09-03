@@ -7,6 +7,7 @@ require_once dirname(__DIR__) . '/src/AppSettings.php';
 require_once dirname(__DIR__) . '/src/UsageService.php';
 require_once dirname(__DIR__) . '/src/AiRouter.php';
 require_once dirname(__DIR__) . '/src/LlmClient.php';
+require_once dirname(__DIR__) . '/src/GeminiClient.php';
 require_once dirname(__DIR__) . '/src/ChatService.php';
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
@@ -53,19 +54,31 @@ try {
         'fallback_reason' => $prepared['fallback_reason'],
     ]);
 
-    $assistantText = LlmClient::chatStream(
-        $prepared['base_url'],
-        $prepared['api_key'],
-        $prepared['model'],
-        $prepared['messages'],
-        static function (string $delta) use ($send): void {
-            $send([
-                'type' => 'delta',
-                'text' => $delta,
-            ]);
-        },
-        $prepared['extra_headers']
-    );
+    $assistantText = $prepared['engine'] === 'gemini'
+        ? GeminiClient::chatStream(
+            $prepared['api_key'],
+            $prepared['model'],
+            $prepared['messages'],
+            static function (string $delta) use ($send): void {
+                $send([
+                    'type' => 'delta',
+                    'text' => $delta,
+                ]);
+            }
+        )
+        : LlmClient::chatStream(
+            $prepared['base_url'],
+            $prepared['api_key'],
+            $prepared['model'],
+            $prepared['messages'],
+            static function (string $delta) use ($send): void {
+                $send([
+                    'type' => 'delta',
+                    'text' => $delta,
+                ]);
+            },
+            $prepared['extra_headers']
+        );
 
     $assistantMessage = ChatService::saveAssistant($pdo, $prepared['session_id'], $assistantText);
     $inputTokens = UsageService::tokensFromText($prepared['messages'][count($prepared['messages']) - 1]['content'] ?? '');

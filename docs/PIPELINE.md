@@ -84,7 +84,10 @@ AI
 
 ## 4. 振り分け（自動・エンジン）
 
-| 種別 | エンジン |
+設定 `router.enabled_engines`（JSON 配列）で **Auto に使う AI を限定**できる。  
+例: `["cursor","gemini","workers"]` なら OpenAI は Auto では使わない。
+
+| 種別 | 希望エンジン（有効時） |
 | --- | --- |
 | 簡単な質問 | Workers AI |
 | 要約・翻訳・短いドキュメント | Workers AI |
@@ -93,7 +96,10 @@ AI
 | 難しい設計 | OpenAI |
 | 小規模〜複数ファイル修正 / リポジトリ解析 / テストして直す | Cursor |
 
-Workers 未設定・上限超過 → Gemini → OpenAI。判定不能 → OpenAI。
+希望エンジンが無効・未設定・上限超過 → 有効な別エンジンへフォールバック。  
+判定不能の希望は OpenAI（無効なら次の有効エンジン）。
+
+固定選択（OpenAI など）は Auto の有効リストと独立。
 
 ---
 

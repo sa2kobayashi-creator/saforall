@@ -10,18 +10,20 @@ final class ModelCatalog
     /** @var array<string, list<array{id:string,tier:string,cost:int}>> */
     private const CATALOG = [
         'openai' => [
-            ['id' => 'gpt-4o-mini', 'tier' => 'cheap', 'cost' => 1],
-            ['id' => 'gpt-4.1-mini', 'tier' => 'cheap', 'cost' => 2],
-            ['id' => 'gpt-4o', 'tier' => 'standard', 'cost' => 3],
+            ['id' => 'gpt-4.1-mini', 'tier' => 'cheap', 'cost' => 1],
+            ['id' => 'gpt-5.4-mini', 'tier' => 'cheap', 'cost' => 2],
+            ['id' => 'gpt-4o-mini', 'tier' => 'cheap', 'cost' => 3],
             ['id' => 'gpt-4.1', 'tier' => 'standard', 'cost' => 4],
-            ['id' => 'o4-mini', 'tier' => 'strong', 'cost' => 5],
-            ['id' => 'o3-mini', 'tier' => 'strong', 'cost' => 6],
+            ['id' => 'gpt-4o', 'tier' => 'standard', 'cost' => 5],
+            ['id' => 'gpt-5.4', 'tier' => 'standard', 'cost' => 6],
+            ['id' => 'o4-mini', 'tier' => 'strong', 'cost' => 7],
+            ['id' => 'o3-mini', 'tier' => 'strong', 'cost' => 8],
         ],
         'gemini' => [
-            ['id' => 'gemini-2.5-flash-lite', 'tier' => 'cheap', 'cost' => 1],
-            ['id' => 'gemini-2.5-flash', 'tier' => 'standard', 'cost' => 2],
-            ['id' => 'gemini-3.5-flash', 'tier' => 'standard', 'cost' => 3],
-            ['id' => 'gemini-3.1-pro-preview', 'tier' => 'strong', 'cost' => 4],
+            ['id' => 'gemini-flash-latest', 'tier' => 'cheap', 'cost' => 1],
+            ['id' => 'gemini-2.5-flash-lite', 'tier' => 'cheap', 'cost' => 2],
+            ['id' => 'gemini-2.5-flash', 'tier' => 'standard', 'cost' => 3],
+            ['id' => 'gemini-2.5-pro', 'tier' => 'strong', 'cost' => 4],
         ],
         'workers' => [
             ['id' => '@cf/meta/llama-3.1-8b-instruct', 'tier' => 'cheap', 'cost' => 1],
@@ -42,8 +44,8 @@ final class ModelCatalog
 
     /** @var array<string, list<string>> */
     private const DEFAULT_ENABLED = [
-        'openai' => ['gpt-4o-mini', 'gpt-4o'],
-        'gemini' => ['gemini-2.5-flash-lite', 'gemini-2.5-flash'],
+        'openai' => ['gpt-4.1-mini', 'gpt-4.1'],
+        'gemini' => ['gemini-flash-latest', 'gemini-2.5-flash'],
         'workers' => [
             '@cf/meta/llama-3.1-8b-instruct',
             '@cf/qwen/qwen2.5-coder-32b-instruct',
@@ -61,11 +63,19 @@ final class ModelCatalog
 
     /** 廃止モデル → 現行モデル */
     private const RETIRED_MODELS = [
-        'gemini-2.0-flash-lite' => 'gemini-2.5-flash-lite',
-        'gemini-2.0-flash' => 'gemini-2.5-flash',
-        'gemini-1.5-flash' => 'gemini-2.5-flash',
-        'gemini-1.5-pro' => 'gemini-3.1-pro-preview',
-        'gemini-pro' => 'gemini-2.5-flash',
+        'gpt-4o-mini' => 'gpt-4.1-mini',
+        'gpt-4o' => 'gpt-4.1',
+        'gpt-3.5-turbo' => 'gpt-4.1-mini',
+        'gpt-4-turbo' => 'gpt-4.1',
+        'gemini-2.0-flash-lite' => 'gemini-flash-latest',
+        'gemini-2.0-flash' => 'gemini-flash-latest',
+        'gemini-1.5-flash' => 'gemini-flash-latest',
+        'gemini-1.5-pro' => 'gemini-2.5-pro',
+        'gemini-pro' => 'gemini-flash-latest',
+        'gemini-3.5-flash' => 'gemini-flash-latest',
+        'gemini-3.1-pro-preview' => 'gemini-2.5-pro',
+        'gemini-3-flash' => 'gemini-flash-latest',
+        'gemini-3-flash-preview' => 'gemini-flash-latest',
     ];
 
     /**
@@ -128,7 +138,7 @@ final class ModelCatalog
             $pool = $catalog;
         }
         if ($pool === []) {
-            return $enabled[0] ?? 'gpt-4o-mini';
+            return $enabled[0] ?? 'gpt-4.1-mini';
         }
 
         usort($pool, static fn (array $a, array $b): int => $a['cost'] <=> $b['cost']);

@@ -6,6 +6,9 @@ final class AiRouter
 {
     public const ENGINES = ['auto', 'cursor', 'openai', 'gemini', 'workers'];
 
+    /** @var list<string> */
+    public const PROVIDER_ENGINES = ['workers', 'gemini', 'openai', 'cursor'];
+
     /**
      * @param array<string, mixed> $settings
      * @return array{
@@ -24,10 +27,122 @@ final class AiRouter
         }
 
         $taskType = self::classify($message);
-        $engine = $requested === 'auto' ? self::engineForTask($taskType) : $requested;
+        $enabled = self::enabledEngines($settings);
+        $ready = self::readyMap($settings);
+
         $fallbackFrom = null;
         $fallbackReason = null;
 
+        if ($requested === 'auto') {
+            if ($enabled === []) {
+                Response::error(
+                    'ROUTER_EMPTY',
+                    'Auto パイプラインに有効な AI がありません。設定で 1 つ以上有効にしてください。',
+                    400
+                );
+            }
+
+            $preferred = self::engineForTask($taskType);
+            $engine = self::firstAvailable(
+                self::preferenceChain($preferred),
+                $enabled,
+                $ready,
+                $pdo,
+                $settings
+            );
+
+            if ($engine === null) {
+                Response::error(
+                    'LLM_NOT_CONFIGURED',
+                    'Auto で有効な AI のうち、キー設定済みかつ月額上限内のものがありません。',
+                    400
+                );
+            }
+
+            if ($engine !== $preferred && in_array($preferred, $enabled, true)) {
+                $fallbackFrom = $preferred;
+                $fallbackReason = self::label($preferred) . ' が使えないため '
+                    . self::label($engine) . ' に切り替えました';
+            } elseif ($engine !== $preferred && !in_array($preferred, $enabled, true)) {
+                $fallbackFrom = $preferred;
+                $fallbackReason = self::label($preferred) . ' は Auto で無効のため '
+                    . self::label($engine) . ' を使います';
+            }
+
+            return [
+                'requested' => $requested,
+                'engine' => $engine,
+                'task_type' => $taskType,
+                'fallback_from' => $fallbackFrom,
+                'fallback_reason' => $fallbackReason,
+            ];
+        }
+
+        // 固定エンジン: Auto の有効リストとは独立（明示選択を優先）
+        $engine = $requested;
+        if (!($ready[$engine] ?? false)) {
+            Response::error(
+                'LLM_NOT_CONFIGURED',
+                self::label($engine) . ' が未設定です。設定画面でキー等を保存してください。',
+                400
+            );
+        }
+        if (!self::withinBudget($pdo, $settings, $engine)) {
+            Response::error(
+                'BUDGET_EXCEEDED',
+                self::label($engine) . ' の月額上限に達しています。設定で上限を上げてください。',
+                429
+            );
+        }
+
+        return [
+            'requested' => $requested,
+            'engine' => $engine,
+            'task_type' => $taskType,
+            'fallback_from' => null,
+            'fallback_reason' => null,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     * @return list<string>
+     */
+    public static function enabledEngines(array $settings): array
+    {
+        $raw = AppSettings::str($settings, 'router.enabled_engines');
+        $defaults = self::PROVIDER_ENGINES;
+
+        if ($raw === '') {
+            return $defaults;
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            $parts = preg_split('/[,\n]+/', $raw) ?: [];
+            $decoded = $parts;
+        }
+
+        $list = [];
+        foreach ($decoded as $item) {
+            if (!is_string($item)) {
+                continue;
+            }
+            $id = strtolower(trim($item));
+            if (in_array($id, self::PROVIDER_ENGINES, true) && !in_array($id, $list, true)) {
+                $list[] = $id;
+            }
+        }
+
+        return $list !== [] ? $list : $defaults;
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     * @return array<string, bool>
+     */
+    private static function readyMap(array $settings): array
+    {
         $openaiKey = AppSettings::secret($settings, 'llm.openai.api_key', 'OPENAI_API_KEY');
         if ($openaiKey === '') {
             $openaiKey = AppSettings::secret($settings, 'llm.api_key', 'SAFORALL_API_KEY');
@@ -42,172 +157,80 @@ final class AiRouter
         if ($workersAccount === '') {
             $workersAccount = AppSettings::str($settings, 'llm.simple.account_id');
         }
-        $workersReady = $workersToken !== '' && $workersAccount !== '';
-
-        if ($engine === 'workers' && !$workersReady) {
-            if ($requested === 'workers') {
-                Response::error(
-                    'LLM_NOT_CONFIGURED',
-                    'Workers AI が未設定です。Account ID と API Token を設定してください。',
-                    400
-                );
-            }
-            $fallbackFrom = 'workers';
-            if ($geminiKey !== '') {
-                $fallbackReason = 'Workers AI 未設定のため Gemini に切り替えました';
-                $engine = 'gemini';
-            } elseif ($openaiKey !== '') {
-                $fallbackReason = 'Workers AI 未設定のため OpenAI に切り替えました';
-                $engine = 'openai';
-            }
-        }
-
-        if ($engine === 'gemini' && $geminiKey === '') {
-            if ($requested === 'gemini') {
-                Response::error(
-                    'LLM_NOT_CONFIGURED',
-                    'Gemini API キーが未設定です。設定画面または GEMINI_API_KEY を保存してください。',
-                    400
-                );
-            }
-            if ($workersReady) {
-                $fallbackFrom = $fallbackFrom ?? 'gemini';
-                $fallbackReason = 'Gemini キー未設定のため Workers AI に切り替えました';
-                $engine = 'workers';
-            } elseif ($openaiKey !== '') {
-                $fallbackFrom = $fallbackFrom ?? 'gemini';
-                $fallbackReason = 'Gemini キー未設定のため OpenAI に切り替えました';
-                $engine = 'openai';
-            }
-        }
-
-        if ($engine === 'openai' && $openaiKey === '') {
-            if ($requested === 'openai') {
-                Response::error(
-                    'LLM_NOT_CONFIGURED',
-                    'OpenAI API キーが未設定です。設定画面または OPENAI_API_KEY を保存してください。',
-                    400
-                );
-            }
-            if ($geminiKey !== '') {
-                $fallbackFrom = $fallbackFrom ?? 'openai';
-                $fallbackReason = 'OpenAI キー未設定のため Gemini に切り替えました';
-                $engine = 'gemini';
-            } elseif ($workersReady) {
-                $fallbackFrom = $fallbackFrom ?? 'openai';
-                $fallbackReason = 'OpenAI キー未設定のため Workers AI に切り替えました';
-                $engine = 'workers';
-            }
-        }
-
-        if ($engine === 'cursor' && $cursorKey === '') {
-            if ($requested === 'cursor') {
-                Response::error(
-                    'LLM_NOT_CONFIGURED',
-                    'Cursor API キーが未設定です。設定画面または CURSOR_API_KEY を保存してください。',
-                    400
-                );
-            }
-            $fallbackFrom = 'cursor';
-            $fallbackReason = 'Cursor キー未設定のため OpenAI に切り替えました';
-            $engine = 'openai';
-        }
-
-        if ($engine === 'cursor' && !self::withinBudget($pdo, $settings, 'cursor')) {
-            if ($requested === 'cursor') {
-                Response::error(
-                    'BUDGET_EXCEEDED',
-                    'Cursor の月額上限に達しています。設定で上限を上げるか、来月まで待ってください。',
-                    429
-                );
-            }
-            $fallbackFrom = 'cursor';
-            $fallbackReason = 'Cursor 月額上限のため OpenAI に切り替えました';
-            $engine = 'openai';
-        }
-
-        if ($engine === 'openai' && !self::withinBudget($pdo, $settings, 'openai')) {
-            if ($requested === 'openai') {
-                Response::error(
-                    'BUDGET_EXCEEDED',
-                    'OpenAI の月額上限に達しています。別エンジンを選ぶか上限を上げてください。',
-                    429
-                );
-            }
-            if (self::withinBudget($pdo, $settings, 'gemini') && $geminiKey !== '') {
-                $fallbackFrom = $fallbackFrom ?? 'openai';
-                $fallbackReason = 'OpenAI 月額上限のため Gemini に切り替えました';
-                $engine = 'gemini';
-            } elseif (self::withinBudget($pdo, $settings, 'workers') && $workersReady) {
-                $fallbackFrom = $fallbackFrom ?? 'openai';
-                $fallbackReason = 'OpenAI 月額上限のため Workers AI に切り替えました';
-                $engine = 'workers';
-            } else {
-                Response::error(
-                    'BUDGET_EXCEEDED',
-                    'OpenAI / Gemini / Workers AI の月額上限に達しています。',
-                    429
-                );
-            }
-        }
-
-        if ($engine === 'gemini' && !self::withinBudget($pdo, $settings, 'gemini')) {
-            if ($requested === 'gemini') {
-                Response::error(
-                    'BUDGET_EXCEEDED',
-                    'Gemini の月額上限に達しています。設定で上限を上げてください。',
-                    429
-                );
-            }
-            if (self::withinBudget($pdo, $settings, 'workers') && $workersReady) {
-                $fallbackFrom = $fallbackFrom ?? 'gemini';
-                $fallbackReason = 'Gemini 月額上限のため Workers AI に切り替えました';
-                $engine = 'workers';
-            } elseif (self::withinBudget($pdo, $settings, 'openai') && $openaiKey !== '') {
-                $fallbackFrom = $fallbackFrom ?? 'gemini';
-                $fallbackReason = 'Gemini 月額上限のため OpenAI に切り替えました';
-                $engine = 'openai';
-            } else {
-                Response::error(
-                    'BUDGET_EXCEEDED',
-                    '利用可能な AI の月額上限に達しています。',
-                    429
-                );
-            }
-        }
-
-        if ($engine === 'workers' && !self::withinBudget($pdo, $settings, 'workers')) {
-            if ($requested === 'workers') {
-                Response::error(
-                    'BUDGET_EXCEEDED',
-                    'Workers AI の月額上限に達しています。設定で上限を上げてください。',
-                    429
-                );
-            }
-            if (self::withinBudget($pdo, $settings, 'gemini') && $geminiKey !== '') {
-                $fallbackFrom = $fallbackFrom ?? 'workers';
-                $fallbackReason = 'Workers AI 月額上限のため Gemini に切り替えました';
-                $engine = 'gemini';
-            } elseif (self::withinBudget($pdo, $settings, 'openai') && $openaiKey !== '') {
-                $fallbackFrom = $fallbackFrom ?? 'workers';
-                $fallbackReason = 'Workers AI 月額上限のため OpenAI に切り替えました';
-                $engine = 'openai';
-            } else {
-                Response::error(
-                    'BUDGET_EXCEEDED',
-                    '利用可能な AI の月額上限に達しています。',
-                    429
-                );
-            }
-        }
 
         return [
-            'requested' => $requested,
-            'engine' => $engine,
-            'task_type' => $taskType,
-            'fallback_from' => $fallbackFrom,
-            'fallback_reason' => $fallbackReason,
+            'openai' => $openaiKey !== '',
+            'gemini' => $geminiKey !== '',
+            'cursor' => $cursorKey !== '',
+            'workers' => $workersToken !== '' && $workersAccount !== '',
         ];
+    }
+
+    /**
+     * 希望エンジンから、代替候補の優先順位を作る。
+     *
+     * @return list<string>
+     */
+    private static function preferenceChain(string $preferred): array
+    {
+        $chains = [
+            'workers' => ['workers', 'gemini', 'openai', 'cursor'],
+            'gemini' => ['gemini', 'workers', 'openai', 'cursor'],
+            'openai' => ['openai', 'gemini', 'workers', 'cursor'],
+            'cursor' => ['cursor', 'openai', 'gemini', 'workers'],
+        ];
+        return $chains[$preferred] ?? ['openai', 'gemini', 'workers', 'cursor'];
+    }
+
+    /**
+     * @param list<string> $chain
+     * @param list<string> $enabled
+     * @param array<string, bool> $ready
+     * @param array<string, mixed> $settings
+     */
+    private static function firstAvailable(
+        array $chain,
+        array $enabled,
+        array $ready,
+        PDO $pdo,
+        array $settings
+    ): ?string {
+        foreach ($chain as $engine) {
+            if (!in_array($engine, $enabled, true)) {
+                continue;
+            }
+            if (!($ready[$engine] ?? false)) {
+                continue;
+            }
+            if (!self::withinBudget($pdo, $settings, $engine)) {
+                continue;
+            }
+            return $engine;
+        }
+
+        // チェーンに無い有効エンジンも最後に試す
+        foreach ($enabled as $engine) {
+            if (!($ready[$engine] ?? false)) {
+                continue;
+            }
+            if (!self::withinBudget($pdo, $settings, $engine)) {
+                continue;
+            }
+            return $engine;
+        }
+
+        return null;
+    }
+
+    private static function label(string $engine): string
+    {
+        return match ($engine) {
+            'cursor' => 'Cursor',
+            'openai' => 'OpenAI',
+            'gemini' => 'Gemini',
+            'workers' => 'Workers AI',
+            default => $engine,
+        };
     }
 
     public static function classify(string $message): string
@@ -216,6 +239,9 @@ final class AiRouter
 
         if (self::matches($text, ['テストして', 'テストを通', '失敗するまで', 'test and fix', 'make tests pass'])) {
             return 'test_fix';
+        }
+        if (self::matches($text, ['時間かけて', 'じっくり', 'long running', 'thorough'])) {
+            return 'long_dev';
         }
         if (self::matches($text, ['複数ファイル', '一式', 'ログイン全体', 'リファクタ', 'refactor', 'across files'])) {
             return 'patch_multi';

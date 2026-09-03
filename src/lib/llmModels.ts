@@ -11,19 +11,21 @@ export type ModelOption = {
 }
 
 export const OPENAI_MODEL_CATALOG: ModelOption[] = [
-  { id: 'gpt-4o-mini', label: 'gpt-4o-mini（安価）', tier: 'cheap', costRank: 1 },
-  { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini（安価）', tier: 'cheap', costRank: 2 },
-  { id: 'gpt-4o', label: 'gpt-4o（標準）', tier: 'standard', costRank: 3 },
+  { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini（安価・推奨）', tier: 'cheap', costRank: 1 },
+  { id: 'gpt-5.4-mini', label: 'gpt-5.4-mini（安価）', tier: 'cheap', costRank: 2 },
+  { id: 'gpt-4o-mini', label: 'gpt-4o-mini（安価・旧）', tier: 'cheap', costRank: 3 },
   { id: 'gpt-4.1', label: 'gpt-4.1（標準）', tier: 'standard', costRank: 4 },
-  { id: 'o4-mini', label: 'o4-mini（強）', tier: 'strong', costRank: 5 },
-  { id: 'o3-mini', label: 'o3-mini（強）', tier: 'strong', costRank: 6 }
+  { id: 'gpt-4o', label: 'gpt-4o（標準・旧）', tier: 'standard', costRank: 5 },
+  { id: 'gpt-5.4', label: 'gpt-5.4（標準）', tier: 'standard', costRank: 6 },
+  { id: 'o4-mini', label: 'o4-mini（強）', tier: 'strong', costRank: 7 },
+  { id: 'o3-mini', label: 'o3-mini（強）', tier: 'strong', costRank: 8 }
 ]
 
 export const GEMINI_MODEL_CATALOG: ModelOption[] = [
-  { id: 'gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite（安価）', tier: 'cheap', costRank: 1 },
-  { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash（標準）', tier: 'standard', costRank: 2 },
-  { id: 'gemini-3.5-flash', label: 'gemini-3.5-flash（標準）', tier: 'standard', costRank: 3 },
-  { id: 'gemini-3.1-pro-preview', label: 'gemini-3.1-pro-preview（強）', tier: 'strong', costRank: 4 }
+  { id: 'gemini-flash-latest', label: 'gemini-flash-latest（推奨・追従）', tier: 'cheap', costRank: 1 },
+  { id: 'gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite（安価）', tier: 'cheap', costRank: 2 },
+  { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash（標準）', tier: 'standard', costRank: 3 },
+  { id: 'gemini-2.5-pro', label: 'gemini-2.5-pro（強）', tier: 'strong', costRank: 4 }
 ]
 
 export const WORKERS_MODEL_CATALOG: ModelOption[] = [
@@ -75,8 +77,8 @@ export function optionsForEngine(engine: ProviderEngine, enabled: string[]): Mod
   return [...catalog, ...extras]
 }
 
-export const DEFAULT_LLM_MODEL = 'gpt-4o-mini'
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
+export const DEFAULT_LLM_MODEL = 'gpt-4.1-mini'
+export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest'
 export const DEFAULT_CURSOR_MODEL = 'grok-4.6'
 export const DEFAULT_WORKERS_MODEL = '@cf/meta/llama-3.1-8b-instruct'
 
@@ -95,8 +97,8 @@ export const ENGINE_MODEL_CATALOG: Record<ProviderEngine, ModelOption[]> = {
 }
 
 export const DEFAULT_ENABLED_MODELS: Record<ProviderEngine, string[]> = {
-  openai: ['gpt-4o-mini', 'gpt-4o'],
-  gemini: ['gemini-2.5-flash-lite', 'gemini-2.5-flash'],
+  openai: ['gpt-4.1-mini', 'gpt-4.1'],
+  gemini: ['gemini-flash-latest', 'gemini-2.5-flash'],
   workers: ['@cf/meta/llama-3.1-8b-instruct', '@cf/qwen/qwen2.5-coder-32b-instruct'],
   cursor: [
     'auto',
@@ -186,4 +188,39 @@ export const ENGINE_LABELS: Record<(typeof USAGE_ENGINE_KEYS)[number], string> =
   openai: 'OpenAI',
   gemini: 'Gemini',
   workers: 'Workers AI'
+}
+
+/** Auto パイプライン既定（すべて有効） */
+export const DEFAULT_ROUTER_ENGINES: Array<(typeof USAGE_ENGINE_KEYS)[number]> = [
+  'workers',
+  'gemini',
+  'openai',
+  'cursor'
+]
+
+export function parseEngineList(
+  raw: unknown,
+  fallback: readonly (typeof USAGE_ENGINE_KEYS)[number][] = DEFAULT_ROUTER_ENGINES
+): Array<(typeof USAGE_ENGINE_KEYS)[number]> {
+  const allowed = new Set<string>(USAGE_ENGINE_KEYS)
+  let list: string[] = []
+  if (Array.isArray(raw)) {
+    list = raw.map(String)
+  } else if (typeof raw === 'string' && raw.trim() !== '') {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) list = parsed.map(String)
+      else list = raw.split(/[,\n]/).map((s) => s.trim())
+    } catch {
+      list = raw.split(/[,\n]/).map((s) => s.trim())
+    }
+  }
+  const unique: Array<(typeof USAGE_ENGINE_KEYS)[number]> = []
+  for (const item of list) {
+    const id = item.trim().toLowerCase()
+    if (!allowed.has(id)) continue
+    const engine = id as (typeof USAGE_ENGINE_KEYS)[number]
+    if (!unique.includes(engine)) unique.push(engine)
+  }
+  return unique.length > 0 ? unique : [...fallback]
 }

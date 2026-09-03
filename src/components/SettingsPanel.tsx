@@ -6,8 +6,11 @@ import {
   DEFAULT_ENABLED_MODELS,
   DEFAULT_GEMINI_MODEL,
   DEFAULT_LLM_MODEL,
+  DEFAULT_ROUTER_ENGINES,
   DEFAULT_WORKERS_MODEL,
+  ENGINE_LABELS,
   USAGE_ENGINE_KEYS,
+  parseEngineList,
   parseModelList,
   type ProviderEngine
 } from '../lib/llmModels'
@@ -46,10 +49,14 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
   const [limitOpenai, setLimitOpenai] = useState(String(DEFAULT_COST_LIMITS.openai))
   const [limitGemini, setLimitGemini] = useState(String(DEFAULT_COST_LIMITS.gemini))
   const [limitWorkers, setLimitWorkers] = useState(String(DEFAULT_COST_LIMITS.workers))
+  const [routerEngines, setRouterEngines] = useState<Array<(typeof USAGE_ENGINE_KEYS)[number]>>([
+    ...DEFAULT_ROUTER_ENGINES
+  ])
 
   const [usageText, setUsageText] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [testingOpenai, setTestingOpenai] = useState(false)
 
   useEffect(() => {
     if (!open || !backendConnected) return
@@ -88,13 +95,19 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
         )
 
         const account =
-          (typeof settings['llm.workers.account_id'] === 'string' && settings['llm.workers.account_id']) ||
-          (typeof settings['llm.simple.account_id'] === 'string' ? settings['llm.simple.account_id'] : '')
+          (typeof settings['llm.workers.account_id'] === 'string' &&
+            settings['llm.workers.account_id']) ||
+          (typeof settings['llm.simple.account_id'] === 'string'
+            ? settings['llm.simple.account_id']
+            : '')
         if (account) setWorkersAccountId(account)
 
         const gateway =
-          (typeof settings['llm.workers.gateway_id'] === 'string' && settings['llm.workers.gateway_id']) ||
-          (typeof settings['llm.simple.gateway_id'] === 'string' ? settings['llm.simple.gateway_id'] : '')
+          (typeof settings['llm.workers.gateway_id'] === 'string' &&
+            settings['llm.workers.gateway_id']) ||
+          (typeof settings['llm.simple.gateway_id'] === 'string'
+            ? settings['llm.simple.gateway_id']
+            : '')
         if (gateway) setWorkersGatewayId(gateway || 'default')
 
         setOpenaiKeySet(
@@ -123,6 +136,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
         if (typeof settings['cost.workers.monthly_usd'] === 'string') {
           setLimitWorkers(settings['cost.workers.monthly_usd'])
         }
+        setRouterEngines(parseEngineList(settings['router.enabled_engines'], DEFAULT_ROUTER_ENGINES))
       }
 
       if (usageResult.ok && usageResult.data?.usage) {
@@ -140,10 +154,61 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
     }
   }, [open, backendConnected])
 
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
+
   if (!open) return null
 
-  const preferred = (engine: ProviderEngine, list: string[], fallback: string) =>
+  const preferred = (_engine: ProviderEngine, list: string[], fallback: string) =>
     list[0] ?? fallback
+
+  const testOpenai = async () => {
+    if (!backendConnected) {
+      setStatus('バックエンド未接続のためテストできません')
+      return
+    }
+    // 未保存のキーがある場合は先に保存を促す（テスト API は DB のキーを使う）
+    if (openaiKey.trim() !== '') {
+      setStatus('API キーを入力した直後は、先に「保存」してから接続テストしてください')
+      return
+    }
+    if (!openaiKeySet) {
+      setStatus('OpenAI API キーが未設定です')
+      return
+    }
+
+    setTestingOpenai(true)
+    setStatus(null)
+    const result = await window.saforall.request<{
+      ok: boolean
+      model: string
+      base_url: string
+      sample: string
+      note?: string
+    }>('POST', '/ai/test', {
+      engine: 'openai',
+      model: preferred('openai', openaiModels, DEFAULT_LLM_MODEL)
+    })
+    setTestingOpenai(false)
+
+    if (!result.ok) {
+      setStatus(result.error?.message ?? '接続テストに失敗しました')
+      return
+    }
+
+    setStatus(
+      `接続OK（${result.data?.model} @ ${result.data?.base_url}）: ${result.data?.sample ?? ''}`
+    )
+  }
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -152,10 +217,16 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
       return
     }
 
+    if (routerEngines.length === 0) {
+      setStatus('Auto パイプラインは 1 つ以上の AI を有効にしてください')
+      return
+    }
+
     setSaving(true)
     setStatus(null)
 
     const settings: Record<string, string> = {
+      'router.enabled_engines': JSON.stringify(routerEngines),
       'llm.openai.base_url': openaiBaseUrl.trim(),
       'llm.openai.models': JSON.stringify(openaiModels),
       'llm.openai.model': preferred('openai', openaiModels, DEFAULT_LLM_MODEL),
@@ -220,13 +291,10 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
   }
 
   return (
-    <div className="settings-overlay" role="dialog" aria-label="設定">
+    <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="設定">
       <div className="settings-panel">
         <div className="settings-header">
           <h2>設定</h2>
-          <button type="button" onClick={onClose}>
-            閉じる
-          </button>
         </div>
 
         {!backendConnected && (
@@ -236,6 +304,32 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
         )}
 
         <form className="settings-form" onSubmit={(event) => void onSubmit(event)}>
+          <h3 className="settings-section-title">Auto パイプライン</h3>
+          <p className="settings-hint">
+            チャットで「自動」を選んだとき、ここにチェックした AI だけを使います。オフにした AI（例:
+            OpenAI）は Auto では選ばれません。個別に固定選択した場合は使えます。
+          </p>
+          <div className="router-engines" role="group" aria-label="Auto 有効エンジン">
+            {USAGE_ENGINE_KEYS.map((key) => (
+              <label key={key} className="router-engine-item">
+                <span>{ENGINE_LABELS[key]}</span>
+                <input
+                  type="checkbox"
+                  checked={routerEngines.includes(key)}
+                  onChange={() => {
+                    setRouterEngines((current) => {
+                      if (current.includes(key)) {
+                        if (current.length <= 1) return current
+                        return current.filter((item) => item !== key)
+                      }
+                      return [...current, key]
+                    })
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+
           <h3 className="settings-section-title">月額上限</h3>
           <p className="settings-hint">
             Auto は選んだモデル候補の中から、安いもの／作業に合うものを自動で使います。
@@ -277,6 +371,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
             enabled={workersModels}
             onChange={setWorkersModels}
             disabled={!backendConnected}
+            canFetchLatest={backendConnected && (workersTokenSet || workersToken.trim() !== '')}
           />
           <label>
             Account ID
@@ -303,20 +398,51 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
             />
           </label>
 
-          <h3 className="settings-section-title">OpenAI モデル（複数選択）</h3>
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">OpenAI モデル（複数選択）</h3>
+            <button
+              type="button"
+              className="settings-test-btn"
+              disabled={!backendConnected || (!openaiKeySet && openaiKey.trim() === '') || testingOpenai}
+              onClick={() => void testOpenai()}
+            >
+              {testingOpenai ? 'テスト中…' : '接続テスト'}
+            </button>
+          </div>
+          <p className="settings-hint">
+            いまの Base URL が Groq（api.groq.com）のときは gpt-* は使えません。OpenAI
+            公式を使う場合は下の「OpenAI 公式に戻す」を押してキーを保存してください。
+          </p>
           <ModelMultiSelect
             engine="openai"
             enabled={openaiModels}
             onChange={setOpenaiModels}
             disabled={!backendConnected}
+            canFetchLatest={backendConnected && (openaiKeySet || openaiKey.trim() !== '')}
           />
           <label>
             Base URL
-            <input
-              value={openaiBaseUrl}
-              onChange={(event) => setOpenaiBaseUrl(event.target.value)}
-            />
+            <div className="settings-inline-row">
+              <input
+                value={openaiBaseUrl}
+                onChange={(event) => setOpenaiBaseUrl(event.target.value)}
+                placeholder="https://api.openai.com/v1"
+              />
+              <button
+                type="button"
+                className="settings-test-btn"
+                onClick={() => setOpenaiBaseUrl('https://api.openai.com/v1')}
+              >
+                OpenAI 公式に戻す
+              </button>
+            </div>
           </label>
+          {/groq\.com/i.test(openaiBaseUrl) && (
+            <p className="settings-warning">
+              Base URL が Groq になっています。gpt-4.1-mini などは 404 になります。OpenAI
+              を使うなら「OpenAI 公式に戻す」→ OpenAI の API キーを保存してください。
+            </p>
+          )}
           <label>
             API Key {openaiKeySet ? '（設定済み）' : '（未設定）'}
             <input
@@ -327,15 +453,17 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
             />
           </label>
 
-  <h3 className="settings-section-title">Cursor モデル（複数選択）</h3>
+          <h3 className="settings-section-title">Cursor モデル（複数選択）</h3>
           <p className="settings-hint">
-            Grok 4.5/4.6・Claude Sonnet 4.5/4.6・Opus 5 などを候補にできます。アカウントで使える ID は Cursor 側の一覧に依存します。無い ID は下のカスタム追加で入れてください。
+            Grok 4.5/4.6・Claude Sonnet 4.5/4.6・Opus 5 などを候補にできます。アカウントで使える ID
+            は Cursor 側の一覧に依存します。無い ID は下のカスタム追加で入れてください。
           </p>
           <ModelMultiSelect
             engine="cursor"
             enabled={cursorModels}
             onChange={setCursorModels}
             disabled={!backendConnected}
+            canFetchLatest={backendConnected}
           />
           <label>
             API Key {cursorKeySet ? '（設定済み）' : '（未設定）'}
@@ -353,6 +481,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
             enabled={geminiModels}
             onChange={setGeminiModels}
             disabled={!backendConnected}
+            canFetchLatest={backendConnected && (geminiKeySet || geminiKey.trim() !== '')}
           />
           <label>
             API Key {geminiKeySet ? '（設定済み）' : '（未設定）'}
@@ -367,7 +496,18 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
           {status && <p className="settings-status">{status}</p>}
 
           <div className="settings-actions">
-            <button type="submit" disabled={saving || !backendConnected}>
+            <button
+              type="button"
+              className="settings-test-btn"
+              disabled={!backendConnected || (!openaiKeySet && openaiKey.trim() === '') || testingOpenai}
+              onClick={() => void testOpenai()}
+            >
+              {testingOpenai ? 'テスト中…' : 'OpenAI 接続テスト'}
+            </button>
+            <button type="button" className="settings-close" onClick={onClose}>
+              閉じる
+            </button>
+            <button type="submit" className="settings-save" disabled={saving || !backendConnected}>
               {saving ? '保存中…' : '保存'}
             </button>
           </div>

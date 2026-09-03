@@ -584,7 +584,7 @@ export function ChatPanel({
 
       <div className={`mode-banner ${mode}`}>
         {engine === 'auto'
-          ? '自動: エンジンとモデルを作業・コストで切替（設定の複数候補から選択）'
+          ? '自動: 設定の「Auto パイプライン」で有効にした AI だけを作業に合わせて切替'
           : engine === 'cursor'
             ? 'Cursor 固定: 下のリストからモデル選択、またはエンジン内自動'
             : engine === 'gemini'
