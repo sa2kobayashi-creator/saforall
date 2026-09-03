@@ -14,6 +14,7 @@ import {
 } from './components/BottomPanel'
 import type { ProblemItem } from './components/ProblemsPanel'
 import { ApplyPathDialog } from './components/ApplyPathDialog'
+import { UsagePanel } from './components/UsagePanel'
 import {
   defaultFileName,
   formatCommandForTerminal,
@@ -47,6 +48,7 @@ export default function App() {
   const [sidebarView, setSidebarView] = useState<SidebarView>('explorer')
   const [chatOpen, setChatOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [usageOpen, setUsageOpen] = useState(false)
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [bottomTab, setBottomTab] = useState<BottomPanelTab>('terminal')
   const [scmSyncCommand, setScmSyncCommand] = useState<'pull' | 'push' | null>(null)
@@ -438,6 +440,9 @@ export default function App() {
         case 'view:settings':
           setSettingsOpen(true)
           break
+        case 'view:usage':
+          setUsageOpen(true)
+          break
         case 'git:clone':
           setCloneOpen(true)
           break
@@ -467,6 +472,7 @@ export default function App() {
           activeView={sidebarView}
           chatOpen={chatOpen}
           settingsOpen={settingsOpen}
+          usageOpen={usageOpen}
           terminalOpen={terminalOpen}
           onChangeView={(view) => {
             setSidebarView(view)
@@ -475,6 +481,7 @@ export default function App() {
           onToggleChat={() => setChatOpen((v) => !v)}
           onOpenWorkspace={openWorkspace}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenUsage={() => setUsageOpen(true)}
           onToggleTerminal={() => {
             setBottomTab('terminal')
             setTerminalOpen((open) => !open)
@@ -588,6 +595,19 @@ export default function App() {
         open={settingsOpen}
         backendConnected={backend.connected}
         onClose={() => setSettingsOpen(false)}
+        onOpenUsage={() => {
+          setSettingsOpen(false)
+          setUsageOpen(true)
+        }}
+      />
+      <UsagePanel
+        open={usageOpen}
+        backendConnected={backend.connected}
+        onClose={() => setUsageOpen(false)}
+        onOpenSettings={() => {
+          setUsageOpen(false)
+          setSettingsOpen(true)
+        }}
       />
       <ApplyPathDialog
         open={applyDialog !== null}

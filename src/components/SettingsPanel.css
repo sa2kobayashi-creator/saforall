@@ -154,3 +154,13 @@
   opacity: 0.5;
   cursor: default;
 }
+
+.settings-secondary {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 12px;
+}

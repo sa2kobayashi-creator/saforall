@@ -6,11 +6,13 @@ type Props = {
   activeView: SidebarView
   chatOpen: boolean
   settingsOpen: boolean
+  usageOpen: boolean
   terminalOpen: boolean
   onChangeView: (view: SidebarView) => void
   onToggleChat: () => void
   onOpenWorkspace: () => void
   onOpenSettings: () => void
+  onOpenUsage: () => void
   onToggleTerminal: () => void
 }
 
@@ -18,11 +20,13 @@ export function ActivityBar({
   activeView,
   chatOpen,
   settingsOpen,
+  usageOpen,
   terminalOpen,
   onChangeView,
   onToggleChat,
   onOpenWorkspace,
   onOpenSettings,
+  onOpenUsage,
   onToggleTerminal
 }: Props) {
   return (
@@ -59,6 +63,14 @@ export function ActivityBar({
         onClick={onToggleChat}
       >
         ✨
+      </button>
+      <button
+        type="button"
+        className={`activity-btn ${usageOpen ? 'active' : ''}`}
+        title="AI 使用量"
+        onClick={onOpenUsage}
+      >
+        $
       </button>
       <button
         type="button"

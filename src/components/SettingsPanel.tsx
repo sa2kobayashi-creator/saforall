@@ -17,11 +17,12 @@ type Props = {
   open: boolean
   backendConnected: boolean
   onClose: () => void
+  onOpenUsage?: () => void
 }
 
 type SettingsMap = Record<string, string | boolean>
 
-export function SettingsPanel({ open, backendConnected, onClose }: Props) {
+export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: Props) {
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState('https://api.openai.com/v1')
   const [openaiKey, setOpenaiKey] = useState('')
   const [openaiKeySet, setOpenaiKeySet] = useState(false)
@@ -240,6 +241,18 @@ export function SettingsPanel({ open, backendConnected, onClose }: Props) {
             Auto は選んだモデル候補の中から、安いもの／作業に合うものを自動で使います。
           </p>
           {usageText && <p className="settings-hint">今月の概算: {usageText}</p>}
+          {onOpenUsage && (
+            <button
+              type="button"
+              className="settings-secondary"
+              onClick={() => {
+                onClose()
+                onOpenUsage()
+              }}
+            >
+              使用量の詳細を見る
+            </button>
+          )}
 
           <label>
             Cursor 月上限 USD

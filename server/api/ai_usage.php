@@ -12,7 +12,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 
 $pdo = Database::connection();
 $settings = AppSettings::load($pdo);
+$detail = UsageService::monthDetail($pdo, $settings);
+
 Response::ok([
-    'month' => date('Y-m'),
-    'usage' => UsageService::monthSummary($pdo, $settings),
+    'month' => $detail['month'],
+    'total' => $detail['total'],
+    'usage' => $detail['usage'],
+    'models' => $detail['models'],
+    'note' => '金額は概算です。各プロバイダの実請求とは一致しない場合があります。',
 ]);

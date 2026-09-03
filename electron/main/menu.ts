@@ -9,6 +9,7 @@ export type MenuCommand =
   | 'view:problems'
   | 'view:chat'
   | 'view:settings'
+  | 'view:usage'
   | 'git:clone'
   | 'git:refresh'
   | 'git:pull'
@@ -92,6 +93,11 @@ export function setupApplicationMenu(): void {
           label: 'Toggle AI Chat',
           accelerator: 'CmdOrCtrl+L',
           click: () => send('view:chat')
+        },
+        {
+          label: 'AI Usage',
+          accelerator: 'CmdOrCtrl+Shift+U',
+          click: () => send('view:usage')
         },
         {
           label: 'Settings',

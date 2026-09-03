@@ -16,6 +16,7 @@ Cursor のような AI コードエディタを目指すデスクトップアプ
 - Git: status・stage/unstage・commit・push/pull・clone・`git init`
 - アプリメニュー（File / Edit / View / Terminal / Git / Help）
 - AI Router（自動 / Cursor / OpenAI / Gemini / Workers）と月額上限
+- AI 使用量パネル（エンジン別・モデル別の今月概算）
 - PHP API のヘルスチェック（`/api/health`）と MySQL スキーマ
 
 詳細な IDE シェル計画は [docs/IDE_SHELL.md](docs/IDE_SHELL.md) を参照。

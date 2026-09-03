@@ -46,7 +46,7 @@ final class UsageService
     }
 
     /**
-     * @return array<string, array{spent:float,limit:float,remaining:float}>
+     * @return array<string, array{spent:float,limit:float,remaining:float,requests:int,input_tokens:int,output_tokens:int}>
      * @param array<string, mixed> $settings
      */
     public static function monthSummary(PDO $pdo, array $settings): array
@@ -54,14 +54,123 @@ final class UsageService
         $summary = [];
         foreach (['cursor', 'openai', 'gemini', 'workers'] as $engine) {
             $limit = self::monthlyLimit($settings, $engine);
-            $spent = self::spentThisMonth($pdo, $engine);
+            $stats = self::engineMonthStats($pdo, $engine);
+            $spent = $stats['spent'];
             $summary[$engine] = [
                 'spent' => round($spent, 4),
                 'limit' => $limit,
                 'remaining' => round(max(0, $limit - $spent), 4),
+                'requests' => $stats['requests'],
+                'input_tokens' => $stats['input_tokens'],
+                'output_tokens' => $stats['output_tokens'],
             ];
         }
         return $summary;
+    }
+
+    /**
+     * @return array{
+     *   month:string,
+     *   total:array{spent:float,limit:float,remaining:float,requests:int},
+     *   usage:array<string, array{spent:float,limit:float,remaining:float,requests:int,input_tokens:int,output_tokens:int}>,
+     *   models:list<array{engine:string,model:string,spent:float,requests:int,input_tokens:int,output_tokens:int}>
+     * }
+     * @param array<string, mixed> $settings
+     */
+    public static function monthDetail(PDO $pdo, array $settings): array
+    {
+        $usage = self::monthSummary($pdo, $settings);
+        $totalSpent = 0.0;
+        $totalLimit = 0.0;
+        $totalRequests = 0;
+        foreach ($usage as $row) {
+            $totalSpent += (float) $row['spent'];
+            $totalLimit += (float) $row['limit'];
+            $totalRequests += (int) $row['requests'];
+        }
+
+        return [
+            'month' => date('Y-m'),
+            'total' => [
+                'spent' => round($totalSpent, 4),
+                'limit' => round($totalLimit, 4),
+                'remaining' => round(max(0, $totalLimit - $totalSpent), 4),
+                'requests' => $totalRequests,
+            ],
+            'usage' => $usage,
+            'models' => self::modelMonthStats($pdo),
+        ];
+    }
+
+    /**
+     * @return array{spent:float,requests:int,input_tokens:int,output_tokens:int}
+     */
+    private static function engineMonthStats(PDO $pdo, string $engine): array
+    {
+        try {
+            $stmt = $pdo->prepare(
+                'SELECT
+                    COALESCE(SUM(estimated_usd), 0) AS spent,
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens
+                 FROM ai_usage
+                 WHERE engine = :engine
+                   AND created_at >= DATE_FORMAT(NOW(), \'%Y-%m-01\')'
+            );
+            $stmt->execute([':engine' => $engine]);
+            $row = $stmt->fetch();
+            return [
+                'spent' => $row ? (float) $row['spent'] : 0.0,
+                'requests' => $row ? (int) $row['requests'] : 0,
+                'input_tokens' => $row ? (int) $row['input_tokens'] : 0,
+                'output_tokens' => $row ? (int) $row['output_tokens'] : 0,
+            ];
+        } catch (Throwable) {
+            return [
+                'spent' => 0.0,
+                'requests' => 0,
+                'input_tokens' => 0,
+                'output_tokens' => 0,
+            ];
+        }
+    }
+
+    /**
+     * @return list<array{engine:string,model:string,spent:float,requests:int,input_tokens:int,output_tokens:int}>
+     */
+    private static function modelMonthStats(PDO $pdo): array
+    {
+        try {
+            $stmt = $pdo->query(
+                'SELECT
+                    engine,
+                    COALESCE(NULLIF(TRIM(model), \'\'), \'(未記録)\') AS model,
+                    COALESCE(SUM(estimated_usd), 0) AS spent,
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens
+                 FROM ai_usage
+                 WHERE created_at >= DATE_FORMAT(NOW(), \'%Y-%m-01\')
+                 GROUP BY engine, COALESCE(NULLIF(TRIM(model), \'\'), \'(未記録)\')
+                 ORDER BY spent DESC, requests DESC'
+            );
+            $rows = $stmt->fetchAll();
+            $out = [];
+            foreach ($rows as $row) {
+                $out[] = [
+                    'engine' => (string) $row['engine'],
+                    'model' => (string) $row['model'],
+                    'spent' => round((float) $row['spent'], 4),
+                    'requests' => (int) $row['requests'],
+                    'input_tokens' => (int) $row['input_tokens'],
+                    'output_tokens' => (int) $row['output_tokens'],
+                ];
+            }
+            return $out;
+        } catch (Throwable) {
+            return [];
+        }
     }
 
     public static function estimateUsd(string $engine, int $inputTokens, int $outputTokens): float

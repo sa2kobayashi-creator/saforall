@@ -179,3 +179,10 @@ export const DEFAULT_COST_LIMITS = {
 } as const
 
 export const USAGE_ENGINE_KEYS = ['cursor', 'openai', 'gemini', 'workers'] as const
+
+export const ENGINE_LABELS: Record<(typeof USAGE_ENGINE_KEYS)[number], string> = {
+  cursor: 'Cursor',
+  openai: 'OpenAI',
+  gemini: 'Gemini',
+  workers: 'Workers AI'
+}
