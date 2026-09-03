@@ -3,6 +3,18 @@ import { dirname, join } from 'path'
 import { mkdir, readFile, writeFile, readdir, stat } from 'fs/promises'
 import { apiRequest, checkHealth, streamChat } from './api'
 import {
+  cloneRepository,
+  commitChanges,
+  getGitStatus,
+  initRepository,
+  pullRepository,
+  pushRepository,
+  stageAll,
+  stagePaths,
+  unstagePaths
+} from './git'
+import { setupApplicationMenu } from './menu'
+import {
   createTerminalSession,
   killAllTerminals,
   killTerminal,
@@ -35,6 +47,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  setupApplicationMenu()
   createWindow()
 
   app.on('activate', () => {
@@ -116,26 +129,62 @@ ipcMain.handle(
   }
 )
 
+ipcMain.handle('git:status', async (_event, cwd: string) => getGitStatus(cwd))
+
 ipcMain.handle(
-  'terminal:create',
-  async (_event, options?: { cwd?: string; cols?: number; rows?: number }) =>
-    createTerminalSession(options?.cwd, options?.cols, options?.rows)
+  'git:clone',
+  async (
+    _event,
+    payload: { url: string; parentDir: string; folderName?: string }
+  ) => cloneRepository(payload.url, payload.parentDir, payload.folderName)
 )
 
-ipcMain.handle('terminal:write', async (_event, id: string, data: string) => {
+ipcMain.handle('git:init', async (_event, cwd: string) => initRepository(cwd))
+
+ipcMain.handle(
+  'git:stage',
+  async (_event, payload: { cwd: string; paths: string[] }) =>
+    stagePaths(payload.cwd, payload.paths)
+)
+
+ipcMain.handle('git:stageAll', async (_event, cwd: string) => stageAll(cwd))
+
+ipcMain.handle(
+  'git:unstage',
+  async (_event, payload: { cwd: string; paths: string[] }) =>
+    unstagePaths(payload.cwd, payload.paths)
+)
+
+ipcMain.handle(
+  'git:commit',
+  async (_event, payload: { cwd: string; message: string }) =>
+    commitChanges(payload.cwd, payload.message)
+)
+
+ipcMain.handle('git:push', async (_event, cwd: string) => pushRepository(cwd))
+
+ipcMain.handle('git:pull', async (_event, cwd: string) => pullRepository(cwd))
+
+ipcMain.handle(
+  'terminal:create',
+  async (
+    _event,
+    options?: {
+      cwd?: string
+      cols?: number
+      rows?: number
+    }
+  ) => createTerminalSession(options?.cwd, options?.cols, options?.rows)
+)
+
+ipcMain.handle('terminal:write', async (_event, id: string, data: string) =>
   writeTerminal(id, data)
-  return true
-})
+)
 
 ipcMain.handle(
   'terminal:resize',
-  async (_event, id: string, cols: number, rows: number) => {
+  async (_event, id: string, cols: number, rows: number) =>
     resizeTerminal(id, cols, rows)
-    return true
-  }
 )
 
-ipcMain.handle('terminal:kill', async (_event, id: string) => {
-  killTerminal(id)
-  return true
-})
+ipcMain.handle('terminal:kill', async (_event, id: string) => killTerminal(id))

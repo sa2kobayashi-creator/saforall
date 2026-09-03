@@ -1,0 +1,179 @@
+.scm-panel {
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.scm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.scm-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.scm-actions button,
+.scm-empty button,
+.scm-note button,
+.scm-commit-actions button,
+.scm-file-action {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.scm-actions button:disabled,
+.scm-commit-actions button:disabled,
+.scm-file-action:disabled {
+  opacity: 0.45;
+}
+
+.scm-empty {
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.scm-body {
+  overflow: auto;
+  padding-bottom: 12px;
+}
+
+.scm-meta {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.scm-path {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scm-branch {
+  color: var(--text);
+}
+
+.scm-sync-count {
+  color: var(--accent, #6cb6ff);
+  margin-left: 4px;
+}
+
+.scm-note {
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 0 12px 8px;
+  font-size: 12px;
+}
+
+.scm-error {
+  color: #f0a0a0;
+  white-space: pre-wrap;
+}
+
+.scm-commit {
+  padding: 0 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scm-commit textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px;
+  font-size: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.scm-commit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.scm-commit-actions button:first-child {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.scm-section-title {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.scm-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.scm-file-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 8px;
+}
+
+.scm-file {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.scm-file:hover {
+  background: var(--bg-elevated);
+}
+
+.scm-file-status {
+  color: #9fdfb0;
+  min-width: 3.5em;
+}
+
+.scm-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scm-file-action {
+  flex-shrink: 0;
+  padding: 2px 6px;
+}

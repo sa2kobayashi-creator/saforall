@@ -140,6 +140,92 @@ const api = {
     }
     ipcRenderer.on('terminal:exit', listener)
     return () => ipcRenderer.removeListener('terminal:exit', listener)
+  },
+  gitStatus: (cwd: string): Promise<{
+    ok: boolean
+    isRepo: boolean
+    branch: string | null
+    upstream: string | null
+    ahead: number
+    behind: number
+    files: Array<{
+      path: string
+      index: string
+      worktree: string
+      status: string
+      staged: boolean
+      unstaged: boolean
+    }>
+    error?: string
+  }> => ipcRenderer.invoke('git:status', cwd),
+  gitClone: (payload: {
+    url: string
+    parentDir: string
+    folderName?: string
+  }): Promise<{ ok: boolean; targetPath?: string; error?: string }> =>
+    ipcRenderer.invoke('git:clone', payload),
+  gitInit: (cwd: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:init', cwd),
+  gitStage: (payload: {
+    cwd: string
+    paths: string[]
+  }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:stage', payload),
+  gitStageAll: (cwd: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:stageAll', cwd),
+  gitUnstage: (payload: {
+    cwd: string
+    paths: string[]
+  }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:unstage', payload),
+  gitCommit: (payload: {
+    cwd: string
+    message: string
+  }): Promise<{ ok: boolean; stdout?: string; error?: string }> =>
+    ipcRenderer.invoke('git:commit', payload),
+  gitPush: (cwd: string): Promise<{ ok: boolean; stdout?: string; error?: string }> =>
+    ipcRenderer.invoke('git:push', cwd),
+  gitPull: (cwd: string): Promise<{ ok: boolean; stdout?: string; error?: string }> =>
+    ipcRenderer.invoke('git:pull', cwd),
+  onMenuCommand: (
+    callback: (
+      command:
+        | 'workspace:open'
+        | 'file:save'
+        | 'view:explorer'
+        | 'view:scm'
+        | 'view:terminal'
+        | 'view:problems'
+        | 'view:chat'
+        | 'view:settings'
+        | 'git:clone'
+        | 'git:refresh'
+        | 'git:pull'
+        | 'git:push'
+    ) => void
+  ) => {
+    const listener = (
+      _event: unknown,
+      command:
+        | 'workspace:open'
+        | 'file:save'
+        | 'view:explorer'
+        | 'view:scm'
+        | 'view:terminal'
+        | 'view:problems'
+        | 'view:chat'
+        | 'view:settings'
+        | 'git:clone'
+        | 'git:refresh'
+        | 'git:pull'
+        | 'git:push'
+    ): void => {
+      callback(command)
+    }
+    ipcRenderer.on('menu:command', listener)
+    return () => {
+      ipcRenderer.removeListener('menu:command', listener)
+    }
   }
 }
 

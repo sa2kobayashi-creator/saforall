@@ -1,0 +1,99 @@
+.clone-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+}
+
+.clone-dialog {
+  width: min(480px, calc(100% - 32px));
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.clone-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.clone-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.clone-header button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+
+.clone-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.clone-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.clone-dialog input {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.clone-row {
+  display: flex;
+  gap: 8px;
+}
+
+.clone-row input {
+  flex: 1;
+}
+
+.clone-row button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0 10px;
+}
+
+.clone-error {
+  margin: 0;
+  color: #f0a0a0;
+  font-size: 12px;
+}
+
+.clone-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.clone-actions button {
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: white;
+  padding: 8px 14px;
+}
+
+.clone-actions button:disabled {
+  opacity: 0.55;
+}

@@ -22,3 +22,7 @@
 .activity-btn.active {
   background: var(--bg-elevated);
 }
+
+.activity-spacer {
+  flex: 1;
+}

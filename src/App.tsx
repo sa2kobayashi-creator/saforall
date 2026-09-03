@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityBar } from './components/ActivityBar'
+import { ActivityBar, type SidebarView } from './components/ActivityBar'
 import { Sidebar } from './components/Sidebar'
+import { SourceControlPanel } from './components/SourceControlPanel'
+import { CloneDialog } from './components/CloneDialog'
 import { EditorPane } from './components/EditorPane'
 import { ChatPanel } from './components/ChatPanel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { StatusBar } from './components/StatusBar'
 import { ResizeHandle } from './components/ResizeHandle'
-import { TerminalPanel } from './components/TerminalPanel'
+import {
+  BottomPanel,
+  type BottomPanelTab
+} from './components/BottomPanel'
+import type { ProblemItem } from './components/ProblemsPanel'
 import { ApplyPathDialog } from './components/ApplyPathDialog'
 import {
   defaultFileName,
@@ -38,9 +44,14 @@ export default function App() {
   const [workspaceId, setWorkspaceId] = useState<number | null>(null)
   const [tabs, setTabs] = useState<OpenFile[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
+  const [sidebarView, setSidebarView] = useState<SidebarView>('explorer')
   const [chatOpen, setChatOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [terminalOpen, setTerminalOpen] = useState(false)
+  const [bottomTab, setBottomTab] = useState<BottomPanelTab>('terminal')
+  const [scmSyncCommand, setScmSyncCommand] = useState<'pull' | 'push' | null>(null)
+  const [cloneOpen, setCloneOpen] = useState(false)
+  const [scmRefreshKey, setScmRefreshKey] = useState(0)
   const [pendingCommand, setPendingCommand] = useState<string | null>(null)
   const [applyDialog, setApplyDialog] = useState<{
     code: string
@@ -59,6 +70,29 @@ export default function App() {
     () => tabs.find((tab) => tab.path === activePath) ?? null,
     [tabs, activePath]
   )
+  const problems = useMemo((): ProblemItem[] => {
+    const items: ProblemItem[] = []
+    if (!backend.connected && !backend.checking) {
+      items.push({
+        id: 'backend-offline',
+        severity: 'error',
+        source: 'Backend',
+        message: backend.message || 'バックエンドに接続できません'
+      })
+    }
+    for (const tab of tabs) {
+      if (tab.dirty) {
+        items.push({
+          id: `dirty:${tab.path}`,
+          severity: 'warning',
+          source: 'Editor',
+          message: '未保存の変更があります',
+          path: tab.path
+        })
+      }
+    }
+    return items
+  }, [backend, tabs])
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
 
@@ -97,28 +131,37 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [checkBackend])
 
+  const openWorkspaceAt = useCallback(
+    async (path: string) => {
+      setWorkspacePath(path)
+      setWorkspaceId(null)
+      setTabs([])
+      setActivePath(null)
+      setTabWidths({})
+      setSidebarView('explorer')
+      setScmRefreshKey((key) => key + 1)
+      setStatus(`ワークスペース: ${path}`)
+
+      if (!backend.connected) return
+
+      const result = await window.saforall.request<{ workspace: WorkspaceRecord }>(
+        'POST',
+        '/workspaces',
+        { path }
+      )
+      if (result.ok && result.data?.workspace) {
+        setWorkspaceId(Number(result.data.workspace.id))
+        setStatus(`ワークスペース: ${path}（DB #${result.data.workspace.id}）`)
+      }
+    },
+    [backend.connected]
+  )
+
   const openWorkspace = useCallback(async () => {
     const path = await window.saforall.openDirectory()
     if (!path) return
-    setWorkspacePath(path)
-    setWorkspaceId(null)
-    setTabs([])
-    setActivePath(null)
-    setTabWidths({})
-    setStatus(`ワークスペース: ${path}`)
-
-    if (!backend.connected) return
-
-    const result = await window.saforall.request<{ workspace: WorkspaceRecord }>(
-      'POST',
-      '/workspaces',
-      { path }
-    )
-    if (result.ok && result.data?.workspace) {
-      setWorkspaceId(Number(result.data.workspace.id))
-      setStatus(`ワークスペース: ${path}（DB #${result.data.workspace.id}）`)
-    }
-  }, [backend.connected])
+    await openWorkspaceAt(path)
+  }, [openWorkspaceAt])
 
   const openFileAt = useCallback(async (filePath: string) => {
     if (tabsRef.current.some((tab) => tab.path === filePath)) {
@@ -230,6 +273,7 @@ export default function App() {
       }
 
       setTerminalOpen(true)
+      setBottomTab('terminal')
       setPendingCommand(command)
       showNotice('ターミナルでコマンドを実行します…')
     },
@@ -355,6 +399,7 @@ export default function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key === '`') {
         event.preventDefault()
+        setBottomTab('terminal')
         setTerminalOpen((open) => !open)
       }
     }
@@ -362,28 +407,106 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  useEffect(() => {
+    if (typeof window.saforall.onMenuCommand !== 'function') return
+    const unsubscribe = window.saforall.onMenuCommand((command) => {
+      switch (command) {
+        case 'workspace:open':
+          void openWorkspace()
+          break
+        case 'file:save':
+          void saveFile()
+          break
+        case 'view:explorer':
+          setSidebarView('explorer')
+          break
+        case 'view:scm':
+          setSidebarView('scm')
+          setScmRefreshKey((key) => key + 1)
+          break
+        case 'view:terminal':
+          setBottomTab('terminal')
+          setTerminalOpen((open) => !open)
+          break
+        case 'view:problems':
+          setBottomTab('problems')
+          setTerminalOpen(true)
+          break
+        case 'view:chat':
+          setChatOpen((open) => !open)
+          break
+        case 'view:settings':
+          setSettingsOpen(true)
+          break
+        case 'git:clone':
+          setCloneOpen(true)
+          break
+        case 'git:refresh':
+          setSidebarView('scm')
+          setScmRefreshKey((key) => key + 1)
+          break
+        case 'git:pull':
+          setSidebarView('scm')
+          setScmSyncCommand('pull')
+          break
+        case 'git:push':
+          setSidebarView('scm')
+          setScmSyncCommand('push')
+          break
+      }
+    })
+    return () => {
+      unsubscribe()
+    }
+  }, [openWorkspace, saveFile])
+
   return (
     <div className="app-shell">
       <div className="app-body">
         <ActivityBar
+          activeView={sidebarView}
           chatOpen={chatOpen}
           settingsOpen={settingsOpen}
           terminalOpen={terminalOpen}
+          onChangeView={(view) => {
+            setSidebarView(view)
+            if (view === 'scm') setScmRefreshKey((key) => key + 1)
+          }}
           onToggleChat={() => setChatOpen((v) => !v)}
           onOpenWorkspace={openWorkspace}
           onOpenSettings={() => setSettingsOpen(true)}
-          onToggleTerminal={() => setTerminalOpen((open) => !open)}
+          onToggleTerminal={() => {
+            setBottomTab('terminal')
+            setTerminalOpen((open) => !open)
+          }}
         />
-        <Sidebar
-          workspacePath={workspacePath}
-          activePath={activePath}
-          width={sidebarWidth}
-          onOpenWorkspace={openWorkspace}
-          onOpenFile={openFileAt}
-        />
+        {sidebarView === 'explorer' ? (
+          <Sidebar
+            workspacePath={workspacePath}
+            activePath={activePath}
+            width={sidebarWidth}
+            onOpenWorkspace={openWorkspace}
+            onOpenFile={openFileAt}
+          />
+        ) : (
+          <SourceControlPanel
+            workspacePath={workspacePath}
+            width={sidebarWidth}
+            refreshKey={scmRefreshKey}
+            syncCommand={scmSyncCommand}
+            onSyncHandled={() => setScmSyncCommand(null)}
+            onOpenWorkspace={openWorkspace}
+            onClone={() => setCloneOpen(true)}
+            onOpenFile={openFileAt}
+            onStatusMessage={(message) => {
+              setStatus(message)
+              showNotice(message)
+            }}
+          />
+        )}
         <ResizeHandle
           direction="horizontal"
-          title="エクスプローラの幅を変更"
+          title="サイドバーの幅を変更"
           onResize={(delta) => {
             setSidebarWidth((width) => Math.min(480, Math.max(180, width + delta)))
           }}
@@ -410,20 +533,24 @@ export default function App() {
             <>
               <ResizeHandle
                 direction="vertical"
-                title="ターミナルの高さを変更"
+                title="下部パネルの高さを変更"
                 onResize={(delta) => {
                   setTerminalHeight((height) =>
                     Math.min(500, Math.max(120, height - delta))
                   )
                 }}
               />
-              <TerminalPanel
+              <BottomPanel
                 open={terminalOpen}
                 height={terminalHeight}
+                activeTab={bottomTab}
                 cwd={workspacePath}
                 pendingCommand={pendingCommand}
+                problems={problems}
+                onChangeTab={setBottomTab}
                 onCommandSent={() => setPendingCommand(null)}
                 onClose={() => setTerminalOpen(false)}
+                onOpenFile={openFileAt}
               />
             </>
           )}
@@ -479,6 +606,14 @@ export default function App() {
           void writeCodeToFile(targetPath, code).catch((error) => {
             showNotice(`適用失敗: ${String(error)}`)
           })
+        }}
+      />
+      <CloneDialog
+        open={cloneOpen}
+        onClose={() => setCloneOpen(false)}
+        onCloned={(path) => {
+          showNotice(`クローン完了: ${path}`)
+          void openWorkspaceAt(path)
         }}
       />
       {notice && <div className="app-notice">{notice}</div>}

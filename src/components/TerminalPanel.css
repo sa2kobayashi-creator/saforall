@@ -6,6 +6,12 @@
   border-top: 1px solid var(--border);
 }
 
+.terminal-panel--embedded {
+  border-top: none;
+  height: 100%;
+  min-height: 0;
+}
+
 .terminal-header {
   display: flex;
   align-items: center;

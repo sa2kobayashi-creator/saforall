@@ -10,11 +10,15 @@ Cursor のような AI コードエディタを目指すデスクトップアプ
 
 ## いまできること
 
-- フォルダをワークスペースとして開く
-- ファイル一覧の表示（直下）
-- Monaco での編集・保存（Ctrl/Cmd + S）
-- AI Router（自動 / Cursor / OpenAI / Gemini）と月額上限
+- フォルダをワークスペースとして開く（Explorer）
+- ファイルツリー表示・Monaco 編集・保存（Ctrl/Cmd + S）
+- 統合ターミナル / Problems（下部パネルタブ）
+- Git: status・stage/unstage・commit・push/pull・clone・`git init`
+- アプリメニュー（File / Edit / View / Terminal / Git / Help）
+- AI Router（自動 / Cursor / OpenAI / Gemini / Workers）と月額上限
 - PHP API のヘルスチェック（`/api/health`）と MySQL スキーマ
+
+詳細な IDE シェル計画は [docs/IDE_SHELL.md](docs/IDE_SHELL.md) を参照。
 
 ## セットアップ
 
@@ -62,6 +66,7 @@ copy .env.example .env
 | [設計書](docs/DESIGN.md) | システム構成・IPC・AI・シーケンス |
 | [アーキテクチャ概要](docs/ARCHITECTURE.md) | 構成の短い要約 |
 | [AI パイプライン](docs/PIPELINE.md) | AI Router（OpenAI / Cursor / Gemini） |
+| [IDE シェル](docs/IDE_SHELL.md) | メニュー / Explorer / Terminal / Git |
 | [サーバーセットアップ](server/README.md) | XAMPP（Apache / MySQL）手順 |
 
 ## ロードマップ（初期）

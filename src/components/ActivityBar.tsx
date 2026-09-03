@@ -1,9 +1,13 @@
 import './ActivityBar.css'
 
+export type SidebarView = 'explorer' | 'scm'
+
 type Props = {
+  activeView: SidebarView
   chatOpen: boolean
   settingsOpen: boolean
   terminalOpen: boolean
+  onChangeView: (view: SidebarView) => void
   onToggleChat: () => void
   onOpenWorkspace: () => void
   onOpenSettings: () => void
@@ -11,9 +15,11 @@ type Props = {
 }
 
 export function ActivityBar({
+  activeView,
   chatOpen,
   settingsOpen,
   terminalOpen,
+  onChangeView,
   onToggleChat,
   onOpenWorkspace,
   onOpenSettings,
@@ -23,11 +29,28 @@ export function ActivityBar({
     <aside className="activity-bar" aria-label="アクティビティバー">
       <button
         type="button"
+        className={`activity-btn ${activeView === 'explorer' ? 'active' : ''}`}
+        title="Explorer"
+        onClick={() => onChangeView('explorer')}
+      >
+        📁
+      </button>
+      <button
+        type="button"
+        className={`activity-btn ${activeView === 'scm' ? 'active' : ''}`}
+        title="Source Control"
+        onClick={() => onChangeView('scm')}
+      >
+        ⎇
+      </button>
+      <div className="activity-spacer" />
+      <button
+        type="button"
         className="activity-btn"
         title="フォルダを開く"
         onClick={onOpenWorkspace}
       >
-        📁
+        📂
       </button>
       <button
         type="button"

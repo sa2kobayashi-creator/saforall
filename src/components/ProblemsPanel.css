@@ -1,0 +1,70 @@
+.problems-panel {
+  height: 100%;
+  overflow: auto;
+  background: #0c0c0c;
+  color: var(--text);
+}
+
+.problems-empty {
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.problems-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.problems-item {
+  display: grid;
+  grid-template-columns: 72px 88px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 8px 12px;
+  border-bottom: 1px solid #1f1f1f;
+  font-size: 12px;
+}
+
+.problems-item:hover {
+  background: #151515;
+}
+
+.problems-severity {
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.severity-error .problems-severity {
+  color: #f0a0a0;
+}
+
+.severity-warning .problems-severity {
+  color: #e0c070;
+}
+
+.severity-info .problems-severity {
+  color: #6cb6ff;
+}
+
+.problems-source {
+  color: var(--text-muted);
+}
+
+.problems-message {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 0;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.problems-path {
+  color: var(--text-muted);
+  font-size: 11px;
+}

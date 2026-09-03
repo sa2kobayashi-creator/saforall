@@ -6,11 +6,15 @@ import './TerminalPanel.css'
 
 type Props = {
   open: boolean
-  height: number
+  height?: number
   cwd: string | null
   pendingCommand: string | null
   onCommandSent: () => void
-  onClose: () => void
+  onClose?: () => void
+  /** BottomPanel 内ではヘッダーを出さず親の高さを使う */
+  embedded?: boolean
+  /** タブ切替などで再フィットさせるトリガー */
+  fitTrigger?: string | number
 }
 
 export function TerminalPanel({
@@ -19,7 +23,9 @@ export function TerminalPanel({
   cwd,
   pendingCommand,
   onCommandSent,
-  onClose
+  onClose,
+  embedded = false,
+  fitTrigger
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -147,7 +153,7 @@ export function TerminalPanel({
       }
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [open, height])
+  }, [open, height, fitTrigger])
 
   useEffect(() => {
     if (!open || !pendingCommand || !sessionReady) return
@@ -167,48 +173,56 @@ export function TerminalPanel({
   if (!open) return null
 
   return (
-    <section className="terminal-panel" style={{ height }} aria-label="ターミナル">
-      <div className="terminal-header">
-        <div className="terminal-title">
-          <strong>ターミナル</strong>
-          <span>
-            {cwd ? cwd : 'カレントディレクトリ'}
-            {backend ? ` · ${backend}` : ''}
-          </span>
+    <section
+      className={`terminal-panel${embedded ? ' terminal-panel--embedded' : ''}`}
+      style={embedded ? undefined : { height }}
+      aria-label="ターミナル"
+    >
+      {!embedded && (
+        <div className="terminal-header">
+          <div className="terminal-title">
+            <strong>ターミナル</strong>
+            <span>
+              {cwd ? cwd : 'カレントディレクトリ'}
+              {backend ? ` · ${backend}` : ''}
+            </span>
+          </div>
+          <div className="terminal-actions">
+            <button
+              type="button"
+              title="再起動"
+              onClick={() => {
+                const term = termRef.current
+                if (!term) return
+                const oldId = sessionIdRef.current
+                if (oldId) void window.saforall.killTerminal(oldId)
+                setSessionReady(false)
+                term.reset()
+                void window.saforall
+                  .createTerminal({
+                    cwd: cwd ?? undefined,
+                    cols: term.cols,
+                    rows: term.rows
+                  })
+                  .then((session) => {
+                    sessionIdRef.current = session.id
+                    setBackend(session.backend)
+                    setSessionReady(true)
+                    term.focus()
+                  })
+                  .catch((err) => setError(String(err)))
+              }}
+            >
+              再起動
+            </button>
+            {onClose && (
+              <button type="button" title="閉じる" onClick={onClose}>
+                ×
+              </button>
+            )}
+          </div>
         </div>
-        <div className="terminal-actions">
-          <button
-            type="button"
-            title="再起動"
-            onClick={() => {
-              const term = termRef.current
-              if (!term) return
-              const oldId = sessionIdRef.current
-              if (oldId) void window.saforall.killTerminal(oldId)
-              setSessionReady(false)
-              term.reset()
-              void window.saforall
-                .createTerminal({
-                  cwd: cwd ?? undefined,
-                  cols: term.cols,
-                  rows: term.rows
-                })
-                .then((session) => {
-                  sessionIdRef.current = session.id
-                  setBackend(session.backend)
-                  setSessionReady(true)
-                  term.focus()
-                })
-                .catch((err) => setError(String(err)))
-            }}
-          >
-            再起動
-          </button>
-          <button type="button" title="閉じる" onClick={onClose}>
-            ×
-          </button>
-        </div>
-      </div>
+      )}
       {error && <div className="terminal-error">{error}</div>}
       <div className="terminal-host" ref={hostRef} />
     </section>
