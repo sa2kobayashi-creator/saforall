@@ -36,7 +36,8 @@ async function fetchJson<T>(
   method: string,
   path: string,
   body?: unknown,
-  options?: ApiRequestOptions
+  options?: ApiRequestOptions,
+  extraHeaders?: Record<string, string>
 ): Promise<ApiResponse<T>> {
   const baseUrl = getApiBaseUrl()
   const url = `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`
@@ -45,9 +46,14 @@ async function fetchJson<T>(
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
+    const headers: Record<string, string> = extraHeaders ? { ...extraHeaders } : {}
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json'
+    }
+
     const response = await fetch(url, {
       method,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal
     })
@@ -129,13 +135,200 @@ export async function apiRequest<T = unknown>(
   }
 }
 
+export type MonthUsage = Record<
+  string,
+  { spent: number; limit: number; remaining: number }
+>
+
 export type ChatStreamEvent =
   | { type: 'user_message'; message: Record<string, unknown> }
+  | {
+      type: 'route'
+      engine: string
+      task_type: string
+      model: string
+      fallback_reason?: string | null
+      usage?: MonthUsage
+    }
   | { type: 'delta'; text: string }
-  | { type: 'done'; model: string; assistant_message: Record<string, unknown> }
+  | {
+      type: 'done'
+      model: string
+      engine?: string
+      task_type?: string
+      estimated_usd?: number
+      usage?: MonthUsage
+      assistant_message: Record<string, unknown>
+    }
   | { type: 'error'; code: string; message: string }
 
+type RouteData = {
+  engine: 'cursor' | 'openai' | 'gemini' | 'workers'
+  requested: string
+  task_type: string
+  fallback_from: string | null
+  fallback_reason: string | null
+  model: string
+  session_id: number
+  user_message_id: number
+  user_message: Record<string, unknown>
+  cursor_run_id: number | null
+  usage: MonthUsage
+  cursor_api_key: string | null
+}
+
 export async function streamChat(
+  body: unknown,
+  onEvent: (event: ChatStreamEvent) => void
+): Promise<void> {
+  const requestBody =
+    typeof body === 'object' && body !== null
+      ? (body as Record<string, unknown>)
+      : {}
+
+  const route = await fetchJson<RouteData>(
+    'POST',
+    '/ai/route',
+    requestBody,
+    { timeoutMs: 20_000 },
+    { 'X-Saforall-Client': 'electron-main' }
+  )
+
+  if (!route.ok || !route.data) {
+    onEvent({
+      type: 'error',
+      code: route.error?.code ?? 'ROUTE_FAILED',
+      message: route.error?.message ?? 'AI Router に失敗しました'
+    })
+    return
+  }
+
+  const decided = route.data
+  onEvent({
+    type: 'user_message',
+    message: decided.user_message
+  })
+  onEvent({
+    type: 'route',
+    engine: decided.engine,
+    task_type: decided.task_type,
+    model: decided.model,
+    fallback_reason: decided.fallback_reason,
+    usage: decided.usage
+  })
+
+  if (decided.engine === 'cursor') {
+    await runCursorStream(requestBody, decided, onEvent)
+    return
+  }
+
+  await streamProviderChat(
+    {
+      ...requestBody,
+      engine: decided.engine,
+      user_message_id: decided.user_message_id,
+      resolved_engine: decided.engine,
+      requested: decided.requested,
+      task_type: decided.task_type,
+      fallback_from: decided.fallback_from,
+      fallback_reason: decided.fallback_reason
+    },
+    onEvent
+  )
+}
+
+async function runCursorStream(
+  requestBody: Record<string, unknown>,
+  decided: RouteData,
+  onEvent: (event: ChatStreamEvent) => void
+): Promise<void> {
+  const cwd =
+    typeof requestBody.workspace_path === 'string'
+      ? requestBody.workspace_path
+      : ''
+  const prompt =
+    typeof requestBody.message === 'string' ? requestBody.message : ''
+  const apiKey = decided.cursor_api_key ?? process.env.CURSOR_API_KEY ?? ''
+
+  if (cwd.trim() === '') {
+    onEvent({
+      type: 'error',
+      code: 'NO_WORKSPACE',
+      message: 'Cursor Agent にはワークスペース（フォルダを開く）が必要です'
+    })
+    return
+  }
+  if (apiKey.trim() === '') {
+    onEvent({
+      type: 'error',
+      code: 'LLM_NOT_CONFIGURED',
+      message: 'Cursor API キーが未設定です'
+    })
+    return
+  }
+
+  try {
+    const { runCursorAgent } = await import('./cursorAgent')
+    const result = await runCursorAgent({
+      apiKey,
+      model: decided.model,
+      cwd,
+      prompt,
+      onDelta: (text) => {
+        onEvent({ type: 'delta', text })
+      }
+    })
+
+    const completed = await fetchJson<{
+      assistant_message: Record<string, unknown>
+      estimated_usd: number
+      usage: MonthUsage
+    }>(
+      'POST',
+      '/ai/complete',
+      {
+        session_id: decided.session_id,
+        content: result.text,
+        engine: 'cursor',
+        task_type: decided.task_type,
+        model: decided.model,
+        cursor_run_id: decided.cursor_run_id,
+        agent_id: result.agentId,
+        sdk_run_id: result.runId,
+        status: result.status === 'error' ? 'error' : 'done',
+        fallback_from: decided.fallback_from
+      },
+      { timeoutMs: 15_000 }
+    )
+
+    if (!completed.ok || !completed.data) {
+      onEvent({
+        type: 'error',
+        code: completed.error?.code ?? 'COMPLETE_FAILED',
+        message: completed.error?.message ?? 'Cursor 結果の保存に失敗しました'
+      })
+      return
+    }
+
+    onEvent({
+      type: 'done',
+      model: decided.model,
+      engine: 'cursor',
+      task_type: decided.task_type,
+      estimated_usd: completed.data.estimated_usd,
+      usage: completed.data.usage,
+      assistant_message: completed.data.assistant_message
+    })
+  } catch (error) {
+    onEvent({
+      type: 'error',
+      code: 'CURSOR_SDK_FAILED',
+      message: error instanceof Error ? error.message : 'Cursor SDK の実行に失敗しました'
+    })
+  }
+}
+
+async function streamProviderChat(
   body: unknown,
   onEvent: (event: ChatStreamEvent) => void
 ): Promise<void> {
@@ -196,6 +389,9 @@ export async function streamChat(
           const data = line.slice(5).trim()
           try {
             const event = JSON.parse(data) as ChatStreamEvent
+            if (event.type === 'user_message' || event.type === 'route') {
+              continue
+            }
             onEvent(event)
             if (event.type === 'done' || event.type === 'error') {
               return

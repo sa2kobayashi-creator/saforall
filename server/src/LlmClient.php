@@ -6,10 +6,16 @@ final class LlmClient
 {
     /**
      * @param list<array{role:string,content:string}> $messages
+     * @param list<string> $extraHeaders
      */
-    public static function chat(string $baseUrl, string $apiKey, string $model, array $messages): string
-    {
-        $raw = self::request($baseUrl, $apiKey, $model, $messages);
+    public static function chat(
+        string $baseUrl,
+        string $apiKey,
+        string $model,
+        array $messages,
+        array $extraHeaders = []
+    ): string {
+        $raw = self::request($baseUrl, $apiKey, $model, $messages, $extraHeaders);
         /** @var array<string, mixed>|null $decoded */
         $decoded = json_decode($raw, true);
         if (!is_array($decoded)) {
@@ -27,13 +33,15 @@ final class LlmClient
     /**
      * @param list<array{role:string,content:string}> $messages
      * @param callable(string):void $onDelta
+     * @param list<string> $extraHeaders
      */
     public static function chatStream(
         string $baseUrl,
         string $apiKey,
         string $model,
         array $messages,
-        callable $onDelta
+        callable $onDelta,
+        array $extraHeaders = []
     ): string {
         if (!function_exists('curl_init')) {
             throw new RuntimeException('PHP curl 拡張が必要です');
@@ -61,13 +69,18 @@ final class LlmClient
         $httpStatus = 0;
         $streamError = null;
 
-        $options = [
-            CURLOPT_POST => true,
-            CURLOPT_HTTPHEADER => [
+        $headers = array_merge(
+            [
                 'Content-Type: application/json',
                 'Authorization: Bearer ' . $apiKey,
                 'Accept: text/event-stream',
             ],
+            $extraHeaders
+        );
+
+        $options = [
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => $payload,
             CURLOPT_RETURNTRANSFER => false,
             CURLOPT_TIMEOUT => 120,
@@ -147,12 +160,14 @@ final class LlmClient
 
     /**
      * @param list<array{role:string,content:string}> $messages
+     * @param list<string> $extraHeaders
      */
     private static function request(
         string $baseUrl,
         string $apiKey,
         string $model,
-        array $messages
+        array $messages,
+        array $extraHeaders = []
     ): string {
         if (!function_exists('curl_init')) {
             throw new RuntimeException('PHP curl 拡張が必要です');
@@ -175,12 +190,17 @@ final class LlmClient
             throw new RuntimeException('curl の初期化に失敗しました');
         }
 
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_HTTPHEADER => [
+        $headers = array_merge(
+            [
                 'Content-Type: application/json',
                 'Authorization: Bearer ' . $apiKey,
             ],
+            $extraHeaders
+        );
+
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => $payload,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 90,

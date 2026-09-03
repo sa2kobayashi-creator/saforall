@@ -78,15 +78,16 @@ http://localhost/saforall/api/health
 | GET / POST | `/api/chat/sessions` | 会話セッション一覧・作成 |
 | GET / POST | `/api/chat/sessions/{id}/messages` | メッセージ取得・追加 |
 | POST | `/api/ai/chat` | LLM プロキシ（一括応答） |
-| POST | `/api/ai/chat/stream` | LLM プロキシ（SSE ストリーミング） |
+| POST | `/api/ai/chat/stream` | OpenAI / Gemini ストリーム |
+| POST | `/api/ai/route` | AI Router（振り分け） |
+| POST | `/api/ai/complete` | Cursor 実行結果の保存 |
+| GET | `/api/ai/usage` | 今月の概算利用料 |
 
-### LLM 設定
+### LLM / Router 設定
 
-1. アプリの設定（⚙）または `PUT /api/settings` で次を保存する
-   - `llm.base_url`（例: `https://api.openai.com/v1`）
-   - `llm.model`（例: `gpt-4o-mini`）
-   - `llm.api_key`
-2. チャットから質問すると `POST /api/ai/chat/stream` が外部 LLM をストリーミング呼び出し、結果を MySQL に保存する
+1. phpMyAdmin で `server/sql/migration_ai_router.sql` を実行する（既存 DB）
+2. アプリ設定で OpenAI / Cursor / Gemini のキーと月額上限を保存する（既定 $70 / $20 / $10）
+3. チャットの AI を「自動」にすると Router が振り分ける。Cursor 実行は Electron の `@cursor/sdk`
 
 OpenAI 互換 API（ローカル LLM の OpenAI 互換エンドポイントなど）も `base_url` を変えれば利用できます。
 

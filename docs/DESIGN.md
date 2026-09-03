@@ -335,30 +335,39 @@ Renderer → preload api.* → Main HTTP client → Apache/PHP → MySQL
 
 ## 7. AI サブシステム設計（目標）
 
+正本は [PIPELINE.md](./PIPELINE.md)（AI Router）。本節は実装上の配置だけを書く。
+
 ### 7.1 コンポーネント
 
 ```
-Renderer ChatPanel
+Renderer ChatPanel  （engine: auto | openai | cursor | gemini）
     │
     ▼
-Electron Main (HTTP)
+Electron Main
     │  POST /api/ai/chat
+    │  Cursor のとき @cursor/sdk を実行（local.cwd = ワークスペース）
     ▼
-PHP AI Proxy
-    │  設定・履歴を MySQL から読取/保存
-    │  Provider 呼び出し
-    ▼
-External LLM API
+PHP AI Router
+    │  分類・月次上限・会話保存・usage
+    ├─ OpenAI Chat Completions
+    ├─ Gemini 生成 API
+    └─ Cursor は queued run を返し、実体は Main が実行
 ```
 
-### 7.2 プロバイダ設定（MySQL `settings`）
+Cursor は OpenAI 互換の chat completions ではない。リポジトリを触る Agent として扱う。
 
-| key | 意味 |
+### 7.2 プロバイダ設定（MySQL `settings` / 環境変数）
+
+| key / 環境変数 | 意味 |
 | --- | --- |
-| `llm.api_key` | 秘密鍵（PHP のみが読む） |
-| `llm.base_url` | API ベース URL |
-| `llm.model` | モデル名 |
+| `OPENAI_API_KEY` / `llm.openai.api_key` | OpenAI |
+| `llm.openai.model` | 例: gpt-4o-mini |
+| `GEMINI_API_KEY` / `llm.gemini.api_key` | Gemini |
+| `llm.gemini.model` | 軽量モデル |
+| `CURSOR_API_KEY` / `llm.cursor.api_key` | Cursor SDK / Cloud Agent |
+| `cost.*.monthly_usd` | エンジン別月上限（Cursor は自動振り分けに必須） |
 
+既存の `llm.api_key` / `llm.base_url` / `llm.model` は OpenAI レーンへ移行する。Workers AI（`llm.simple.*`）は本線から外す。
 ### 7.3 コンテキスト組み立て
 
 優先度の高い順にトークン予算内へ収める。
@@ -454,16 +463,24 @@ sequenceDiagram
   participant M as Electron Main
   participant P as PHP API
   participant D as MySQL
-  participant L as LLM API
+  participant L as OpenAI or Gemini
+  participant K as Cursor SDK
 
-  U->>C: メッセージ送信
-  C->>M: api.request POST /ai/chat
+  U->>C: メッセージ送信（engine）
+  C->>M: POST /ai/chat
   M->>P: HTTP POST
-  P->>D: メッセージ保存
-  P->>L: Chat Completions
-  L-->>P: response
-  P->>D: assistant 保存
-  P-->>M: JSON
+  P->>D: 保存・分類・上限
+  alt OpenAI / Gemini
+    P->>L: Chat Completions
+    L-->>P: stream / JSON
+    P->>D: assistant + usage
+    P-->>M: SSE
+  else Cursor
+    P-->>M: route=cursor
+    M->>K: Agent.create / send / wait
+    K-->>M: 結果
+    M->>P: run complete + usage
+  end
   M-->>C: 表示更新
 ```
 

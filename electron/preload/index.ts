@@ -33,8 +33,24 @@ export type ApiRequestOptions = {
 
 export type ChatStreamEvent =
   | { type: 'user_message'; message: Record<string, unknown> }
+  | {
+      type: 'route'
+      engine: string
+      task_type: string
+      model: string
+      fallback_reason?: string | null
+      usage?: Record<string, { spent: number; limit: number; remaining: number }>
+    }
   | { type: 'delta'; text: string }
-  | { type: 'done'; model: string; assistant_message: Record<string, unknown> }
+  | {
+      type: 'done'
+      model: string
+      engine?: string
+      task_type?: string
+      estimated_usd?: number
+      usage?: Record<string, { spent: number; limit: number; remaining: number }>
+      assistant_message: Record<string, unknown>
+    }
   | { type: 'error'; code: string; message: string }
 
 export type ChatStreamHandlers = {

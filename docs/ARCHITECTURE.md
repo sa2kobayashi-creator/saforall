@@ -6,6 +6,7 @@
 | --- | --- |
 | [仕様書](./SPECIFICATION.md) | 機能要件・非機能要件・フェーズ |
 | [設計書](./DESIGN.md) | システム構成・IPC・AI・シーケンス |
+| [AI パイプライン](./PIPELINE.md) | AI Router（OpenAI / Cursor / Gemini） |
 | [サーバーセットアップ](../server/README.md) | XAMPP（Apache / MySQL）手順 |
 
 ---
@@ -15,12 +16,14 @@
 Electron がローカルファイルを編集し、XAMPP の Apache（PHP）+ MySQL が設定・会話などの永続化と（将来）LLM プロキシを担う。
 
 ```
-Electron (UI + ローカル fs)
+Electron (UI + ローカル fs + Cursor SDK)
         │ HTTP (localhost)
         ▼
-Apache / PHP API  ──► MySQL
+Apache / PHP  AI Router  ──► MySQL（会話・usage）
         │
-        └──► 外部 LLM API（将来）
+        ├─► OpenAI   （説明・設計・単発生成）
+        ├─► Gemini   （要約・軽い質問）
+        └─► Cursor   （コード開発 Agent。実行は Electron メイン）
 ```
 
 ## 役割分担

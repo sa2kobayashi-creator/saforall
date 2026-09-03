@@ -442,6 +442,7 @@ export default function App() {
               file={activeFile}
               backendConnected={backend.connected}
               workspaceId={workspaceId}
+              workspacePath={workspacePath}
               width={chatWidth}
               onApplyCode={applyCode}
             />

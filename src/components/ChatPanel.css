@@ -25,8 +25,33 @@
   gap: 6px;
 }
 
+.engine-picker {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 148px;
+}
+
+.engine-picker legend {
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.engine-picker label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+
 .model-select select {
-  max-width: 160px;
+  max-width: 220px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
@@ -35,8 +60,11 @@
   font-size: 11px;
 }
 
-.model-select select:disabled {
-  opacity: 0.55;
+.usage-bar {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
 }
 
 .sr-only {

@@ -13,7 +13,7 @@ Cursor のような AI コードエディタを目指すデスクトップアプ
 - フォルダをワークスペースとして開く
 - ファイル一覧の表示（直下）
 - Monaco での編集・保存（Ctrl/Cmd + S）
-- AI チャットパネルの UI（回答はプレースホルダ）
+- AI Router（自動 / Cursor / OpenAI / Gemini）と月額上限
 - PHP API のヘルスチェック（`/api/health`）と MySQL スキーマ
 
 ## セットアップ
@@ -61,6 +61,7 @@ copy .env.example .env
 | [仕様書](docs/SPECIFICATION.md) | 機能要件・非機能要件・受け入れ基準 |
 | [設計書](docs/DESIGN.md) | システム構成・IPC・AI・シーケンス |
 | [アーキテクチャ概要](docs/ARCHITECTURE.md) | 構成の短い要約 |
+| [AI パイプライン](docs/PIPELINE.md) | AI Router（OpenAI / Cursor / Gemini） |
 | [サーバーセットアップ](server/README.md) | XAMPP（Apache / MySQL）手順 |
 
 ## ロードマップ（初期）

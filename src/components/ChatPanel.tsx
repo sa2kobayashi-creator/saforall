@@ -2,12 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { ConfirmDialog } from './ConfirmDialog'
 import { MessageContent } from './MessageContent'
 import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
-import {
-  DEFAULT_LLM_MODEL,
-  LLM_MODEL_OPTIONS,
-  isKnownLlmModel
-} from '../lib/llmModels'
+import { DEFAULT_COST_LIMITS, USAGE_ENGINE_KEYS, DEFAULT_ENABLED_MODELS, optionsForEngine, parseModelList, type ProviderEngine } from '../lib/llmModels'
 import type {
+  AiEngine,
   ApplyCodeOptions,
   ChatMessage,
   ChatMessageRecord,
@@ -21,6 +18,7 @@ type Props = {
   file: OpenFile | null
   backendConnected: boolean
   workspaceId: number | null
+  workspacePath: string | null
   width: number
   onApplyCode: (
     code: string,
@@ -34,7 +32,7 @@ const welcomeMessage: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
   content:
-    'Ask モードは適用・実行の前に確認します。Agent モードは応答後にコード適用とコマンド実行を自動で行います。'
+    '仕事に合った AI へ自動で切り替えます。Ask は適用前に確認、Agent は応答後に自動適用します。'
 }
 
 function toChatMessage(row: ChatMessageRecord): ChatMessage {
@@ -50,10 +48,25 @@ function loadMode(): ChatMode {
   return saved === 'agent' ? 'agent' : 'ask'
 }
 
+function loadEngine(): AiEngine {
+  const saved = window.localStorage.getItem('saforall-ai-engine')
+  if (
+    saved === 'cursor' ||
+    saved === 'openai' ||
+    saved === 'gemini' ||
+    saved === 'workers' ||
+    saved === 'auto'
+  ) {
+    return saved
+  }
+  return 'auto'
+}
+
 export function ChatPanel({
   file,
   backendConnected,
   workspaceId,
+  workspacePath,
   width,
   onApplyCode
 }: Props) {
@@ -64,8 +77,13 @@ export function ChatPanel({
   const [thinking, setThinking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<ChatMode>(loadMode)
-  const [model, setModel] = useState(DEFAULT_LLM_MODEL)
-  const [modelSaving, setModelSaving] = useState(false)
+  const [engine, setEngine] = useState<AiEngine>(loadEngine)
+  const [modelChoice, setModelChoice] = useState('auto-within-engine')
+  const [enabledByEngine, setEnabledByEngine] = useState<Record<ProviderEngine, string[]>>({
+    ...DEFAULT_ENABLED_MODELS
+  })
+  const [routeLabel, setRouteLabel] = useState<string | null>(null)
+  const [usageText, setUsageText] = useState<string | null>(null)
   const [autoAppliedIds, setAutoAppliedIds] = useState<Record<string, boolean>>({})
   const [pendingAction, setPendingAction] = useState<{
     code: string
@@ -82,13 +100,39 @@ export function ChatPanel({
 
     let cancelled = false
     ;(async () => {
-      const result = await window.saforall.request<{
-        settings: Record<string, string | boolean>
-      }>('GET', '/settings')
-      if (cancelled || !result.ok || !result.data?.settings) return
-      const saved = result.data.settings['llm.model']
-      if (typeof saved === 'string' && saved.trim() !== '') {
-        setModel(saved.trim())
+      const [usageResult, settingsResult] = await Promise.all([
+        window.saforall.request<{
+          month: string
+          usage: Record<string, { spent: number; limit: number; remaining: number }>
+        }>('GET', '/ai/usage'),
+        window.saforall.request<{ settings: Record<string, string | boolean> }>(
+          'GET',
+          '/settings'
+        )
+      ])
+      if (cancelled) return
+
+      if (usageResult.ok && usageResult.data?.usage) {
+        const parts = USAGE_ENGINE_KEYS.map((key) => {
+          const row = usageResult.data!.usage[key]
+          const spent = row?.spent ?? 0
+          const limit = row?.limit ?? DEFAULT_COST_LIMITS[key]
+          return `${key} $${spent.toFixed(2)}/$${limit}`
+        })
+        setUsageText(parts.join(' · '))
+      }
+
+      if (settingsResult.ok && settingsResult.data?.settings) {
+        const settings = settingsResult.data.settings
+        setEnabledByEngine({
+          openai: parseModelList(settings['llm.openai.models'], DEFAULT_ENABLED_MODELS.openai),
+          gemini: parseModelList(settings['llm.gemini.models'], DEFAULT_ENABLED_MODELS.gemini),
+          workers: parseModelList(
+            settings['llm.workers.models'] ?? settings['llm.simple.models'],
+            DEFAULT_ENABLED_MODELS.workers
+          ),
+          cursor: parseModelList(settings['llm.cursor.models'], DEFAULT_ENABLED_MODELS.cursor)
+        })
       }
     })()
 
@@ -97,24 +141,10 @@ export function ChatPanel({
     }
   }, [backendConnected])
 
-  const changeModel = async (next: string) => {
-    const trimmed = next.trim()
-    if (trimmed === '' || trimmed === model) return
-
-    const previous = model
-    setModel(trimmed)
-    if (!backendConnected) return
-
-    setModelSaving(true)
-    const result = await window.saforall.request('PUT', '/settings', {
-      settings: { 'llm.model': trimmed }
-    })
-    setModelSaving(false)
-
-    if (!result.ok) {
-      setModel(previous)
-      setError(result.error?.message ?? 'モデルの保存に失敗しました')
-    }
+  const changeEngine = (next: AiEngine) => {
+    setEngine(next)
+    window.localStorage.setItem('saforall-ai-engine', next)
+    setModelChoice('auto-within-engine')
   }
 
   const contextLabel = useMemo(() => {
@@ -306,6 +336,12 @@ export function ChatPanel({
       const payload = {
         session_id: id,
         message: text,
+        engine,
+        model:
+          engine === 'auto' || modelChoice === 'auto-within-engine'
+            ? undefined
+            : modelChoice,
+        workspace_path: workspacePath,
         context: file
           ? {
               path: file.path,
@@ -344,7 +380,9 @@ export function ChatPanel({
             assistant
           ]
         })
-        await runAgentActions(assistant.id, assistant.content)
+        if (engine !== 'cursor') {
+          await runAgentActions(assistant.id, assistant.content)
+        }
         return
       }
 
@@ -352,6 +390,7 @@ export function ChatPanel({
       let sawAssistant = false
       let finalAssistantId: string | null = null
       let finalAssistantContent: string | null = null
+      let usedEngine: string = engine
 
       await window.saforall.chatStream(payload, {
         onEvent: (event) => {
@@ -363,6 +402,24 @@ export function ChatPanel({
                 message.id === localUser.id ? savedUser : message
               )
             )
+            return
+          }
+
+          if (event.type === 'route') {
+            usedEngine = event.engine
+            const reason = event.fallback_reason ? `（${event.fallback_reason}）` : ''
+            setRouteLabel(
+              `${event.engine} · ${event.model} / ${event.task_type}${reason}`
+            )
+            if (event.usage) {
+              const parts = USAGE_ENGINE_KEYS.map((key) => {
+                const row = event.usage?.[key]
+                const spent = row?.spent ?? 0
+                const limit = row?.limit ?? DEFAULT_COST_LIMITS[key]
+                return `${key} $${spent.toFixed(2)}/$${limit}`
+              })
+              setUsageText(parts.join(' · '))
+            }
             return
           }
 
@@ -392,6 +449,18 @@ export function ChatPanel({
           }
 
           if (event.type === 'done') {
+            if (event.engine) {
+              usedEngine = event.engine
+            }
+            if (event.usage) {
+              const parts = USAGE_ENGINE_KEYS.map((key) => {
+                const row = event.usage?.[key]
+                const spent = row?.spent ?? 0
+                const limit = row?.limit ?? DEFAULT_COST_LIMITS[key]
+                return `${key} $${spent.toFixed(2)}/$${limit}`
+              })
+              setUsageText(parts.join(' · '))
+            }
             const savedAssistant = toChatMessage(
               event.assistant_message as unknown as ChatMessageRecord
             )
@@ -425,7 +494,7 @@ export function ChatPanel({
         }
       })
 
-      if (finalAssistantId && finalAssistantContent) {
+      if (finalAssistantId && finalAssistantContent && usedEngine !== 'cursor') {
         await runAgentActions(finalAssistantId, finalAssistantContent)
       }
     } finally {
@@ -444,24 +513,51 @@ export function ChatPanel({
           )}
         </div>
         <div className="chat-header-right">
-          <label className="model-select">
-            <span className="sr-only">Model</span>
-            <select
-              value={model}
-              disabled={!backendConnected || modelSaving}
-              title="使用する LLM モデル"
-              onChange={(event) => void changeModel(event.target.value)}
-            >
-              {!isKnownLlmModel(model) && model.trim() !== '' && (
-                <option value={model}>{model}</option>
-              )}
-              {LLM_MODEL_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
+          <fieldset className="engine-picker">
+            <legend>AI</legend>
+            {(
+              [
+                ['auto', '自動（おすすめ）'],
+                ['cursor', 'Cursor'],
+                ['openai', 'OpenAI'],
+                ['gemini', 'Gemini'],
+                ['workers', 'Workers AI']
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value}>
+                <input
+                  type="radio"
+                  name="saforall-engine"
+                  checked={engine === value}
+                  onChange={() => changeEngine(value)}
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+          {engine !== 'auto' && (
+            <label className="model-select">
+              <span className="sr-only">Model</span>
+              <select
+                value={modelChoice}
+                disabled={!backendConnected}
+                title="このエンジン内のモデル"
+                onChange={(event) => setModelChoice(event.target.value)}
+              >
+                <option value="auto-within-engine">モデル自動（安い/作業向け）</option>
+                {enabledByEngine[engine].map((id) => {
+                  const meta = optionsForEngine(engine, enabledByEngine[engine]).find(
+                    (row) => row.id === id
+                  )
+                  return (
+                    <option key={id} value={id}>
+                      {meta?.label ?? id}
+                    </option>
+                  )
+                })}
+              </select>
+            </label>
+          )}
           <div className="mode-switch" role="group" aria-label="チャットモード">
             <button
               type="button"
@@ -487,10 +583,19 @@ export function ChatPanel({
       </div>
 
       <div className={`mode-banner ${mode}`}>
-        {mode === 'ask'
-          ? 'Ask: 適用 / 実行のたびに確認します'
-          : 'Agent: 応答に含まれるコードとコマンドを自動で適用・実行します'}
+        {engine === 'auto'
+          ? '自動: エンジンとモデルを作業・コストで切替（設定の複数候補から選択）'
+          : engine === 'cursor'
+            ? 'Cursor 固定: 下のリストからモデル選択、またはエンジン内自動'
+            : engine === 'gemini'
+              ? 'Gemini 固定: モデルはリスト選択 / 自動可'
+              : engine === 'workers'
+                ? 'Workers AI 固定: 簡単な作業向けモデルをリスト選択'
+                : 'OpenAI 固定: モデルはリスト選択 / 自動可'}
+        {routeLabel ? ` · 今回: ${routeLabel}` : ''}
+        {mode === 'ask' ? ' · Ask（適用前に確認）' : ' · Agent（自動適用）'}
       </div>
+      {usageText && <div className="usage-bar">今月 {usageText}</div>}
 
       {error && <div className="chat-error">{error}</div>}
 
