@@ -20,9 +20,10 @@ export const OPENAI_MODEL_CATALOG: ModelOption[] = [
 ]
 
 export const GEMINI_MODEL_CATALOG: ModelOption[] = [
-  { id: 'gemini-2.0-flash-lite', label: 'gemini-2.0-flash-lite（安価）', tier: 'cheap', costRank: 1 },
-  { id: 'gemini-2.0-flash', label: 'gemini-2.0-flash（標準）', tier: 'standard', costRank: 2 },
-  { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash（標準）', tier: 'standard', costRank: 3 }
+  { id: 'gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite（安価）', tier: 'cheap', costRank: 1 },
+  { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash（標準）', tier: 'standard', costRank: 2 },
+  { id: 'gemini-3.5-flash', label: 'gemini-3.5-flash（標準）', tier: 'standard', costRank: 3 },
+  { id: 'gemini-3.1-pro-preview', label: 'gemini-3.1-pro-preview（強）', tier: 'strong', costRank: 4 }
 ]
 
 export const WORKERS_MODEL_CATALOG: ModelOption[] = [
@@ -75,7 +76,7 @@ export function optionsForEngine(engine: ProviderEngine, enabled: string[]): Mod
 }
 
 export const DEFAULT_LLM_MODEL = 'gpt-4o-mini'
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash'
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
 export const DEFAULT_CURSOR_MODEL = 'grok-4.6'
 export const DEFAULT_WORKERS_MODEL = '@cf/meta/llama-3.1-8b-instruct'
 
@@ -95,7 +96,7 @@ export const ENGINE_MODEL_CATALOG: Record<ProviderEngine, ModelOption[]> = {
 
 export const DEFAULT_ENABLED_MODELS: Record<ProviderEngine, string[]> = {
   openai: ['gpt-4o-mini', 'gpt-4o'],
-  gemini: ['gemini-2.0-flash-lite', 'gemini-2.0-flash'],
+  gemini: ['gemini-2.5-flash-lite', 'gemini-2.5-flash'],
   workers: ['@cf/meta/llama-3.1-8b-instruct', '@cf/qwen/qwen2.5-coder-32b-instruct'],
   cursor: [
     'auto',

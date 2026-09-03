@@ -18,9 +18,10 @@ final class ModelCatalog
             ['id' => 'o3-mini', 'tier' => 'strong', 'cost' => 6],
         ],
         'gemini' => [
-            ['id' => 'gemini-2.0-flash-lite', 'tier' => 'cheap', 'cost' => 1],
-            ['id' => 'gemini-2.0-flash', 'tier' => 'standard', 'cost' => 2],
-            ['id' => 'gemini-2.5-flash', 'tier' => 'standard', 'cost' => 3],
+            ['id' => 'gemini-2.5-flash-lite', 'tier' => 'cheap', 'cost' => 1],
+            ['id' => 'gemini-2.5-flash', 'tier' => 'standard', 'cost' => 2],
+            ['id' => 'gemini-3.5-flash', 'tier' => 'standard', 'cost' => 3],
+            ['id' => 'gemini-3.1-pro-preview', 'tier' => 'strong', 'cost' => 4],
         ],
         'workers' => [
             ['id' => '@cf/meta/llama-3.1-8b-instruct', 'tier' => 'cheap', 'cost' => 1],
@@ -42,7 +43,7 @@ final class ModelCatalog
     /** @var array<string, list<string>> */
     private const DEFAULT_ENABLED = [
         'openai' => ['gpt-4o-mini', 'gpt-4o'],
-        'gemini' => ['gemini-2.0-flash-lite', 'gemini-2.0-flash'],
+        'gemini' => ['gemini-2.5-flash-lite', 'gemini-2.5-flash'],
         'workers' => [
             '@cf/meta/llama-3.1-8b-instruct',
             '@cf/qwen/qwen2.5-coder-32b-instruct',
@@ -56,6 +57,15 @@ final class ModelCatalog
             'claude-opus-5',
             'composer-2.5',
         ],
+    ];
+
+    /** 廃止モデル → 現行モデル */
+    private const RETIRED_MODELS = [
+        'gemini-2.0-flash-lite' => 'gemini-2.5-flash-lite',
+        'gemini-2.0-flash' => 'gemini-2.5-flash',
+        'gemini-1.5-flash' => 'gemini-2.5-flash',
+        'gemini-1.5-pro' => 'gemini-3.1-pro-preview',
+        'gemini-pro' => 'gemini-2.5-flash',
     ];
 
     /**
@@ -86,7 +96,10 @@ final class ModelCatalog
             array_unshift($list, $single);
         }
 
-        return $list;
+        return array_values(array_unique(array_map(
+            static fn (string $id): string => self::RETIRED_MODELS[$id] ?? $id,
+            $list
+        )));
     }
 
     /**
@@ -96,7 +109,7 @@ final class ModelCatalog
     {
         $enabled = self::enabledModels($settings, $engine);
         if ($forcedModel !== null && trim($forcedModel) !== '') {
-            $forced = trim($forcedModel);
+            $forced = self::RETIRED_MODELS[trim($forcedModel)] ?? trim($forcedModel);
             if (in_array($forced, $enabled, true) || $forced === 'auto') {
                 return $forced;
             }

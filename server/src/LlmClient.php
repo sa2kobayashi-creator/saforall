@@ -148,7 +148,11 @@ final class LlmClient
         }
 
         if ($httpStatus > 0 && ($httpStatus < 200 || $httpStatus >= 300)) {
-            throw new RuntimeException('LLM API エラー (HTTP ' . $httpStatus . ')');
+            $hint = '';
+            if ($httpStatus === 410) {
+                $hint = '（モデルまたはエンドポイントが廃止されている可能性があります。設定で Gemini モデルを 2.5 / 3.5 系に変更してください）';
+            }
+            throw new RuntimeException('LLM API エラー (HTTP ' . $httpStatus . ')' . $hint);
         }
 
         if (trim($assistant) === '') {
