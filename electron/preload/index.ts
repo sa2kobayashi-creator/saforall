@@ -266,6 +266,14 @@ const api = {
     servers: Array<{ id: string; command: string; args?: string[] }>
     tools: Array<{ name: string; description?: string; serverId: string }>
   }> => ipcRenderer.invoke('mcp:list', cwd),
+  callMcp: (params: {
+    cwd: string
+    tool: string
+    serverId?: string
+    arguments?: Record<string, unknown>
+    timeoutMs?: number
+  }): Promise<{ ok: boolean; content: string; serverId?: string; error?: string }> =>
+    ipcRenderer.invoke('mcp:call', params),
   onDebugEvent: (
     callback: (
       event:

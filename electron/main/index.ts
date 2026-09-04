@@ -38,7 +38,7 @@ import {
   invalidateWorkspaceIndex,
   searchIndexedSymbols
 } from './workspaceIndex'
-import { listWorkspaceMcpTools } from './mcpClient'
+import { listWorkspaceMcpTools, mcpManager } from './mcpClient'
 import { lspManager, type LspDiagnostic } from './lspClient'
 import { listBackgroundJobs } from './backgroundJobs'
 import { searchOpenVsx } from './marketplace'
@@ -84,6 +84,7 @@ app.on('window-all-closed', () => {
   killAllTerminals()
   void stopUnifiedDebug()
   void lspManager.dispose()
+  void mcpManager.disposeAll()
   if (process.platform !== 'darwin') app.quit()
 })
 
@@ -91,6 +92,7 @@ app.on('before-quit', () => {
   killAllTerminals()
   void stopUnifiedDebug()
   void lspManager.dispose()
+  void mcpManager.disposeAll()
 })
 
 ipcMain.handle('dialog:openDirectory', async () => {
@@ -161,6 +163,26 @@ ipcMain.handle('fs:ensureIndex', async (_event, cwd: string) => {
 })
 
 ipcMain.handle('mcp:list', async (_event, cwd: string) => listWorkspaceMcpTools(cwd))
+
+ipcMain.handle(
+  'mcp:call',
+  async (
+    _event,
+    params: {
+      cwd: string
+      tool: string
+      serverId?: string
+      arguments?: Record<string, unknown>
+      timeoutMs?: number
+    }
+  ) =>
+    mcpManager.callTool(params.cwd, {
+      tool: params.tool,
+      serverId: params.serverId,
+      arguments: params.arguments,
+      timeoutMs: params.timeoutMs
+    })
+)
 
 ipcMain.handle('fs:loadProjectRules', async (_event, cwd: string) => {
   return loadProjectRules(cwd)

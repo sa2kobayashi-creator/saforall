@@ -1357,6 +1357,7 @@ export default function App() {
               <ExtensionsPanel
                 extensions={extensions}
                 activeFilePath={activePath}
+                workspacePath={workspacePath}
                 grants={extensionGrants}
                 onGrant={grantExtensionPermissions}
                 onRevoke={revokeExtensionPermissions}

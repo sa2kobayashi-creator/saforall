@@ -70,7 +70,7 @@ const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: 'F1', action: 'キーボードショートカット一覧' },
   { keys: '@codebase / @symbol', action: '索引サマリ・シンボルをチャット文脈に追加' },
   { keys: '.saforall/keybindings.json', action: 'ワークスペース独自キーバインド' },
-  { keys: '.saforall/mcp.json', action: 'MCP サーバー設定（tools/list）' },
+  { keys: '.saforall/mcp.json', action: 'MCP サーバー設定（tools/list + tools/call / Agent 連携）' },
   { keys: 'Enter', action: 'チャット送信（Shift+Enter で改行）' },
   { keys: 'Esc', action: '設定などのダイアログを閉じる' }
 ]

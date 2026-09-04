@@ -1,4 +1,5 @@
 import type { ChatStreamEvent, MonthUsage } from './api'
+import { mcpManager, type McpToolInfo } from './mcpClient'
 import {
   loadProjectRules,
   suggestVerifyCommand,
@@ -133,20 +134,67 @@ const TOOLS = [
         required: ['command']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_mcp_tools',
+      description:
+        'List MCP tools from .saforall/mcp.json (stdio servers). Use before call_mcp_tool.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'call_mcp_tool',
+      description:
+        'Call an MCP tool by name. Optionally pass serverId when multiple servers expose similar tools.',
+      parameters: {
+        type: 'object',
+        properties: {
+          tool: { type: 'string', description: 'MCP tool name' },
+          serverId: { type: 'string', description: 'Optional MCP server id from mcp.json' },
+          arguments: {
+            type: 'object',
+            description: 'JSON arguments object for the tool'
+          }
+        },
+        required: ['tool']
+      }
+    }
   }
 ]
 
 const PHASE_TOOLS: Record<AgentPhase, Set<string>> = {
-  plan: new Set(['set_phase', 'list_dir', 'search_code', 'read_file']),
-  explore: new Set(['set_phase', 'list_dir', 'search_code', 'read_file']),
-  edit: new Set(['set_phase', 'read_file', 'search_code', 'list_dir', 'edit_file', 'run_shell']),
+  plan: new Set(['set_phase', 'list_dir', 'search_code', 'read_file', 'list_mcp_tools']),
+  explore: new Set([
+    'set_phase',
+    'list_dir',
+    'search_code',
+    'read_file',
+    'list_mcp_tools',
+    'call_mcp_tool'
+  ]),
+  edit: new Set([
+    'set_phase',
+    'read_file',
+    'search_code',
+    'list_dir',
+    'edit_file',
+    'run_shell',
+    'list_mcp_tools',
+    'call_mcp_tool'
+  ]),
   verify: new Set([
     'set_phase',
     'read_file',
     'search_code',
     'list_dir',
     'run_shell',
-    'edit_file'
+    'edit_file',
+    'list_mcp_tools',
+    'call_mcp_tool'
   ])
 }
 
@@ -547,6 +595,81 @@ async function runTool(
       return { content: JSON.stringify(payload), ok: result.ok }
     }
 
+    if (name === 'list_mcp_tools') {
+      const listed = await mcpManager.listWorkspaceTools(workspacePath)
+      const payload = {
+        ok: true,
+        servers: listed.servers.map((row) => ({
+          id: row.id,
+          command: row.command,
+          args: row.args
+        })),
+        tools: listed.tools.map((row) => ({
+          name: row.name,
+          serverId: row.serverId,
+          description: row.description
+        })),
+        note:
+          listed.tools.length === 0
+            ? 'No MCP tools. Add .saforall/mcp.json (Cursor-compatible mcpServers map is OK).'
+            : undefined
+      }
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: true,
+        summary: `mcp tools ${listed.tools.length} · servers ${listed.servers.length}`
+      })
+      return { content: JSON.stringify(payload), ok: true }
+    }
+
+    if (name === 'call_mcp_tool') {
+      const tool = String(args.tool ?? '')
+      if (!tool) {
+        onEvent({
+          type: 'tool_result',
+          id: callId,
+          name,
+          ok: false,
+          summary: 'tool required'
+        })
+        return {
+          content: JSON.stringify({ ok: false, error: 'tool required' }),
+          ok: false
+        }
+      }
+      const serverId = typeof args.serverId === 'string' ? args.serverId : undefined
+      const toolArgs =
+        args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments)
+          ? (args.arguments as Record<string, unknown>)
+          : {}
+      const result = await mcpManager.callTool(workspacePath, {
+        tool,
+        serverId,
+        arguments: toolArgs
+      })
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: result.ok,
+        summary: result.ok
+          ? `mcp ${tool}${result.serverId ? ` @${result.serverId}` : ''}`
+          : `mcp fail ${tool}: ${result.error ?? 'error'}`
+      })
+      return {
+        content: JSON.stringify({
+          ok: result.ok,
+          serverId: result.serverId,
+          tool,
+          content: result.content,
+          error: result.error
+        }),
+        ok: result.ok
+      }
+    }
+
     onEvent({
       type: 'tool_result',
       id: callId,
@@ -596,23 +719,43 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
   const rules = await loadProjectRules(workspacePath)
   const suggestedVerify = await suggestVerifyCommand(workspacePath)
+  let mcpCatalog: McpToolInfo[] = []
+  try {
+    const listed = await mcpManager.listWorkspaceTools(workspacePath)
+    mcpCatalog = listed.tools.slice(0, 40)
+  } catch {
+    mcpCatalog = []
+  }
+
   const agentSystem = [
     'あなたは saforall の長時間コーディング Agent です。大規模リファクタも担当します。',
     '必ずフェーズを進めます: plan → explore → edit → verify。',
     'set_phase でフェーズを宣言してから作業してください。',
     'plan: 変更方針を短く立てる（必要なら軽く list/search）。',
-    'explore: read_file / search_code で深く調査（関連ファイルを複数読む）。',
+    'explore: read_file / search_code / MCP で深く調査（関連ファイルを複数読む）。',
     'edit: edit_file で複数ファイルを提案（Composer レビュー用。即時永続保存されない）。',
     'verify: 編集ファイルを read_file で確認し、run_shell で test/typecheck を実行する。失敗したら edit に戻って修正し、再度 run_shell。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
+    'MCP: list_mcp_tools / call_mcp_tool で外部ツールを使える（.saforall/mcp.json）。',
     '破壊的コマンドは禁止。短い検証コマンド（npm test / typecheck 等）を優先。',
-    'ツール失敗時は別パス/クエリ/コマンドで自己修正。同じ呼び出しを繰り返さない。',
+    'ツール失敗時は別パス/クエリ/コマンドで自己修正。同じ呼び出しを繰り返さない。失敗理由を読み、仮説を変える。',
     '最終回答は日本語で、変更ファイル一覧・シェル結果・注意点を短くまとめる。',
     `ワークスペース: ${workspacePath}`,
     suggestedVerify
       ? `推奨検証コマンド: ${suggestedVerify}`
       : 'package.json / テスト設定を探し、適切な検証コマンドを run_shell で実行する。'
   ]
+  if (mcpCatalog.length > 0) {
+    agentSystem.push(
+      '利用可能な MCP ツール:\n' +
+        mcpCatalog
+          .map(
+            (row) =>
+              `- ${row.name} @${row.serverId}${row.description ? `: ${row.description.slice(0, 120)}` : ''}`
+          )
+          .join('\n')
+    )
+  }
   if (rules) {
     agentSystem.push('プロジェクトルール:\n' + rules)
   }
@@ -631,8 +774,9 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   onEvent({ type: 'agent_phase', phase, note: '計画を開始' })
 
   let finalText = ''
-  const maxSteps = 48
+  const maxSteps = 56
   let consecutiveToolFailures = 0
+  const recentFailures: string[] = []
   const recentSignatures: string[] = []
   const progressNotes: string[] = []
   const editedPaths = new Set<string>()
@@ -641,12 +785,14 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   const pendingEdits = new Map<string, string>()
   const readCache = new Map<string, string>()
   const shellState = { attempts: 0, passed: false, lastExit: null as number | null }
+  let lastShellFailure = ''
   let exploreReads = 0
   let verifyNudgeCount = 0
   let shellNudgeCount = 0
   let finalizeBlockCount = 0
   let verifyIncomplete = false
   let shellIncomplete = false
+  let recoverNudgeCount = 0
 
   for (let step = 0; step < maxSteps; step += 1) {
     let completion: ChatCompletionResponse
@@ -697,9 +843,11 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       })
 
       const canParallel = (name: string) =>
-        name === 'read_file' || name === 'list_dir' || name === 'search_code'
-      // allow larger parallel explore batches for speed
-      const maxParallel = phase === 'explore' ? 6 : 4
+        name === 'read_file' ||
+        name === 'list_dir' ||
+        name === 'search_code' ||
+        name === 'list_mcp_tools'
+      const maxParallel = phase === 'explore' ? 8 : phase === 'verify' ? 4 : 5
 
       type OrderedRow = {
         call: ToolCall
@@ -821,12 +969,37 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         })
         progressNotes.push(`${phase}:${call.function.name}:${result.ok ? 'ok' : 'fail'}`)
 
-        if (result.ok) consecutiveToolFailures = 0
-        else consecutiveToolFailures += 1
+        if (result.ok) {
+          consecutiveToolFailures = 0
+        } else {
+          consecutiveToolFailures += 1
+          recentFailures.push(`${call.function.name}: ${result.content.slice(0, 240)}`)
+          if (recentFailures.length > 6) recentFailures.shift()
+        }
+
+        if (call.function.name === 'run_shell' && !result.ok) {
+          try {
+            const parsed = JSON.parse(result.content) as {
+              stderr?: string
+              stdout?: string
+              command?: string
+              exitCode?: number | null
+            }
+            lastShellFailure = [
+              parsed.command ? `$ ${parsed.command}` : 'run_shell failed',
+              parsed.exitCode != null ? `exit=${parsed.exitCode}` : '',
+              (parsed.stderr || parsed.stdout || '').slice(0, 1200)
+            ]
+              .filter(Boolean)
+              .join('\n')
+          } catch {
+            lastShellFailure = result.content.slice(0, 1200)
+          }
+        }
       }
 
       if (step > 0 && step % 6 === 0) {
-        const summary = `step ${step + 1}/${maxSteps} · phase=${phase} · edits=${editedPaths.size} · ${progressNotes.slice(-4).join(', ')}`
+        const summary = `step ${step + 1}/${maxSteps} · phase=${phase} · edits=${editedPaths.size} · shell=${shellState.passed ? 'pass' : `fail×${shellState.attempts}`} · ${progressNotes.slice(-4).join(', ')}`
         onEvent({
           type: 'agent_checkpoint',
           step: step + 1,
@@ -895,7 +1068,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           shellNudgeCount += 1
           messages.push({
             role: 'user',
-            content: `システム: run_shell が失敗しています（exit=${shellState.lastExit ?? 'timeout'}）。エラーを直し set_phase edit → edit_file → 再度 run_shell してください。`
+            content: `システム: run_shell が失敗しています（exit=${shellState.lastExit ?? 'timeout'}）。エラーを直し set_phase edit → edit_file → 再度 run_shell してください。\n--- failure ---\n${lastShellFailure || '(no output)'}`
           })
         } else if (
           pending.length === 0 &&
@@ -912,11 +1085,27 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         }
       }
 
+      if (
+        lastShellFailure &&
+        !shellState.passed &&
+        shellState.attempts >= 1 &&
+        phase !== 'edit' &&
+        recoverNudgeCount < 2
+      ) {
+        recoverNudgeCount += 1
+        messages.push({
+          role: 'user',
+          content:
+            'システム: シェル検証失敗からのリカバリです。set_phase edit で失敗箇所を修正し、verify で run_shell を再実行してください。'
+        })
+      }
+
       if (consecutiveToolFailures >= 3) {
         messages.push({
           role: 'user',
           content:
-            'システム: ツール失敗が続いています。別の調査方法に切り替えるか、現状で最終回答を出してください。'
+            'システム: ツール失敗が続いています。別の調査方法に切り替えるか、現状で最終回答を出してください。\n最近の失敗:\n' +
+            recentFailures.slice(-3).join('\n---\n')
         })
         consecutiveToolFailures = 0
       }

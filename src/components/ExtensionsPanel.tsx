@@ -11,6 +11,7 @@ import './ExtensionsPanel.css'
 type Props = {
   extensions: WorkspaceExtension[]
   activeFilePath: string | null
+  workspacePath?: string | null
   grants: Record<string, ExtensionPermission[]>
   onGrant: (extensionId: string, permissions: ExtensionPermission[]) => void
   onRevoke: (extensionId: string) => void
@@ -21,6 +22,7 @@ type Props = {
 export function ExtensionsPanel({
   extensions,
   activeFilePath,
+  workspacePath = null,
   grants,
   onGrant,
   onRevoke,
@@ -39,6 +41,27 @@ export function ExtensionsPanel({
   >([])
   const [marketBusy, setMarketBusy] = useState(false)
   const [marketError, setMarketError] = useState<string | null>(null)
+  const [mcpTools, setMcpTools] = useState<
+    Array<{ name: string; description?: string; serverId: string }>
+  >([])
+  const [mcpServers, setMcpServers] = useState<Array<{ id: string; command: string }>>([])
+  const [mcpBusy, setMcpBusy] = useState(false)
+  const [mcpError, setMcpError] = useState<string | null>(null)
+
+  const refreshMcp = async () => {
+    if (!workspacePath || typeof window.saforall.listMcp !== 'function') return
+    setMcpBusy(true)
+    setMcpError(null)
+    try {
+      const result = await window.saforall.listMcp(workspacePath)
+      setMcpServers(result.servers.map((row) => ({ id: row.id, command: row.command })))
+      setMcpTools(result.tools)
+    } catch (error) {
+      setMcpError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setMcpBusy(false)
+    }
+  }
 
   const resolveRun = (command: ExtensionCommand) =>
     command.run.replaceAll(
@@ -77,6 +100,34 @@ export function ExtensionsPanel({
         `.saforall/extensions/*.json` を読み込みます。実行には権限承認が必要です（`{'{file}'}` =
         アクティブファイル）。
       </p>
+
+      <div className="extensions-market">
+        <strong>MCP</strong>
+        <p>
+          `.saforall/mcp.json`（例: `.saforall/mcp.json.example`）。Agent から `call_mcp_tool` でも利用できます。
+        </p>
+        <button type="button" disabled={!workspacePath || mcpBusy} onClick={() => void refreshMcp()}>
+          {mcpBusy ? '読込中…' : 'MCP ツールを読み込む'}
+        </button>
+        {mcpError && <p className="extensions-error">{mcpError}</p>}
+        {mcpServers.length > 0 && (
+          <p className="extensions-perms">
+            servers: {mcpServers.map((row) => row.id).join(', ')}
+          </p>
+        )}
+        {mcpTools.length > 0 && (
+          <ul className="extensions-list">
+            {mcpTools.slice(0, 40).map((tool) => (
+              <li key={`${tool.serverId}:${tool.name}`} className="extensions-card">
+                <div className="extensions-card-title">
+                  {tool.name} <span className="extensions-perms">@{tool.serverId}</span>
+                </div>
+                {tool.description && <p>{tool.description}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="extensions-market">
         <strong>Marketplace (Open VSX)</strong>
