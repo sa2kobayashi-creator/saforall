@@ -185,6 +185,46 @@ test('truncateShellOutput keeps head and tail', () => {
   assert.ok(out.length < text.length)
 })
 
+function looksLikeUtf16Le(buf) {
+  if (buf.length < 4) return false
+  const sample = Math.min(buf.length, 4000)
+  const pairs = Math.floor(sample / 2)
+  if (pairs < 8) return false
+  let nullOnOdd = 0
+  let nullOnEven = 0
+  for (let i = 0; i + 1 < sample; i += 2) {
+    if (buf[i] === 0) nullOnEven += 1
+    if (buf[i + 1] === 0) nullOnOdd += 1
+  }
+  return nullOnOdd > pairs * 0.3 && nullOnOdd > nullOnEven * 2
+}
+
+function decodeTextBuffer(buf) {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    return { text: buf.toString('utf16le').replace(/^\uFEFF/, ''), encoding: 'utf-16le' }
+  }
+  if (looksLikeUtf16Le(buf)) {
+    return { text: buf.toString('utf16le').replace(/^\uFEFF/, ''), encoding: 'utf-16le' }
+  }
+  return { text: buf.toString('utf8').replace(/^\uFEFF/, ''), encoding: 'utf-8' }
+}
+
+test('decodeTextBuffer detects UTF-16LE markdown without BOM', () => {
+  const text = '# sa-Signboard\n\nシンプル\n'
+  const buf = Buffer.from(text, 'utf16le')
+  const decoded = decodeTextBuffer(buf)
+  assert.equal(decoded.encoding, 'utf-16le')
+  assert.match(decoded.text, /sa-Signboard/)
+  assert.match(decoded.text, /シンプル/)
+})
+
+test('decodeTextBuffer keeps UTF-8', () => {
+  const buf = Buffer.from('# hello\n日本語\n', 'utf8')
+  const decoded = decodeTextBuffer(buf)
+  assert.equal(decoded.encoding, 'utf-8')
+  assert.match(decoded.text, /日本語/)
+})
+
 function findReplaceableBlock(existing, code) {
   const snippet = code.replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '')
   if (!snippet || snippet.length < 12) return null

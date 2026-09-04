@@ -42,6 +42,7 @@ import { listWorkspaceMcpTools } from './mcpClient'
 import { lspManager, type LspDiagnostic } from './lspClient'
 import { listBackgroundJobs } from './backgroundJobs'
 import { searchOpenVsx } from './marketplace'
+import { readTextFile } from './textEncoding'
 
 let workspaceWatcher: FSWatcher | null = null
 let watchDebounce: ReturnType<typeof setTimeout> | null = null
@@ -101,7 +102,8 @@ ipcMain.handle('dialog:openDirectory', async () => {
 })
 
 ipcMain.handle('fs:readFile', async (_event, filePath: string) => {
-  return readFile(filePath, 'utf-8')
+  const decoded = await readTextFile(filePath)
+  return decoded.text
 })
 
 ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {

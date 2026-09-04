@@ -127,6 +127,27 @@
   min-height: 0;
 }
 
+.editor-host-wrap {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.editor-host-wrap .editor-host,
+.editor-host-wrap .preview-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor-loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted, #9aa4b2);
+  font-size: 13px;
+}
+
 /* Monaco glyph margin decorations (injected into editor DOM) */
 :global(.saforall-breakpoint-glyph),
 .saforall-breakpoint-glyph {

@@ -134,6 +134,9 @@ export function DocumentationDialog({ open, onClose }: SimpleProps) {
             <strong>LSP</strong> — `typescript-language-server` / `pylsp` が PATH にあれば診断・補完・定義ジャンプ（F12）を利用できます。
           </li>
           <li>
+            <strong>プレビュー</strong> — Markdown / HTML ではタブ右の「編集 / 分割 / プレビュー」で表示を切り替えられます。
+          </li>
+          <li>
             <strong>ターミナル / Git</strong> — Ctrl + ` でターミナル、Activity Bar の Source Control で Git 操作ができます。
           </li>
         </ol>

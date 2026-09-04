@@ -2,6 +2,7 @@ import { readdir, readFile, stat, writeFile, mkdir, unlink } from 'fs/promises'
 import { spawn } from 'child_process'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { searchIndexedContent } from './workspaceIndex'
+import { readTextFile } from './textEncoding'
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -26,12 +27,12 @@ export function resolveWorkspacePath(workspaceRoot: string, targetPath: string):
 
 export async function toolReadFile(workspaceRoot: string, pathArg: string): Promise<string> {
   const absolute = resolveWorkspacePath(workspaceRoot, pathArg)
-  const content = await readFile(absolute, 'utf-8')
+  const { text } = await readTextFile(absolute)
   const max = 80_000
-  if (content.length > max) {
-    return content.slice(0, max) + '\n\n... (truncated)'
+  if (text.length > max) {
+    return text.slice(0, max) + '\n\n... (truncated)'
   }
-  return content
+  return text
 }
 
 export async function toolListDir(workspaceRoot: string, pathArg = '.'): Promise<string> {

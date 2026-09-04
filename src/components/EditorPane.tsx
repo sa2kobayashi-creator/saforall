@@ -6,7 +6,11 @@ import type { DebugBreakpointMap } from '../lib/debugTypes'
 import { disposeTabCompletions, registerTabCompletions } from '../lib/tabCompletions'
 import { disposeLspProviders, registerLspProviders } from '../lib/lspProviders'
 import { InlineEditBar, type InlineEditTarget } from './InlineEditBar'
+import { PreviewPane, supportsPreview } from './PreviewPane'
 import './EditorPane.css'
+import './PreviewPane.css'
+
+type PreviewMode = 'edit' | 'preview' | 'split'
 
 type Props = {
   tabs: OpenFile[]
@@ -74,6 +78,7 @@ export function EditorPane({
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null)
   const decorationIdsRef = useRef<string[]>([])
   const [inlineTarget, setInlineTarget] = useState<InlineEditTarget | null>(null)
+  const [previewMode, setPreviewMode] = useState<PreviewMode>('edit')
   const openInlineEditRef = useRef<() => void>(() => undefined)
 
   const openInlineEdit = useCallback(() => {
@@ -122,6 +127,12 @@ export function EditorPane({
     })
   }, [])
   openInlineEditRef.current = openInlineEdit
+
+  useEffect(() => {
+    if (!file || !supportsPreview(file.language, file.path)) {
+      setPreviewMode('edit')
+    }
+  }, [file?.path, file?.language])
 
   useEffect(() => {
     if (inlineEditTrigger > 0) openInlineEdit()
@@ -402,6 +413,26 @@ export function EditorPane({
             )
           })}
         </div>
+        {supportsPreview(file.language, file.path) && (
+          <div className="preview-mode-group" role="group" aria-label="プレビュー表示">
+            {(
+              [
+                ['edit', '編集'],
+                ['split', '分割'],
+                ['preview', 'プレビュー']
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                className={`preview-mode-btn ${previewMode === mode ? 'active' : ''}`}
+                onClick={() => setPreviewMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <button type="button" className="save-btn" onClick={onSave}>
           保存
         </button>
@@ -437,26 +468,44 @@ export function EditorPane({
           editor.focus()
         }}
       />
-      <div className="editor-host">
-        <Editor
-          path={file.path}
-          language={file.language}
-          value={file.content}
-          theme="vs-dark"
-          onMount={handleMount}
-          onChange={(value) => onChange(value ?? '')}
-          options={{
-            fontSize: 14,
-            fontFamily: 'Cascadia Code, Consolas, monospace',
-            minimap: { enabled: true },
-            automaticLayout: true,
-            scrollBeyondLastLine: false,
-            wordWrap: 'on',
-            tabSize: 2,
-            glyphMargin: true,
-            inlineSuggest: { enabled: true }
-          }}
-        />
+      <div
+        className={
+          previewMode === 'split' && supportsPreview(file.language, file.path)
+            ? 'editor-preview-split'
+            : 'editor-host-wrap'
+        }
+      >
+        {previewMode !== 'preview' && (
+          <div className="editor-host">
+            <Editor
+              path={file.path}
+              language={file.language}
+              value={file.content}
+              theme="vs-dark"
+              loading={<div className="editor-loading">エディタを読み込み中…</div>}
+              onMount={handleMount}
+              onChange={(value) => onChange(value ?? '')}
+              options={{
+                fontSize: 14,
+                fontFamily: 'Cascadia Code, Consolas, monospace',
+                minimap: { enabled: true },
+                automaticLayout: true,
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                tabSize: 2,
+                glyphMargin: true,
+                inlineSuggest: { enabled: true }
+              }}
+            />
+          </div>
+        )}
+        {previewMode !== 'edit' && supportsPreview(file.language, file.path) && (
+          <PreviewPane
+            language={file.language}
+            content={file.content}
+            fileName={file.path.split(/[/\\]/).pop()}
+          />
+        )}
       </div>
     </div>
   )

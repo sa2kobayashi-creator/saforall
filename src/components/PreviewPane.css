@@ -1,0 +1,52 @@
+.preview-pane {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: #0d1117;
+  border-left: 1px solid var(--border, #30363d);
+}
+
+.preview-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #0d1117;
+}
+
+.editor-preview-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-preview-split .editor-host,
+.editor-preview-split .preview-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-mode-group {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: 8px;
+}
+
+.preview-mode-btn {
+  border: 1px solid var(--border, #30363d);
+  background: transparent;
+  color: var(--muted, #9aa4b2);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.preview-mode-btn.active {
+  color: var(--fg, #e6edf3);
+  border-color: var(--accent, #58a6ff);
+  background: var(--accent-soft, rgba(88, 166, 255, 0.12));
+}
+
+.preview-mode-btn:hover {
+  color: var(--fg, #e6edf3);
+}
