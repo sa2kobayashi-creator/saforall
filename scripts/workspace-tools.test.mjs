@@ -257,6 +257,27 @@ test('applyTextEdits renames symbol spans', () => {
   assert.equal(next, 'const bar = 1\nconsole.log(bar)\n')
 })
 
+function resolveMcpCommand(command) {
+  const trimmed = (command || '').trim()
+  if (!trimmed) return { command: trimmed, shell: false }
+  if (/[\\/]/.test(trimmed) || trimmed.includes(':')) {
+    return { command: trimmed, shell: /\.(cmd|bat)$/i.test(trimmed) }
+  }
+  return { command: trimmed, shell: true }
+}
+
+test('resolveMcpCommand uses shell for bare windows commands', () => {
+  const resolved = resolveMcpCommand('npx')
+  assert.equal(resolved.command, 'npx')
+  assert.equal(resolved.shell, true)
+})
+
+test('resolveMcpCommand keeps absolute cmd paths', () => {
+  const resolved = resolveMcpCommand('C:\\Program Files\\nodejs\\npx.cmd')
+  assert.match(resolved.command, /npx\.cmd$/i)
+  assert.equal(resolved.shell, true)
+})
+
 function findReplaceableBlock(existing, code) {
   const snippet = code.replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '')
   if (!snippet || snippet.length < 12) return null

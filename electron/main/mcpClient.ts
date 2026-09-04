@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
-import { join } from 'path'
+import { delimiter, join } from 'path'
 
 export type McpServerConfig = {
   id: string
@@ -72,6 +73,61 @@ function writeMessage(
   child.stdin.write(`Content-Length: ${Buffer.byteLength(body, 'utf-8')}\r\n\r\n${body}`)
 }
 
+function windowsNodeDirs(): string[] {
+  const dirs = [
+    process.env.ProgramFiles ? join(process.env.ProgramFiles, 'nodejs') : '',
+    process.env['ProgramFiles(x86)'] ? join(process.env['ProgramFiles(x86)']!, 'nodejs') : '',
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs', 'nodejs') : '',
+    process.env.APPDATA ? join(process.env.APPDATA, 'npm') : ''
+  ]
+  return dirs.filter((dir) => dir && existsSync(dir))
+}
+
+function enrichPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const extras = windowsNodeDirs()
+  if (extras.length === 0) return env
+  const current = env.PATH || env.Path || ''
+  const merged = [...extras, ...current.split(delimiter).filter(Boolean)]
+  const unique = Array.from(new Set(merged))
+  return { ...env, PATH: unique.join(delimiter), Path: unique.join(delimiter) }
+}
+
+/** Resolve bare commands like `npx` for Electron on Windows (PATH often incomplete). */
+export function resolveMcpCommand(command: string): { command: string; shell: boolean } {
+  const trimmed = command.trim()
+  if (!trimmed) return { command: trimmed, shell: false }
+
+  // Absolute / relative path already provided
+  if (/[\\/]/.test(trimmed) || trimmed.includes(':')) {
+    const shell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(trimmed)
+    return { command: trimmed, shell }
+  }
+
+  if (process.platform !== 'win32') {
+    return { command: trimmed, shell: false }
+  }
+
+  const candidates: string[] = []
+  for (const dir of windowsNodeDirs()) {
+    candidates.push(join(dir, `${trimmed}.cmd`), join(dir, `${trimmed}.exe`), join(dir, trimmed))
+  }
+  // Common Node install
+  candidates.push(
+    join('C:\\Program Files\\nodejs', `${trimmed}.cmd`),
+    join('C:\\Program Files\\nodejs', `${trimmed}.exe`),
+    join('C:\\Program Files\\nodejs', trimmed)
+  )
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return { command: candidate, shell: /\.(cmd|bat)$/i.test(candidate) }
+    }
+  }
+
+  // Fall back to shell so cmd.exe can resolve via PATH
+  return { command: trimmed, shell: true }
+}
+
 /** Persistent stdio MCP session (initialize → tools/list → tools/call). */
 export class McpSession {
   readonly server: McpServerConfig
@@ -94,14 +150,48 @@ export class McpSession {
     return this.ready && this.child != null
   }
 
-  async start(cwd: string, timeoutMs = 12_000): Promise<void> {
+  async start(cwd: string, timeoutMs = 45_000): Promise<void> {
     await this.dispose()
-    this.child = spawn(this.server.command, this.server.args ?? [], {
-      cwd,
-      env: { ...process.env, ...(this.server.env ?? {}) },
-      windowsHide: true,
-      shell: process.platform === 'win32' && /\.cmd$/i.test(this.server.command)
-    }) as ChildProcessWithoutNullStreams
+    const resolved = resolveMcpCommand(this.server.command)
+    const env = enrichPath({ ...process.env, ...(this.server.env ?? {}) })
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      this.child = spawn(resolved.command, this.server.args ?? [], {
+        cwd,
+        env,
+        windowsHide: true,
+        shell: resolved.shell
+      }) as ChildProcessWithoutNullStreams
+
+      const fail = (error: Error): void => {
+        if (settled) return
+        settled = true
+        reject(error)
+      }
+
+      this.child.once('spawn', () => {
+        if (settled) return
+        settled = true
+        resolve()
+      })
+      this.child.once('error', (error) => {
+        const message =
+          (error as NodeJS.ErrnoException).code === 'ENOENT'
+            ? `コマンドが見つかりません: ${resolved.command}（Node.js / npx の PATH を確認してください）`
+            : error.message
+        fail(new Error(message))
+      })
+      // Some platforms may not emit 'spawn'; continue after a tick if no error
+      setTimeout(() => {
+        if (!settled && this.child && !this.child.killed) {
+          settled = true
+          resolve()
+        }
+      }, 50)
+    })
+
+    if (!this.child) throw new Error('MCP spawn failed')
 
     this.child.stdout.on('data', (chunk: Buffer) => this.onData(chunk.toString('utf-8')))
     this.child.stderr.on('data', () => {
