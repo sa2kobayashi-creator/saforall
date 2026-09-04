@@ -62,6 +62,40 @@ function loadEngine(): AiEngine {
   return 'auto'
 }
 
+function lastSessionStorageKey(workspaceId: number | null): string {
+  return `saforall-last-session:${workspaceId ?? 'global'}`
+}
+
+function readLastSessionId(workspaceId: number | null): number | null {
+  const raw = window.localStorage.getItem(lastSessionStorageKey(workspaceId))
+  if (!raw) return null
+  const id = Number(raw)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+function writeLastSessionId(workspaceId: number | null, id: number | null): void {
+  const key = lastSessionStorageKey(workspaceId)
+  if (id === null) {
+    window.localStorage.removeItem(key)
+    return
+  }
+  window.localStorage.setItem(key, String(id))
+}
+
+function formatSessionTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  if (sameDay) {
+    return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+  }
+  return date.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })
+}
+
 export function ChatPanel({
   file,
   backendConnected,
@@ -94,9 +128,19 @@ export function ChatPanel({
     language?: string
     kind: 'run' | 'apply'
   } | null>(null)
+  const [sessions, setSessions] = useState<ChatSessionRecord[]>([])
+  const [historyOpen, setHistoryOpen] = useState(true)
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null)
 
   const modeRef = useRef(mode)
   modeRef.current = mode
+  const sessionIdRef = useRef(sessionId)
+  sessionIdRef.current = sessionId
+
+  const activeSession = useMemo(
+    () => sessions.find((row) => Number(row.id) === sessionId) ?? null,
+    [sessions, sessionId]
+  )
 
   useEffect(() => {
     if (!backendConnected) return
@@ -208,23 +252,60 @@ export function ChatPanel({
     [onApplyCode]
   )
 
-  const ensureSession = useCallback(async (): Promise<number | null> => {
-    if (!backendConnected) return null
-    if (sessionId !== null) return sessionId
+  const sessionsQuery = useCallback(() => {
+    return workspaceId
+      ? `/chat/sessions?workspace_id=${workspaceId}&limit=40`
+      : '/chat/sessions?limit=40'
+  }, [workspaceId])
 
+  const refreshSessions = useCallback(async (): Promise<ChatSessionRecord[]> => {
+    if (!backendConnected) {
+      setSessions([])
+      return []
+    }
     const list = await window.saforall.request<{ sessions: ChatSessionRecord[] }>(
       'GET',
-      workspaceId
-        ? `/chat/sessions?workspace_id=${workspaceId}&limit=1`
-        : '/chat/sessions?limit=1'
+      sessionsQuery()
     )
-
-    if (list.ok && list.data?.sessions?.[0]) {
-      const id = Number(list.data.sessions[0].id)
-      setSessionId(id)
-      return id
+    if (!list.ok || !list.data?.sessions) {
+      return []
     }
+    setSessions(list.data.sessions)
+    return list.data.sessions
+  }, [backendConnected, sessionsQuery])
 
+  const loadMessagesForSession = useCallback(async (id: number) => {
+    const history = await window.saforall.request<{ messages: ChatMessageRecord[] }>(
+      'GET',
+      `/chat/sessions/${id}/messages`
+    )
+    if (history.ok && history.data?.messages && history.data.messages.length > 0) {
+      setMessages(history.data.messages.map(toChatMessage))
+    } else {
+      setMessages([welcomeMessage])
+    }
+    setAutoAppliedIds({})
+  }, [])
+
+  const selectSession = useCallback(
+    async (id: number) => {
+      if (busy) return
+      setLoading(true)
+      setError(null)
+      try {
+        setSessionId(id)
+        writeLastSessionId(workspaceId, id)
+        await loadMessagesForSession(id)
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [busy, loadMessagesForSession, workspaceId]
+  )
+
+  const createSession = useCallback(async (): Promise<number | null> => {
     const created = await window.saforall.request<{ session: ChatSessionRecord }>(
       'POST',
       '/chat/sessions',
@@ -233,20 +314,92 @@ export function ChatPanel({
         workspace_id: workspaceId
       }
     )
-
     if (!created.ok || !created.data?.session) {
       setError(created.error?.message ?? 'セッション作成に失敗しました')
       return null
     }
-
     const id = Number(created.data.session.id)
-    setSessionId(id)
+    setSessions((current) => [created.data!.session, ...current.filter((row) => Number(row.id) !== id)])
     return id
-  }, [backendConnected, sessionId, workspaceId])
+  }, [workspaceId])
+
+  const startNewChat = useCallback(async () => {
+    if (!backendConnected || busy) return
+    setLoading(true)
+    setError(null)
+    try {
+      const id = await createSession()
+      if (id === null) return
+      setSessionId(id)
+      writeLastSessionId(workspaceId, id)
+      setMessages([welcomeMessage])
+      setAutoAppliedIds({})
+      setInput('')
+    } finally {
+      setLoading(false)
+    }
+  }, [backendConnected, busy, createSession, workspaceId])
+
+  const deleteSession = useCallback(
+    async (id: number) => {
+      if (!backendConnected || busy) return
+      setPendingDeleteId(null)
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await window.saforall.request('DELETE', `/chat/sessions/${id}`)
+        if (!result.ok) {
+          setError(result.error?.message ?? 'チャットの削除に失敗しました')
+          return
+        }
+
+        const remaining = sessions.filter((row) => Number(row.id) !== id)
+        setSessions(remaining)
+
+        if (sessionIdRef.current === id) {
+          if (remaining[0]) {
+            const nextId = Number(remaining[0].id)
+            setSessionId(nextId)
+            writeLastSessionId(workspaceId, nextId)
+            await loadMessagesForSession(nextId)
+          } else {
+            const createdId = await createSession()
+            if (createdId === null) {
+              setSessionId(null)
+              writeLastSessionId(workspaceId, null)
+              setMessages([welcomeMessage])
+              return
+            }
+            setSessionId(createdId)
+            writeLastSessionId(workspaceId, createdId)
+            setMessages([welcomeMessage])
+            setAutoAppliedIds({})
+          }
+        }
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [backendConnected, busy, createSession, loadMessagesForSession, sessions, workspaceId]
+  )
+
+  const ensureSession = useCallback(async (): Promise<number | null> => {
+    if (!backendConnected) return null
+    if (sessionId !== null) return sessionId
+
+    const id = await createSession()
+    if (id === null) return null
+    setSessionId(id)
+    writeLastSessionId(workspaceId, id)
+    return id
+  }, [backendConnected, createSession, sessionId, workspaceId])
 
   useEffect(() => {
     if (!backendConnected) {
       setSessionId(null)
+      setSessions([])
       setMessages([welcomeMessage])
       setError(null)
       return
@@ -260,17 +413,22 @@ export function ChatPanel({
       try {
         const list = await window.saforall.request<{ sessions: ChatSessionRecord[] }>(
           'GET',
-          workspaceId
-            ? `/chat/sessions?workspace_id=${workspaceId}&limit=1`
-            : '/chat/sessions?limit=1'
+          sessionsQuery()
         )
-
         if (cancelled) return
 
-        let activeSessionId: number | null = null
-        if (list.ok && list.data?.sessions?.[0]) {
-          activeSessionId = Number(list.data.sessions[0].id)
-        } else {
+        let rows = list.ok && list.data?.sessions ? list.data.sessions : []
+        setSessions(rows)
+
+        const remembered = readLastSessionId(workspaceId)
+        let activeSessionId =
+          remembered !== null && rows.some((row) => Number(row.id) === remembered)
+            ? remembered
+            : rows[0]
+              ? Number(rows[0].id)
+              : null
+
+        if (activeSessionId === null) {
           const created = await window.saforall.request<{ session: ChatSessionRecord }>(
             'POST',
             '/chat/sessions',
@@ -282,6 +440,8 @@ export function ChatPanel({
           if (cancelled) return
           if (created.ok && created.data?.session) {
             activeSessionId = Number(created.data.session.id)
+            rows = [created.data.session]
+            setSessions(rows)
           }
         }
 
@@ -291,18 +451,8 @@ export function ChatPanel({
         }
 
         setSessionId(activeSessionId)
-
-        const history = await window.saforall.request<{ messages: ChatMessageRecord[] }>(
-          'GET',
-          `/chat/sessions/${activeSessionId}/messages`
-        )
-        if (cancelled) return
-
-        if (history.ok && history.data?.messages && history.data.messages.length > 0) {
-          setMessages(history.data.messages.map(toChatMessage))
-        } else {
-          setMessages([welcomeMessage])
-        }
+        writeLastSessionId(workspaceId, activeSessionId)
+        await loadMessagesForSession(activeSessionId)
       } catch (err) {
         if (!cancelled) setError(String(err))
       } finally {
@@ -313,7 +463,7 @@ export function ChatPanel({
     return () => {
       cancelled = true
     }
-  }, [backendConnected, workspaceId])
+  }, [backendConnected, loadMessagesForSession, sessionsQuery, workspaceId])
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -397,6 +547,7 @@ export function ChatPanel({
         if (engine !== 'cursor') {
           await runAgentActions(assistant.id, assistant.content)
         }
+        void refreshSessions()
         return
       }
 
@@ -514,6 +665,7 @@ export function ChatPanel({
       if (finalAssistantId && finalAssistantContent && usedEngine !== 'cursor') {
         await runAgentActions(finalAssistantId, finalAssistantContent)
       }
+      void refreshSessions()
     } finally {
       setBusy(null)
     }
@@ -531,162 +683,239 @@ export function ChatPanel({
 
   return (
     <aside className="chat-panel" aria-label="AI チャット" style={{ width }}>
-      <div className="chat-header">
-        <div>
-          <strong>AI</strong>
-          <span className="chat-context">{contextLabel}</span>
-          {sessionId !== null && (
-            <span className="chat-session">session #{sessionId}</span>
-          )}
-        </div>
-        <div className="chat-header-right">
-          <fieldset className="engine-picker">
-            <legend>AI</legend>
-            {(
-              [
-                ['auto', '自動（おすすめ）'],
-                ['cursor', 'Cursor'],
-                ['openai', 'OpenAI'],
-                ['gemini', 'Gemini'],
-                ['workers', 'Workers AI']
-              ] as const
-            ).map(([value, label]) => (
-              <label key={value}>
-                <input
-                  type="radio"
-                  name="saforall-engine"
-                  checked={engine === value}
-                  onChange={() => changeEngine(value)}
-                />
-                {label}
-              </label>
-            ))}
-          </fieldset>
-          {engine !== 'auto' && (
-            <label className="model-select">
-              <span className="sr-only">Model</span>
-              <select
-                value={modelChoice}
-                disabled={!backendConnected}
-                title="このエンジン内のモデル"
-                onChange={(event) => setModelChoice(event.target.value)}
-              >
-                <option value="auto-within-engine">モデル自動（安い/作業向け）</option>
-                {enabledByEngine[engine].map((id) => {
-                  const meta = optionsForEngine(engine, enabledByEngine[engine]).find(
-                    (row) => row.id === id
-                  )
-                  return (
-                    <option key={id} value={id}>
-                      {meta?.label ?? id}
-                    </option>
-                  )
-                })}
-              </select>
-            </label>
-          )}
-          <div className="mode-switch" role="group" aria-label="チャットモード">
+      <div className="chat-layout">
+        <div className={`chat-history${historyOpen ? ' is-open' : ''}`} aria-label="チャット履歴">
+          <div className="chat-history-head">
+            <strong>履歴</strong>
             <button
               type="button"
-              className={mode === 'ask' ? 'active' : ''}
-              onClick={() => changeMode('ask')}
-              title="適用・実行の前に確認します"
+              className="chat-history-new"
+              disabled={!backendConnected || busy !== null || loading}
+              onClick={() => void startNewChat()}
+              title="新しいチャット"
             >
-              Ask
-            </button>
-            <button
-              type="button"
-              className={mode === 'agent' ? 'active' : ''}
-              onClick={() => changeMode('agent')}
-              title="応答後にコード適用とコマンド実行を自動で行います"
-            >
-              Agent
+              ＋ 新規
             </button>
           </div>
-          <span className={`chat-backend ${backendConnected ? 'ok' : 'ng'}`}>
-            {backendConnected ? 'API 接続済み' : 'API 未接続'}
-          </span>
-        </div>
-      </div>
-
-      <div className={`mode-banner ${mode}`}>
-        {engine === 'auto'
-          ? '自動: 設定の「Auto パイプライン」で有効にした AI だけを作業に合わせて切替'
-          : engine === 'cursor'
-            ? 'Cursor 固定: 下のリストからモデル選択、またはエンジン内自動'
-            : engine === 'gemini'
-              ? 'Gemini 固定: モデルはリスト選択 / 自動可'
-              : engine === 'workers'
-                ? 'Workers AI 固定: 簡単な作業向けモデルをリスト選択'
-                : 'OpenAI 固定: モデルはリスト選択 / 自動可'}
-        {routeLabel ? ` · 今回: ${routeLabel}` : ''}
-        {mode === 'ask' ? ' · Ask（適用前に確認）' : ' · Agent（自動適用）'}
-      </div>
-      {usageText && <div className="usage-bar">今月 {usageText}</div>}
-
-      {error && <div className="chat-error">{error}</div>}
-
-      <div className="chat-messages">
-        {messages.map((message) => (
-          <div key={message.id} className={`chat-bubble ${message.role}`}>
-            <div className="chat-role">{message.role === 'user' ? 'You' : 'AI'}</div>
-            {message.role === 'assistant' ? (
-              <MessageContent
-                content={message.content}
-                showApply={message.id !== 'welcome'}
-                mode={mode}
-                autoApplied={autoAppliedIds[message.id] === true}
-                onApplyCode={requestApply}
-              />
+          <div className="chat-history-list">
+            {sessions.length === 0 ? (
+              <p className="chat-history-empty">まだ履歴がありません</p>
             ) : (
-              <div className="chat-content">{message.content}</div>
+              sessions.map((row) => {
+                const id = Number(row.id)
+                const active = id === sessionId
+                return (
+                  <div
+                    key={id}
+                    className={`chat-history-item${active ? ' is-active' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="chat-history-open"
+                      disabled={busy !== null || loading}
+                      onClick={() => void selectSession(id)}
+                      title={row.title}
+                    >
+                      <span className="chat-history-title">{row.title || 'New chat'}</span>
+                      <span className="chat-history-time">
+                        {formatSessionTime(row.updated_at || row.created_at)}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-history-delete"
+                      disabled={busy !== null || loading}
+                      title="削除"
+                      onClick={() => setPendingDeleteId(id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })
             )}
           </div>
-        ))}
-        {busy && busy.phase !== 'streaming' && (
-          <div className="chat-bubble assistant busy">
-            <div className="chat-role">AI</div>
-            <div className="chat-content chat-busy-inline">
-              <span className="chat-busy-spinner" aria-hidden />
-              {busyLabel}
+        </div>
+
+        <div className="chat-main">
+          <div className="chat-header">
+            <div className="chat-header-left">
+              <button
+                type="button"
+                className={`chat-history-toggle${historyOpen ? ' is-active' : ''}`}
+                onClick={() => setHistoryOpen((open) => !open)}
+                title={historyOpen ? '履歴を隠す' : '履歴を表示'}
+              >
+                履歴
+              </button>
+              <div>
+                <strong>{activeSession?.title || 'AI'}</strong>
+                <span className="chat-context">{contextLabel}</span>
+              </div>
+              <button
+                type="button"
+                className="chat-new-btn"
+                disabled={!backendConnected || busy !== null || loading}
+                onClick={() => void startNewChat()}
+                title="新しいチャット"
+              >
+                新規
+              </button>
+            </div>
+            <div className="chat-header-right">
+              <fieldset className="engine-picker">
+                <legend>AI</legend>
+                {(
+                  [
+                    ['auto', '自動（おすすめ）'],
+                    ['cursor', 'Cursor'],
+                    ['openai', 'OpenAI'],
+                    ['gemini', 'Gemini'],
+                    ['workers', 'Workers AI']
+                  ] as const
+                ).map(([value, label]) => (
+                  <label key={value}>
+                    <input
+                      type="radio"
+                      name="saforall-engine"
+                      checked={engine === value}
+                      onChange={() => changeEngine(value)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </fieldset>
+              {engine !== 'auto' && (
+                <label className="model-select">
+                  <span className="sr-only">Model</span>
+                  <select
+                    value={modelChoice}
+                    disabled={!backendConnected}
+                    title="このエンジン内のモデル"
+                    onChange={(event) => setModelChoice(event.target.value)}
+                  >
+                    <option value="auto-within-engine">モデル自動（安い/作業向け）</option>
+                    {enabledByEngine[engine].map((id) => {
+                      const meta = optionsForEngine(engine, enabledByEngine[engine]).find(
+                        (row) => row.id === id
+                      )
+                      return (
+                        <option key={id} value={id}>
+                          {meta?.label ?? id}
+                        </option>
+                      )
+                    })}
+                  </select>
+                </label>
+              )}
+              <div className="mode-switch" role="group" aria-label="チャットモード">
+                <button
+                  type="button"
+                  className={mode === 'ask' ? 'active' : ''}
+                  onClick={() => changeMode('ask')}
+                  title="適用・実行の前に確認します"
+                >
+                  Ask
+                </button>
+                <button
+                  type="button"
+                  className={mode === 'agent' ? 'active' : ''}
+                  onClick={() => changeMode('agent')}
+                  title="応答後にコード適用とコマンド実行を自動で行います"
+                >
+                  Agent
+                </button>
+              </div>
+              <span className={`chat-backend ${backendConnected ? 'ok' : 'ng'}`}>
+                {backendConnected ? 'API 接続済み' : 'API 未接続'}
+              </span>
             </div>
           </div>
-        )}
-      </div>
 
-      {busy && (
-        <div className={`chat-busy-bar phase-${busy.phase}`} role="status" aria-live="polite">
-          <span className="chat-busy-spinner" aria-hidden />
-          <span>{busyLabel}</span>
+          <div className={`mode-banner ${mode}`}>
+            {engine === 'auto'
+              ? '自動: 設定の「Auto パイプライン」で有効にした AI だけを作業に合わせて切替'
+              : engine === 'cursor'
+                ? 'Cursor 固定: 下のリストからモデル選択、またはエンジン内自動'
+                : engine === 'gemini'
+                  ? 'Gemini 固定: モデルはリスト選択 / 自動可'
+                  : engine === 'workers'
+                    ? 'Workers AI 固定: 簡単な作業向けモデルをリスト選択'
+                    : 'OpenAI 固定: モデルはリスト選択 / 自動可'}
+            {routeLabel ? ` · 今回: ${routeLabel}` : ''}
+            {mode === 'ask' ? ' · Ask（適用前に確認）' : ' · Agent（自動適用）'}
+          </div>
+          {usageText && <div className="usage-bar">今月 {usageText}</div>}
+
+          {error && <div className="chat-error">{error}</div>}
+
+          <div className="chat-messages">
+            {messages.map((message) => (
+              <div key={message.id} className={`chat-bubble ${message.role}`}>
+                <div className="chat-role">{message.role === 'user' ? 'You' : 'AI'}</div>
+                {message.role === 'assistant' ? (
+                  <MessageContent
+                    content={message.content}
+                    showApply={message.id !== 'welcome'}
+                    mode={mode}
+                    autoApplied={autoAppliedIds[message.id] === true}
+                    onApplyCode={requestApply}
+                  />
+                ) : (
+                  <div className="chat-content">{message.content}</div>
+                )}
+              </div>
+            ))}
+            {busy && busy.phase !== 'streaming' && (
+              <div className="chat-bubble assistant busy">
+                <div className="chat-role">AI</div>
+                <div className="chat-content chat-busy-inline">
+                  <span className="chat-busy-spinner" aria-hidden />
+                  {busyLabel}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {busy && (
+            <div
+              className={`chat-busy-bar phase-${busy.phase}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span className="chat-busy-spinner" aria-hidden />
+              <span>{busyLabel}</span>
+            </div>
+          )}
+
+          <form className="chat-input" onSubmit={(event) => void onSubmit(event)}>
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={
+                busy
+                  ? busyLabel ?? '実行中…'
+                  : loading
+                    ? '履歴読み込み中…'
+                    : mode === 'agent'
+                      ? 'Agent に依頼する…'
+                      : 'コードについて質問する…'
+              }
+              rows={3}
+              disabled={busy !== null || loading}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+            />
+            <button type="submit" disabled={busy !== null || loading || input.trim() === ''}>
+              {busy ? '実行中…' : '送信'}
+            </button>
+          </form>
         </div>
-      )}
-
-      <form className="chat-input" onSubmit={(event) => void onSubmit(event)}>
-        <textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={
-            busy
-              ? busyLabel ?? '実行中…'
-              : loading
-                ? '履歴読み込み中…'
-                : mode === 'agent'
-                  ? 'Agent に依頼する…'
-                  : 'コードについて質問する…'
-          }
-          rows={3}
-          disabled={busy !== null || loading}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              event.currentTarget.form?.requestSubmit()
-            }
-          }}
-        />
-        <button type="submit" disabled={busy !== null || loading || input.trim() === ''}>
-          {busy ? '実行中…' : '送信'}
-        </button>
-      </form>
+      </div>
 
       <ConfirmDialog
         open={pendingAction !== null}
@@ -705,6 +934,18 @@ export function ChatPanel({
           const action = pendingAction
           setPendingAction(null)
           void onApplyCode(action.code, action.pathHint, action.language)
+        }}
+      />
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        title="チャットを削除しますか？"
+        message="このチャットの履歴は削除され、元に戻せません。"
+        confirmLabel="削除する"
+        onCancel={() => setPendingDeleteId(null)}
+        onConfirm={() => {
+          if (pendingDeleteId === null) return
+          void deleteSession(pendingDeleteId)
         }}
       />
     </aside>

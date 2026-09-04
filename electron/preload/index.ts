@@ -191,6 +191,7 @@ const api = {
     callback: (
       command:
         | 'workspace:open'
+        | 'workspace:close'
         | 'file:save'
         | 'view:explorer'
         | 'view:scm'
@@ -199,6 +200,9 @@ const api = {
         | 'view:chat'
         | 'view:settings'
         | 'view:usage'
+        | 'view:usage-right'
+        | 'view:usage-overlay'
+        | 'view:usage-hidden'
         | 'git:clone'
         | 'git:refresh'
         | 'git:pull'
@@ -209,6 +213,7 @@ const api = {
       _event: unknown,
       command:
         | 'workspace:open'
+        | 'workspace:close'
         | 'file:save'
         | 'view:explorer'
         | 'view:scm'
@@ -217,6 +222,9 @@ const api = {
         | 'view:chat'
         | 'view:settings'
         | 'view:usage'
+        | 'view:usage-right'
+        | 'view:usage-overlay'
+        | 'view:usage-hidden'
         | 'git:clone'
         | 'git:refresh'
         | 'git:pull'

@@ -20,6 +20,7 @@ if ($path === '/' || $path === '/api') {
             'GET|PUT /api/settings',
             'GET|POST /api/workspaces',
             'GET|POST /api/chat/sessions',
+            'GET|PATCH|DELETE /api/chat/sessions/{id}',
             'GET|POST /api/chat/sessions/{id}/messages',
             'POST /api/ai/chat',
             'POST /api/ai/chat/stream',
@@ -46,6 +47,11 @@ if ($path === '/api/workspaces') {
 
 if ($path === '/api/chat/sessions') {
     require dirname(__DIR__) . '/api/chat_sessions.php';
+}
+
+if (preg_match('#^/api/chat/sessions/(\d+)$#', $path, $matches) === 1) {
+    $sessionId = (int) $matches[1];
+    require dirname(__DIR__) . '/api/chat_session.php';
 }
 
 if (preg_match('#^/api/chat/sessions/(\d+)/messages$#', $path, $matches) === 1) {

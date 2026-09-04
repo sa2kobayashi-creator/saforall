@@ -15,6 +15,7 @@ import {
 import type { ProblemItem } from './components/ProblemsPanel'
 import { ApplyPathDialog } from './components/ApplyPathDialog'
 import { UsagePanel } from './components/UsagePanel'
+import { WelcomeScreen } from './components/WelcomeScreen'
 import {
   defaultFileName,
   formatCommandForTerminal,
@@ -26,6 +27,12 @@ import {
 } from './lib/codeBlocks'
 import { languageFromPath } from './lib/language'
 import { prefetchAllModelCatalogs } from './lib/modelCatalogCache'
+import {
+  loadLayoutPrefs,
+  saveLayoutPrefs,
+  type UsageLayoutMode
+} from './lib/layoutPrefs'
+import { pushRecentWorkspace } from './lib/recentWorkspaces'
 import type {
   ApplyCodeOptions,
   BackendStatus,
@@ -42,15 +49,19 @@ const initialBackend: BackendStatus = {
 }
 
 export default function App() {
+  const initialLayout = loadLayoutPrefs()
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [workspaceId, setWorkspaceId] = useState<number | null>(null)
   const [tabs, setTabs] = useState<OpenFile[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
   const [sidebarView, setSidebarView] = useState<SidebarView>('explorer')
-  const [chatOpen, setChatOpen] = useState(true)
+  const [chatOpen, setChatOpen] = useState(initialLayout.chatOpen)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [usageOpen, setUsageOpen] = useState(false)
-  const [terminalOpen, setTerminalOpen] = useState(false)
+  const [usageMode, setUsageMode] = useState<UsageLayoutMode>(initialLayout.usageMode)
+  const [preferredUsageMode, setPreferredUsageMode] = useState<'right' | 'overlay'>(
+    initialLayout.usageMode === 'overlay' ? 'overlay' : 'right'
+  )
+  const [terminalOpen, setTerminalOpen] = useState(initialLayout.terminalOpen)
   const [bottomTab, setBottomTab] = useState<BottomPanelTab>('terminal')
   const [scmSyncCommand, setScmSyncCommand] = useState<'pull' | 'push' | null>(null)
   const [cloneOpen, setCloneOpen] = useState(false)
@@ -64,11 +75,15 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
-  const [sidebarWidth, setSidebarWidth] = useState(260)
-  const [chatWidth, setChatWidth] = useState(340)
-  const [terminalHeight, setTerminalHeight] = useState(220)
+  const [sidebarWidth, setSidebarWidth] = useState(initialLayout.sidebarWidth)
+  const [chatWidth, setChatWidth] = useState(initialLayout.chatWidth)
+  const [usageWidth, setUsageWidth] = useState(initialLayout.usageWidth)
+  const [terminalHeight, setTerminalHeight] = useState(initialLayout.terminalHeight)
   const [tabWidths, setTabWidths] = useState<Record<string, number>>({})
 
+  const usageOpen = usageMode !== 'hidden'
+  const usageDocked = usageMode === 'right'
+  const usageOverlay = usageMode === 'overlay'
   const activeFile = useMemo(
     () => tabs.find((tab) => tab.path === activePath) ?? null,
     [tabs, activePath]
@@ -157,6 +172,7 @@ export default function App() {
       setTabWidths({})
       setSidebarView('explorer')
       setScmRefreshKey((key) => key + 1)
+      pushRecentWorkspace(path)
       setStatus(`ワークスペース: ${path}`)
 
       if (!backend.connected) return
@@ -173,6 +189,44 @@ export default function App() {
     },
     [backend.connected]
   )
+
+  const closeWorkspace = useCallback(() => {
+    setWorkspacePath(null)
+    setWorkspaceId(null)
+    setTabs([])
+    setActivePath(null)
+    setTabWidths({})
+    setPendingCommand(null)
+    setStatus('フォルダを開いて始めましょう')
+  }, [])
+
+  const toggleUsage = useCallback(() => {
+    setUsageMode((current) => {
+      if (current === 'hidden') {
+        return preferredUsageMode
+      }
+      return 'hidden'
+    })
+  }, [preferredUsageMode])
+
+  const setUsageLayout = useCallback((mode: UsageLayoutMode) => {
+    setUsageMode(mode)
+    if (mode === 'right' || mode === 'overlay') {
+      setPreferredUsageMode(mode)
+    }
+  }, [])
+
+  useEffect(() => {
+    saveLayoutPrefs({
+      chatOpen,
+      chatWidth,
+      usageMode,
+      usageWidth,
+      sidebarWidth,
+      terminalOpen,
+      terminalHeight
+    })
+  }, [chatOpen, chatWidth, usageMode, usageWidth, sidebarWidth, terminalOpen, terminalHeight])
 
   const openWorkspace = useCallback(async () => {
     const path = await window.saforall.openDirectory()
@@ -431,6 +485,9 @@ export default function App() {
         case 'workspace:open':
           void openWorkspace()
           break
+        case 'workspace:close':
+          closeWorkspace()
+          break
         case 'file:save':
           void saveFile()
           break
@@ -456,7 +513,16 @@ export default function App() {
           setSettingsOpen(true)
           break
         case 'view:usage':
-          setUsageOpen(true)
+          toggleUsage()
+          break
+        case 'view:usage-right':
+          setUsageLayout('right')
+          break
+        case 'view:usage-overlay':
+          setUsageLayout('overlay')
+          break
+        case 'view:usage-hidden':
+          setUsageLayout('hidden')
           break
         case 'git:clone':
           setCloneOpen(true)
@@ -478,126 +544,160 @@ export default function App() {
     return () => {
       unsubscribe()
     }
-  }, [openWorkspace, saveFile])
+  }, [closeWorkspace, openWorkspace, saveFile, setUsageLayout, toggleUsage])
 
   return (
     <div className="app-shell">
-      <div className="app-body">
-        <ActivityBar
-          activeView={sidebarView}
-          chatOpen={chatOpen}
-          settingsOpen={settingsOpen}
-          usageOpen={usageOpen}
-          terminalOpen={terminalOpen}
-          onChangeView={(view) => {
-            setSidebarView(view)
-            if (view === 'scm') setScmRefreshKey((key) => key + 1)
-          }}
-          onToggleChat={() => setChatOpen((v) => !v)}
-          onOpenWorkspace={openWorkspace}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenUsage={() => setUsageOpen(true)}
-          onToggleTerminal={() => {
-            setBottomTab('terminal')
-            setTerminalOpen((open) => !open)
-          }}
-        />
-        {sidebarView === 'explorer' ? (
-          <Sidebar
-            workspacePath={workspacePath}
-            activePath={activePath}
-            width={sidebarWidth}
-            onOpenWorkspace={openWorkspace}
-            onOpenFile={openFileAt}
-          />
-        ) : (
-          <SourceControlPanel
-            workspacePath={workspacePath}
-            width={sidebarWidth}
-            refreshKey={scmRefreshKey}
-            syncCommand={scmSyncCommand}
-            onSyncHandled={() => setScmSyncCommand(null)}
-            onOpenWorkspace={openWorkspace}
+      {!workspacePath ? (
+        <div className="app-body welcome-body">
+          <WelcomeScreen
+            backendConnected={backend.connected}
+            backendMessage={backend.message}
+            onOpenFolder={() => void openWorkspace()}
+            onOpenRecent={(path) => void openWorkspaceAt(path)}
             onClone={() => setCloneOpen(true)}
-            onOpenFile={openFileAt}
-            onStatusMessage={(message) => {
-              setStatus(message)
-              showNotice(message)
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        </div>
+      ) : (
+        <div className="app-body">
+          <ActivityBar
+            activeView={sidebarView}
+            chatOpen={chatOpen}
+            settingsOpen={settingsOpen}
+            usageOpen={usageOpen}
+            terminalOpen={terminalOpen}
+            onChangeView={(view) => {
+              setSidebarView(view)
+              if (view === 'scm') setScmRefreshKey((key) => key + 1)
+            }}
+            onToggleChat={() => setChatOpen((v) => !v)}
+            onOpenWorkspace={openWorkspace}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenUsage={toggleUsage}
+            onToggleTerminal={() => {
+              setBottomTab('terminal')
+              setTerminalOpen((open) => !open)
             }}
           />
-        )}
-        <ResizeHandle
-          direction="horizontal"
-          title="サイドバーの幅を変更"
-          onResize={(delta) => {
-            setSidebarWidth((width) => Math.min(480, Math.max(180, width + delta)))
-          }}
-        />
-        <main className="main-pane">
-          <div className="editor-area">
-            <EditorPane
-              tabs={tabs}
+          {sidebarView === 'explorer' ? (
+            <Sidebar
+              workspacePath={workspacePath}
               activePath={activePath}
-              tabWidths={tabWidths}
-              onSelectTab={(path) => {
-                setActivePath(path)
-                setStatus(path)
-              }}
-              onCloseTab={closeTab}
-              onResizeTab={(path, width) => {
-                setTabWidths((current) => ({ ...current, [path]: width }))
-              }}
-              onChange={updateContent}
-              onSave={saveFile}
+              width={sidebarWidth}
+              onOpenWorkspace={openWorkspace}
+              onOpenFile={openFileAt}
             />
-          </div>
-          {terminalOpen && (
+          ) : (
+            <SourceControlPanel
+              workspacePath={workspacePath}
+              width={sidebarWidth}
+              refreshKey={scmRefreshKey}
+              syncCommand={scmSyncCommand}
+              onSyncHandled={() => setScmSyncCommand(null)}
+              onOpenWorkspace={openWorkspace}
+              onClone={() => setCloneOpen(true)}
+              onOpenFile={openFileAt}
+              onStatusMessage={(message) => {
+                setStatus(message)
+                showNotice(message)
+              }}
+            />
+          )}
+          <ResizeHandle
+            direction="horizontal"
+            title="サイドバーの幅を変更"
+            onResize={(delta) => {
+              setSidebarWidth((width) => Math.min(480, Math.max(180, width + delta)))
+            }}
+          />
+          <main className="main-pane">
+            <div className="editor-area">
+              <EditorPane
+                tabs={tabs}
+                activePath={activePath}
+                tabWidths={tabWidths}
+                onSelectTab={(path) => {
+                  setActivePath(path)
+                  setStatus(path)
+                }}
+                onCloseTab={closeTab}
+                onResizeTab={(path, width) => {
+                  setTabWidths((current) => ({ ...current, [path]: width }))
+                }}
+                onChange={updateContent}
+                onSave={saveFile}
+              />
+            </div>
+            {terminalOpen && (
+              <>
+                <ResizeHandle
+                  direction="vertical"
+                  title="下部パネルの高さを変更"
+                  onResize={(delta) => {
+                    setTerminalHeight((height) =>
+                      Math.min(Math.floor(window.innerHeight * 0.7), Math.max(120, height - delta))
+                    )
+                  }}
+                />
+                <BottomPanel
+                  open={terminalOpen}
+                  height={terminalHeight}
+                  activeTab={bottomTab}
+                  cwd={workspacePath}
+                  pendingCommand={pendingCommand}
+                  problems={problems}
+                  onChangeTab={setBottomTab}
+                  onCommandSent={() => setPendingCommand(null)}
+                  onClose={() => setTerminalOpen(false)}
+                  onOpenFile={openFileAt}
+                />
+              </>
+            )}
+          </main>
+          {chatOpen && (
             <>
               <ResizeHandle
-                direction="vertical"
-                title="下部パネルの高さを変更"
+                direction="horizontal"
+                title="チャットの幅を変更"
                 onResize={(delta) => {
-                  setTerminalHeight((height) =>
-                    Math.min(Math.floor(window.innerHeight * 0.7), Math.max(120, height - delta))
-                  )
+                  setChatWidth((width) => Math.min(640, Math.max(280, width - delta)))
                 }}
               />
-              <BottomPanel
-                open={terminalOpen}
-                height={terminalHeight}
-                activeTab={bottomTab}
-                cwd={workspacePath}
-                pendingCommand={pendingCommand}
-                problems={problems}
-                onChangeTab={setBottomTab}
-                onCommandSent={() => setPendingCommand(null)}
-                onClose={() => setTerminalOpen(false)}
-                onOpenFile={openFileAt}
+              <ChatPanel
+                file={activeFile}
+                backendConnected={backend.connected}
+                workspaceId={workspaceId}
+                workspacePath={workspacePath}
+                width={chatWidth}
+                onApplyCode={applyCode}
               />
             </>
           )}
-        </main>
-        {chatOpen && (
-          <>
-            <ResizeHandle
-              direction="horizontal"
-              title="チャットの幅を変更"
-              onResize={(delta) => {
-                // 左境界をドラッグするので、右へ動かすとチャットは狭くなる
-                setChatWidth((width) => Math.min(640, Math.max(280, width - delta)))
-              }}
-            />
-            <ChatPanel
-              file={activeFile}
-              backendConnected={backend.connected}
-              workspaceId={workspaceId}
-              workspacePath={workspacePath}
-              width={chatWidth}
-              onApplyCode={applyCode}
-            />
-          </>
-        )}
-      </div>
+          {usageDocked && (
+            <>
+              <ResizeHandle
+                direction="horizontal"
+                title="使用量パネルの幅を変更"
+                onResize={(delta) => {
+                  setUsageWidth((width) => Math.min(520, Math.max(240, width - delta)))
+                }}
+              />
+              <UsagePanel
+                open
+                variant="dock"
+                width={usageWidth}
+                backendConnected={backend.connected}
+                onClose={() => setUsageLayout('hidden')}
+                onOpenSettings={() => {
+                  setUsageLayout('hidden')
+                  setSettingsOpen(true)
+                }}
+              />
+            </>
+          )}
+        </div>
+      )}
       <StatusBar
         message={status}
         dirty={activeFile?.dirty ?? false}
@@ -612,18 +712,21 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         onOpenUsage={() => {
           setSettingsOpen(false)
-          setUsageOpen(true)
+          setUsageLayout(preferredUsageMode)
         }}
       />
-      <UsagePanel
-        open={usageOpen}
-        backendConnected={backend.connected}
-        onClose={() => setUsageOpen(false)}
-        onOpenSettings={() => {
-          setUsageOpen(false)
-          setSettingsOpen(true)
-        }}
-      />
+      {usageOverlay && (
+        <UsagePanel
+          open
+          variant="overlay"
+          backendConnected={backend.connected}
+          onClose={() => setUsageLayout('hidden')}
+          onOpenSettings={() => {
+            setUsageLayout('hidden')
+            setSettingsOpen(true)
+          }}
+        />
+      )}
       <ApplyPathDialog
         open={applyDialog !== null}
         defaultPath={applyDialog?.defaultPath ?? 'index.js'}

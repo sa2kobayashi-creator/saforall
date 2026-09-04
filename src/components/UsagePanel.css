@@ -8,6 +8,17 @@
   z-index: 22;
 }
 
+.usage-dock {
+  flex-shrink: 0;
+  min-width: 0;
+  height: 100%;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .usage-panel {
   width: min(720px, calc(100% - 32px));
   max-height: calc(100% - 32px);
@@ -20,6 +31,14 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.usage-panel--dock .usage-engine-grid {
+  grid-template-columns: 1fr;
+}
+
+.usage-panel--dock .usage-table {
+  font-size: 11px;
 }
 
 .usage-header {

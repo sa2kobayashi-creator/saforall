@@ -2,6 +2,7 @@ import { BrowserWindow, Menu, shell } from 'electron'
 
 export type MenuCommand =
   | 'workspace:open'
+  | 'workspace:close'
   | 'file:save'
   | 'view:explorer'
   | 'view:scm'
@@ -10,6 +11,9 @@ export type MenuCommand =
   | 'view:chat'
   | 'view:settings'
   | 'view:usage'
+  | 'view:usage-right'
+  | 'view:usage-overlay'
+  | 'view:usage-hidden'
   | 'git:clone'
   | 'git:refresh'
   | 'git:pull'
@@ -43,6 +47,10 @@ export function setupApplicationMenu(): void {
           label: 'Open Folder…',
           accelerator: 'CmdOrCtrl+O',
           click: () => send('workspace:open')
+        },
+        {
+          label: 'Close Folder',
+          click: () => send('workspace:close')
         },
         {
           label: 'Save',
@@ -98,6 +106,23 @@ export function setupApplicationMenu(): void {
           label: 'AI Usage',
           accelerator: 'CmdOrCtrl+Shift+U',
           click: () => send('view:usage')
+        },
+        {
+          label: 'Usage Layout',
+          submenu: [
+            {
+              label: 'Dock Right',
+              click: () => send('view:usage-right')
+            },
+            {
+              label: 'Overlay',
+              click: () => send('view:usage-overlay')
+            },
+            {
+              label: 'Hide',
+              click: () => send('view:usage-hidden')
+            }
+          ]
         },
         {
           label: 'Settings',

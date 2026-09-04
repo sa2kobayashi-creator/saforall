@@ -12,6 +12,10 @@
   min-height: 0;
 }
 
+.welcome-body {
+  width: 100%;
+}
+
 .main-pane {
   flex: 1;
   min-width: 0;

@@ -41,6 +41,8 @@ type UsagePayload = {
 type Props = {
   open: boolean
   backendConnected: boolean
+  variant?: 'overlay' | 'dock'
+  width?: number
   onClose: () => void
   onOpenSettings?: () => void
 }
@@ -60,7 +62,14 @@ function barClass(pct: number): string {
   return 'usage-bar-fill'
 }
 
-export function UsagePanel({ open, backendConnected, onClose, onOpenSettings }: Props) {
+export function UsagePanel({
+  open,
+  backendConnected,
+  variant = 'overlay',
+  width = 320,
+  onClose,
+  onOpenSettings
+}: Props) {
   const [data, setData] = useState<UsagePayload | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -100,9 +109,11 @@ export function UsagePanel({ open, backendConnected, onClose, onOpenSettings }: 
   const totalLimit = data?.total.limit ?? 0
   const totalPct = percent(totalSpent, totalLimit)
 
-  return (
-    <div className="usage-overlay" role="dialog" aria-label="AI 使用量">
-      <div className="usage-panel">
+  const body = (
+      <div
+        className={`usage-panel${variant === 'dock' ? ' usage-panel--dock' : ''}`}
+        style={variant === 'dock' ? { width } : undefined}
+      >
         <div className="usage-header">
           <div>
             <h2>AI 使用量</h2>
@@ -237,6 +248,19 @@ export function UsagePanel({ open, backendConnected, onClose, onOpenSettings }: 
           </>
         )}
       </div>
+  )
+
+  if (variant === 'dock') {
+    return (
+      <aside className="usage-dock" aria-label="AI 使用量" style={{ width }}>
+        {body}
+      </aside>
+    )
+  }
+
+  return (
+    <div className="usage-overlay" role="dialog" aria-label="AI 使用量">
+      {body}
     </div>
   )
 }
