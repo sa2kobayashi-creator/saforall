@@ -348,6 +348,24 @@ ipcMain.handle(
   }
 )
 
+ipcMain.handle(
+  'lsp:completion',
+  async (
+    _event,
+    params: { path: string; line: number; character: number }
+  ): Promise<Array<{ label: string; kind?: number; detail?: string; insertText?: string; documentation?: string }>> =>
+    lspManager.completion(params.path, params.line, params.character)
+)
+
+ipcMain.handle(
+  'lsp:definition',
+  async (
+    _event,
+    params: { path: string; line: number; character: number }
+  ): Promise<Array<{ path: string; line: number; column: number }>> =>
+    lspManager.definition(params.path, params.line, params.character)
+)
+
 lspManager.setDiagnosticsHandler((items: LspDiagnostic[]) => {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('lsp:diagnostics', { items })

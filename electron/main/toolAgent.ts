@@ -154,7 +154,18 @@ export function pathKeyMatch(a: string, b: string): boolean {
   const na = normalizeAgentPath(a)
   const nb = normalizeAgentPath(b)
   if (na === nb) return true
-  if (na.endsWith('/' + nb) || nb.endsWith('/' + na)) return true
+  // Prefer suffix match of a full relative path segment, not bare basename-only
+  if (na.length > 3 && nb.length > 3 && (na.endsWith('/' + nb) || nb.endsWith('/' + na))) {
+    return true
+  }
+  return false
+}
+
+/** Looser match for UI / duplicate detection (basename OK). */
+export function pathKeyMatchLoose(a: string, b: string): boolean {
+  if (pathKeyMatch(a, b)) return true
+  const na = normalizeAgentPath(a)
+  const nb = normalizeAgentPath(b)
   const ba = na.split('/').pop() ?? na
   const bb = nb.split('/').pop() ?? nb
   return ba.length > 0 && ba === bb
@@ -213,6 +224,7 @@ async function callChatCompletions(params: {
   extraHeaders: string[]
   messages: ProviderMessage[]
   tools?: typeof TOOLS
+  timeoutMs?: number
 }): Promise<ChatCompletionResponse> {
   const url = `${params.baseUrl.replace(/\/$/, '')}/chat/completions`
   let lastError: Error | null = null
@@ -225,8 +237,11 @@ async function callChatCompletions(params: {
     body.tools = params.tools
     body.tool_choice = 'auto'
   }
+  const timeoutMs = params.timeoutMs ?? 45_000
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -235,7 +250,8 @@ async function callChatCompletions(params: {
           Authorization: `Bearer ${params.apiKey}`,
           ...parseExtraHeaders(params.extraHeaders)
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal
       })
 
       const json = (await response.json()) as ChatCompletionResponse
@@ -245,7 +261,9 @@ async function callChatCompletions(params: {
       return json
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
-      if (attempt < 2) await sleep(400 * (attempt + 1))
+      if (attempt < 2) await sleep(500 * (attempt + 1))
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -261,7 +279,8 @@ async function runTool(
   phase: AgentPhase,
   editedPaths: Set<string>,
   verifiedPaths: Set<string>,
-  readCache: Map<string, string>
+  readCache: Map<string, string>,
+  editSummaries: Map<string, string>
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
   const repaired = repairToolArguments(argsJson)
   let args: Record<string, unknown> = {}
@@ -338,7 +357,7 @@ async function runTool(
         content = await toolReadFile(workspacePath, path)
         readCache.set(cacheKey, content)
       }
-      if (Array.from(editedPaths).some((row) => pathKeyMatch(row, path))) {
+      if (Array.from(editedPaths).some((row) => pathKeyMatchLoose(row, path))) {
         verifiedPaths.add(path)
       }
       onEvent({
@@ -404,12 +423,16 @@ async function runTool(
       }
 
       editedPaths.add(path)
+      editSummaries.set(
+        path,
+        `${content.split(/\r?\n/).length} lines · ${content.length} chars`
+      )
       // Re-edit invalidates prior verification and read cache for this path
       for (const row of Array.from(verifiedPaths)) {
-        if (pathKeyMatch(row, path)) verifiedPaths.delete(row)
+        if (pathKeyMatchLoose(row, path)) verifiedPaths.delete(row)
       }
       for (const key of Array.from(readCache.keys())) {
-        if (pathKeyMatch(key, path)) readCache.delete(key)
+        if (pathKeyMatchLoose(key, path)) readCache.delete(key)
       }
       onEvent({ type: 'edit_proposal', path, content })
       onEvent({
@@ -509,16 +532,18 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   onEvent({ type: 'agent_phase', phase, note: '計画を開始' })
 
   let finalText = ''
-  const maxSteps = 32
+  const maxSteps = 40
   let consecutiveToolFailures = 0
   const recentSignatures: string[] = []
   const progressNotes: string[] = []
   const editedPaths = new Set<string>()
   const verifiedPaths = new Set<string>()
+  const editSummaries = new Map<string, string>()
   const readCache = new Map<string, string>()
   let exploreReads = 0
   let verifyNudgeCount = 0
   let finalizeBlockCount = 0
+  let verifyIncomplete = false
 
   for (let step = 0; step < maxSteps; step += 1) {
     let completion: ChatCompletionResponse
@@ -612,7 +637,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
                 phase,
                 editedPaths,
                 verifiedPaths,
-                readCache
+                readCache,
+                editSummaries
               )
               return { call, result, skippedDup: false as const }
             })
@@ -642,7 +668,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           phase,
           editedPaths,
           verifiedPaths,
-          readCache
+          readCache,
+          editSummaries
         )
         orderedResults.push({ call, result, skippedDup: false })
       }
@@ -715,10 +742,13 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       }
 
       if (phase === 'edit' && editedPaths.size >= 1 && step > 8) {
+        const list = Array.from(editedPaths)
+          .slice(0, 8)
+          .map((path) => `${path}${editSummaries.has(path) ? ` [${editSummaries.get(path)}]` : ''}`)
+          .join(', ')
         messages.push({
           role: 'user',
-          content:
-            'システム: 編集提案があります。追加編集がなければ set_phase verify へ進み、編集した各ファイルを read_file で確認してください。'
+          content: `システム: 編集提案があります（${list}）。追加編集がなければ set_phase verify へ進み、各ファイルを read_file で確認してください。`
         })
       }
 
@@ -769,22 +799,41 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
     if (editedPaths.size > 0 && phase === 'verify') {
       const pending = unverifiedEditPaths(editedPaths, verifiedPaths)
-      if (pending.length > 0 && finalizeBlockCount < 4) {
+      if (pending.length > 0 && finalizeBlockCount < 5) {
         finalizeBlockCount += 1
         messages.push({
           role: 'assistant',
           content: message.content ?? null
         })
+        const hints = pending
+          .slice(0, 8)
+          .map((path) => {
+            const note = editSummaries.get(path)
+            return note ? `${path} (${note})` : path
+          })
+          .join(', ')
         messages.push({
           role: 'user',
-          content: `システム: まだ未確認の編集があります。先に read_file してください: ${pending.slice(0, 12).join(', ')}`
+          content: `システム: まだ未確認の編集があります。先に read_file してください: ${hints}`
         })
         continue
+      }
+      if (pending.length > 0) {
+        verifyIncomplete = true
+        finalText =
+          (message.content ?? '').trim() ||
+          `verify 未完了のまま終了しました。未確認: ${pending.join(', ')}`
+        break
       }
     }
 
     finalText = (message.content ?? '').trim()
     break
+  }
+
+  if (verifyIncomplete && finalText) {
+    finalText +=
+      '\n\n⚠ verify が完了していません。Composer の差分を必ず人手で確認してください。'
   }
 
   if (!finalText) {

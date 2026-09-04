@@ -131,7 +131,7 @@ export function DocumentationDialog({ open, onClose }: SimpleProps) {
             をチャット経由で起動できます。
           </li>
           <li>
-            <strong>LSP</strong> — `typescript-language-server` / `pylsp` が PATH にあれば外部診断を取り込みます。
+            <strong>LSP</strong> — `typescript-language-server` / `pylsp` が PATH にあれば診断・補完・定義ジャンプ（F12）を利用できます。
           </li>
           <li>
             <strong>ターミナル / Git</strong> — Ctrl + ` でターミナル、Activity Bar の Source Control で Git 操作ができます。

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { EventEmitter } from 'events'
-import { createConnection, type Socket } from 'net'
+import { createConnection, createServer, type Socket } from 'net'
 
 export type DapBreakpoint = { path: string; line: number; condition?: string }
 export type DapFrame = {
@@ -38,18 +38,23 @@ export class DapSession extends EventEmitter {
   >()
   private child: ChildProcessWithoutNullStreams | null = null
   private currentThreadId = 1
+  private lastFrameId: number | null = null
+  private initializedWaiter: {
+    resolve: () => void
+    reject: (error: Error) => void
+  } | null = null
 
   async startPython(params: {
     filePath: string
     cwd: string
     breakpoints: DapBreakpoint[]
     port?: number
-  }): Promise<void> {
-    const port = params.port ?? 5678
+  }): Promise<{ port: number }> {
+    const port = params.port ?? (await getFreePort())
     await this.stop()
 
-    // Start debugpy waiting for client
-    const py = process.platform === 'win32' ? 'python' : 'python3'
+    const py = resolvePythonBin()
+    let spawnError: Error | null = null
     this.child = spawn(
       py,
       ['-m', 'debugpy', '--listen', `127.0.0.1:${port}`, '--wait-for-client', params.filePath],
@@ -59,6 +64,10 @@ export class DapSession extends EventEmitter {
         env: { ...process.env }
       }
     )
+    this.child.on('error', (error) => {
+      spawnError = error
+      this.emit('error', { message: error.message })
+    })
     this.child.stdout.on('data', (buf: Buffer) => this.emit('stdout', { text: buf.toString('utf-8') }))
     this.child.stderr.on('data', (buf: Buffer) => this.emit('stderr', { text: buf.toString('utf-8') }))
     this.child.on('exit', (code) => {
@@ -66,8 +75,14 @@ export class DapSession extends EventEmitter {
       void this.cleanup()
     })
 
-    await sleep(500)
-    await this.connect(port)
+    await this.connectWithRetry(port, 40)
+    if (spawnError) throw spawnError
+
+    const initialized = new Promise<void>((resolve, reject) => {
+      this.initializedWaiter = { resolve, reject }
+      setTimeout(() => reject(new Error('DAP initialized event timeout')), 10000)
+    })
+
     await this.request('initialize', {
       clientID: 'saforall',
       adapterID: 'python',
@@ -75,14 +90,20 @@ export class DapSession extends EventEmitter {
       linesStartAt1: true,
       columnsStartAt1: true
     })
+    try {
+      await initialized
+    } catch {
+      // continue best-effort
+    }
+
     await this.request('attach', {
       name: 'Python',
       type: 'python',
       request: 'attach',
-      connect: { host: '127.0.0.1', port }
+      connect: { host: '127.0.0.1', port },
+      justMyCode: true
     })
 
-    // Set breakpoints per file
     const byFile = new Map<string, DapBreakpoint[]>()
     for (const bp of params.breakpoints) {
       const list = byFile.get(bp.path) ?? []
@@ -100,6 +121,7 @@ export class DapSession extends EventEmitter {
     }
     await this.request('configurationDone', {})
     this.emit('ready', { port })
+    return { port }
   }
 
   async continue(): Promise<void> {
@@ -111,11 +133,12 @@ export class DapSession extends EventEmitter {
   }
 
   async evaluate(expression: string): Promise<string> {
-    const result = await this.request('evaluate', {
+    const args: Record<string, unknown> = {
       expression,
-      context: 'watch',
-      frameId: undefined
-    })
+      context: 'watch'
+    }
+    if (this.lastFrameId != null) args.frameId = this.lastFrameId
+    const result = await this.request('evaluate', args)
     return String(result.body?.result ?? '')
   }
 
@@ -141,22 +164,66 @@ export class DapSession extends EventEmitter {
       this.child.kill()
     }
     this.child = null
+    this.lastFrameId = null
+    if (this.initializedWaiter) {
+      this.initializedWaiter.reject(new Error('dap closed'))
+      this.initializedWaiter = null
+    }
     for (const waiter of Array.from(this.waiters.values())) {
       waiter.reject(new Error('dap closed'))
     }
     this.waiters.clear()
   }
 
-  private async connect(port: number): Promise<void> {
+  private async connectWithRetry(port: number, attempts: number): Promise<void> {
+    let lastError = 'connect failed'
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        await this.connectOnce(port)
+        return
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error)
+        await sleep(150)
+      }
+    }
+    throw new Error(`debugpy に接続できません (:${port}): ${lastError}`)
+  }
+
+  private async connectOnce(port: number): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      const socket = createConnection({ host: '127.0.0.1', port }, () => resolve())
-      this.socket = socket
-      socket.on('data', (chunk: Buffer) => this.onData(chunk))
-      socket.on('error', (error: Error) => reject(error))
-      socket.on('close', () => {
-        this.socket = null
+      let settled = false
+      const socket = createConnection({ host: '127.0.0.1', port }, () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.socket = socket
+        resolve()
       })
-      setTimeout(() => reject(new Error('DAP connect timeout')), 8000)
+      socket.on('data', (chunk: Buffer) => this.onData(chunk))
+      socket.on('error', (error: Error) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        try {
+          socket.destroy()
+        } catch {
+          // ignore
+        }
+        reject(error)
+      })
+      socket.on('close', () => {
+        if (this.socket === socket) this.socket = null
+      })
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        try {
+          socket.destroy()
+        } catch {
+          // ignore
+        }
+        reject(new Error('DAP connect timeout'))
+      }, 2000)
     })
   }
 
@@ -195,6 +262,10 @@ export class DapSession extends EventEmitter {
       return
     }
     if (msg.type === 'event') {
+      if (msg.event === 'initialized' && this.initializedWaiter) {
+        this.initializedWaiter.resolve()
+        this.initializedWaiter = null
+      }
       if (msg.event === 'stopped') {
         const body = msg.body ?? {}
         this.currentThreadId = Number(body.threadId ?? 1)
@@ -214,6 +285,7 @@ export class DapSession extends EventEmitter {
             column: Number(frame.column ?? 1)
           }
         })
+        this.lastFrameId = callFrames[0]?.id ?? null
         let variables: DapVariable[] = []
         if (callFrames[0]) {
           try {
@@ -287,4 +359,27 @@ export class DapSession extends EventEmitter {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        server.close()
+        reject(new Error('failed to allocate port'))
+        return
+      }
+      const { port } = address
+      server.close(() => resolve(port))
+    })
+    server.on('error', reject)
+  })
+}
+
+function resolvePythonBin(): string {
+  if (process.env.SAFORALL_PYTHON) return process.env.SAFORALL_PYTHON
+  if (process.env.PYTHON) return process.env.PYTHON
+  return process.platform === 'win32' ? 'python' : 'python3'
 }

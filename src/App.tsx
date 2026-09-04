@@ -1356,6 +1356,9 @@ export default function App() {
                   onSave={saveFile}
                   onSelectionChange={setEditorSelection}
                   onDiagnostics={setMonacoProblems}
+                  onOpenDefinition={(path, line) => {
+                    void openFileAt(path, line)
+                  }}
                   revealLine={revealLine}
                   breakpoints={breakpoints}
                   onToggleBreakpoint={toggleBreakpoint}

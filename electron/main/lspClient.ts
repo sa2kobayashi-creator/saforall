@@ -10,6 +10,20 @@ export type LspDiagnostic = {
   source: string
 }
 
+export type LspCompletionItem = {
+  label: string
+  kind?: number
+  detail?: string
+  insertText?: string
+  documentation?: string
+}
+
+export type LspLocation = {
+  path: string
+  line: number
+  column: number
+}
+
 type LspMessage = {
   jsonrpc?: string
   id?: number
@@ -84,7 +98,14 @@ export class LspClient extends EventEmitter {
       rootUri: toUri(cwd),
       capabilities: {
         textDocument: {
-          publishDiagnostics: { relatedInformation: false }
+          publishDiagnostics: { relatedInformation: false },
+          completion: {
+            completionItem: {
+              snippetSupport: true,
+              documentationFormat: ['plaintext', 'markdown']
+            }
+          },
+          definition: { linkSupport: false }
         }
       },
       clientInfo: { name: 'saforall', version: '0.1.0' }
@@ -114,6 +135,85 @@ export class LspClient extends EventEmitter {
     this.notify('textDocument/didClose', {
       textDocument: { uri: toUri(filePath) }
     })
+  }
+
+  async completion(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspCompletionItem[]> {
+    const response = await this.request('textDocument/completion', {
+      textDocument: { uri: toUri(filePath) },
+      position: { line, character }
+    })
+    const result = response.result
+    const items = Array.isArray(result)
+      ? result
+      : result && typeof result === 'object' && Array.isArray((result as { items?: unknown }).items)
+        ? ((result as { items: unknown[] }).items)
+        : []
+    return items.slice(0, 80).map((row) => {
+      const item = (row ?? {}) as Record<string, unknown>
+      const label =
+        typeof item.label === 'string'
+          ? item.label
+          : String((item.label as { label?: string } | undefined)?.label ?? '')
+      const documentation =
+        typeof item.documentation === 'string'
+          ? item.documentation
+          : item.documentation && typeof item.documentation === 'object'
+            ? String((item.documentation as { value?: string }).value ?? '')
+            : undefined
+      return {
+        label,
+        kind: typeof item.kind === 'number' ? item.kind : undefined,
+        detail: typeof item.detail === 'string' ? item.detail : undefined,
+        insertText:
+          typeof item.insertText === 'string'
+            ? item.insertText
+            : typeof item.textEdit === 'object' && item.textEdit
+              ? String((item.textEdit as { newText?: string }).newText ?? label)
+              : label,
+        documentation
+      }
+    }).filter((row) => row.label)
+  }
+
+  async definition(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspLocation[]> {
+    const response = await this.request('textDocument/definition', {
+      textDocument: { uri: toUri(filePath) },
+      position: { line, character }
+    })
+    const result = response.result
+    const rows = Array.isArray(result) ? result : result ? [result] : []
+    const locations: LspLocation[] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue
+      const loc = row as {
+        uri?: string
+        targetUri?: string
+        range?: { start?: { line?: number; character?: number } }
+        targetRange?: { start?: { line?: number; character?: number } }
+        targetSelectionRange?: { start?: { line?: number; character?: number } }
+      }
+      const uri = loc.uri ?? loc.targetUri
+      if (!uri) continue
+      const start =
+        loc.range?.start ??
+        loc.targetSelectionRange?.start ??
+        loc.targetRange?.start ??
+        {}
+      locations.push({
+        path: fromUri(uri),
+        line: Number(start.line ?? 0) + 1,
+        column: Number(start.character ?? 0) + 1
+      })
+    }
+    return locations.slice(0, 20)
   }
 
   async stop(): Promise<void> {
@@ -282,6 +382,43 @@ export class LspManager {
     this.versions.set(key, version)
     if (version === 1) await client.openDocument(filePath, text)
     else await client.changeDocument(filePath, text, version)
+  }
+
+  private clientForPath(filePath: string): LspClient | null {
+    const lower = filePath.toLowerCase()
+    const config = DEFAULT_SERVERS.find((row) =>
+      row.extensions.some((ext) => lower.endsWith(ext))
+    )
+    if (!config) return null
+    return this.clients.get(config.languageId) ?? null
+  }
+
+  async completion(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspCompletionItem[]> {
+    const client = this.clientForPath(filePath)
+    if (!client) return []
+    try {
+      return await client.completion(filePath, line, character)
+    } catch {
+      return []
+    }
+  }
+
+  async definition(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspLocation[]> {
+    const client = this.clientForPath(filePath)
+    if (!client) return []
+    try {
+      return await client.definition(filePath, line, character)
+    } catch {
+      return []
+    }
   }
 
   async dispose(): Promise<void> {

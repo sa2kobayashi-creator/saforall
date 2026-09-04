@@ -4,6 +4,7 @@ import type { EditorSelection, OpenFile } from '../types'
 import type { ProblemItem } from './ProblemsPanel'
 import type { DebugBreakpointMap } from '../lib/debugTypes'
 import { disposeTabCompletions, registerTabCompletions } from '../lib/tabCompletions'
+import { disposeLspProviders, registerLspProviders } from '../lib/lspProviders'
 import { InlineEditBar, type InlineEditTarget } from './InlineEditBar'
 import './EditorPane.css'
 
@@ -18,6 +19,7 @@ type Props = {
   onSave: () => void
   onSelectionChange?: (selection: EditorSelection | null) => void
   onDiagnostics?: (items: ProblemItem[]) => void
+  onOpenDefinition?: (path: string, line?: number) => void
   revealLine?: number | null
   breakpoints?: DebugBreakpointMap
   onToggleBreakpoint?: (path: string, line: number) => void
@@ -41,6 +43,7 @@ export function EditorPane({
   onSave,
   onSelectionChange,
   onDiagnostics,
+  onOpenDefinition,
   revealLine,
   breakpoints = {},
   onToggleBreakpoint,
@@ -55,6 +58,8 @@ export function EditorPane({
   selectionHandlerRef.current = onSelectionChange
   const diagnosticsHandlerRef = useRef(onDiagnostics)
   diagnosticsHandlerRef.current = onDiagnostics
+  const openDefinitionRef = useRef(onOpenDefinition)
+  openDefinitionRef.current = onOpenDefinition
   const toggleBpRef = useRef(onToggleBreakpoint)
   toggleBpRef.current = onToggleBreakpoint
   const breakpointsRef = useRef(breakpoints)
@@ -125,6 +130,7 @@ export function EditorPane({
   useEffect(() => {
     return () => {
       disposeTabCompletions()
+      disposeLspProviders()
     }
   }, [])
 
@@ -179,6 +185,13 @@ export function EditorPane({
     editorRef.current = editor
     monacoRef.current = monaco
     registerTabCompletions(monaco, () => fileMetaRef.current)
+    registerLspProviders(
+      monaco,
+      () => fileMetaRef.current,
+      (path, line) => {
+        openDefinitionRef.current?.(path, line)
+      }
+    )
 
     editor.addAction({
       id: 'saforall.inlineEdit',

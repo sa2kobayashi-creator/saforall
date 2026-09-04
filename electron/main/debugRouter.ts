@@ -58,16 +58,16 @@ export async function startUnifiedDebug(params: {
       params.onEvent({ type, ...(payload as object) })
     })
     try {
-      await dap.startPython({
+      const result = await dap.startPython({
         filePath: params.filePath,
         cwd: params.cwd,
         breakpoints: params.breakpoints,
-        port: params.port ?? 5678
+        port: params.port
       })
       return {
         ok: true,
-        port: params.port ?? 5678,
-        display: `python -m debugpy --listen 5678 ${params.filePath}`
+        port: result.port,
+        display: `python -m debugpy --listen 127.0.0.1:${result.port} --wait-for-client ${params.filePath}`
       }
     } catch (error) {
       activeKind = null
@@ -151,9 +151,14 @@ export async function evaluateUnifiedDebug(
 
 export async function stopUnifiedDebug(): Promise<void> {
   if (activeKind === 'dap' && dap) {
-    await dap.stop()
+    try {
+      await dap.stop()
+    } catch {
+      // ignore
+    }
     dap = null
+  } else {
+    await stopDebugSession()
   }
-  await stopUnifiedDebug()
   activeKind = null
 }

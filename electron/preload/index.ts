@@ -154,6 +154,25 @@ const api = {
     path: string
     content: string
   }): Promise<boolean> => ipcRenderer.invoke('lsp:sync', params),
+  lspCompletion: (params: {
+    path: string
+    line: number
+    character: number
+  }): Promise<
+    Array<{
+      label: string
+      kind?: number
+      detail?: string
+      insertText?: string
+      documentation?: string
+    }>
+  > => ipcRenderer.invoke('lsp:completion', params),
+  lspDefinition: (params: {
+    path: string
+    line: number
+    character: number
+  }): Promise<Array<{ path: string; line: number; column: number }>> =>
+    ipcRenderer.invoke('lsp:definition', params),
   onLspDiagnostics: (
     callback: (payload: {
       items: Array<{
