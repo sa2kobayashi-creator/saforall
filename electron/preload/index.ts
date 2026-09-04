@@ -63,6 +63,11 @@ export type ChatStreamEvent =
       content: string
     }
   | {
+      type: 'agent_phase'
+      phase: 'plan' | 'explore' | 'edit' | 'verify'
+      note?: string
+    }
+  | {
       type: 'done'
       model: string
       engine?: string

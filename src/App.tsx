@@ -16,6 +16,7 @@ import type { ProblemItem } from './components/ProblemsPanel'
 import { ApplyPathDialog } from './components/ApplyPathDialog'
 import { ApplyDiffDialog, type ApplyDiffProposal } from './components/ApplyDiffDialog'
 import { PendingEditsBar } from './components/PendingEditsBar'
+import { ComposerPanel } from './components/ComposerPanel'
 import { QuickOpenDialog } from './components/QuickOpenDialog'
 import { UsagePanel } from './components/UsagePanel'
 import { WelcomeScreen } from './components/WelcomeScreen'
@@ -92,8 +93,12 @@ export default function App() {
     review?: boolean
   } | null>(null)
   const [applyQueue, setApplyQueue] = useState<ApplyDiffProposal[]>([])
+  const [composerOpen, setComposerOpen] = useState(true)
+  const [reviewIndex, setReviewIndex] = useState(0)
   const [quickOpen, setQuickOpen] = useState(false)
   const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null)
+  const [monacoProblems, setMonacoProblems] = useState<ProblemItem[]>([])
+  const [revealLine, setRevealLine] = useState<number | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
@@ -131,8 +136,9 @@ export default function App() {
         })
       }
     }
+    items.push(...monacoProblems)
     return items
-  }, [backend, tabs])
+  }, [backend, tabs, monacoProblems])
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
 
@@ -308,10 +314,11 @@ export default function App() {
     await openWorkspaceAt(path)
   }, [openWorkspaceAt])
 
-  const openFileAt = useCallback(async (filePath: string) => {
+  const openFileAt = useCallback(async (filePath: string, line?: number) => {
     if (tabsRef.current.some((tab) => tab.path === filePath)) {
       setActivePath(filePath)
       setStatus(filePath)
+      setRevealLine(typeof line === 'number' ? line : null)
       return
     }
 
@@ -328,6 +335,7 @@ export default function App() {
       )
       setActivePath(filePath)
       setStatus(filePath)
+      setRevealLine(typeof line === 'number' ? line : null)
     } catch (error) {
       setStatus(`読み込み失敗: ${String(error)}`)
     }
@@ -516,10 +524,13 @@ export default function App() {
     (proposal: ApplyDiffProposal, review: boolean) => {
       if (review) {
         setApplyQueue((current) => [...current, proposal])
+        setComposerOpen(true)
         showNotice(`変更候補を追加: ${proposal.targetPath}`)
         return
       }
       setApplyQueue([proposal])
+      setReviewIndex(0)
+      setComposerOpen(true)
     },
     [showNotice]
   )
@@ -630,26 +641,55 @@ export default function App() {
     ]
   )
 
-  const currentProposal = applyQueue[0] ?? null
+  const currentProposal =
+    applyQueue.length > 0
+      ? applyQueue[Math.min(Math.max(reviewIndex, 0), applyQueue.length - 1)]
+      : null
 
   const acceptCurrentProposal = useCallback(async () => {
-    const proposal = applyQueue[0]
-    if (!proposal) return
+    if (applyQueue.length === 0) return
+    const idx = Math.min(Math.max(reviewIndex, 0), applyQueue.length - 1)
+    const proposal = applyQueue[idx]
     try {
       await commitProposal(proposal)
-      setApplyQueue((current) => current.slice(1))
+      setApplyQueue((current) => current.filter((_, i) => i !== idx))
+      setReviewIndex(0)
     } catch (error) {
       showNotice(`適用失敗: ${String(error)}`)
     }
-  }, [applyQueue, commitProposal, showNotice])
+  }, [applyQueue, reviewIndex, commitProposal, showNotice])
 
   const rejectCurrentProposal = useCallback(() => {
-    setApplyQueue((current) => current.slice(1))
+    if (applyQueue.length === 0) return
+    const idx = Math.min(Math.max(reviewIndex, 0), applyQueue.length - 1)
+    setApplyQueue((current) => current.filter((_, i) => i !== idx))
+    setReviewIndex(0)
+  }, [applyQueue.length, reviewIndex])
+
+  const acceptProposalAt = useCallback(
+    async (index: number) => {
+      const proposal = applyQueue[index]
+      if (!proposal) return
+      try {
+        await commitProposal(proposal)
+        setApplyQueue((current) => current.filter((_, i) => i !== index))
+        setReviewIndex(0)
+      } catch (error) {
+        showNotice(`適用失敗: ${String(error)}`)
+      }
+    },
+    [applyQueue, commitProposal, showNotice]
+  )
+
+  const rejectProposalAt = useCallback((index: number) => {
+    setApplyQueue((current) => current.filter((_, i) => i !== index))
+    setReviewIndex(0)
   }, [])
 
   const acceptAllProposals = useCallback(async () => {
     const queue = [...applyQueue]
     setApplyQueue([])
+    setReviewIndex(0)
     for (const proposal of queue) {
       try {
         await commitProposal(proposal)
@@ -662,6 +702,7 @@ export default function App() {
 
   const rejectAllProposals = useCallback(() => {
     setApplyQueue([])
+    setReviewIndex(0)
     showNotice('変更候補をすべて却下しました')
   }, [showNotice])
 
@@ -834,9 +875,10 @@ export default function App() {
                 count={applyQueue.length}
                 currentPath={currentProposal?.targetPath ?? null}
                 onReview={() => {
+                  setComposerOpen(true)
                   showNotice(
                     applyQueue.length > 0
-                      ? '差分ダイアログで確認できます'
+                      ? 'Composer または差分ダイアログで確認できます'
                       : '変更候補はありません'
                   )
                 }}
@@ -845,22 +887,43 @@ export default function App() {
                 }}
                 onRejectAll={rejectAllProposals}
               />
-              <EditorPane
-                tabs={tabs}
-                activePath={activePath}
-                tabWidths={tabWidths}
-                onSelectTab={(path) => {
-                  setActivePath(path)
-                  setStatus(path)
-                }}
-                onCloseTab={closeTab}
-                onResizeTab={(path, width) => {
-                  setTabWidths((current) => ({ ...current, [path]: width }))
-                }}
-                onChange={updateContent}
-                onSave={saveFile}
-                onSelectionChange={setEditorSelection}
-              />
+              <div className="editor-composer-row">
+                <EditorPane
+                  tabs={tabs}
+                  activePath={activePath}
+                  tabWidths={tabWidths}
+                  onSelectTab={(path) => {
+                    setActivePath(path)
+                    setStatus(path)
+                    setRevealLine(null)
+                  }}
+                  onCloseTab={closeTab}
+                  onResizeTab={(path, width) => {
+                    setTabWidths((current) => ({ ...current, [path]: width }))
+                  }}
+                  onChange={updateContent}
+                  onSave={saveFile}
+                  onSelectionChange={setEditorSelection}
+                  onDiagnostics={setMonacoProblems}
+                  revealLine={revealLine}
+                />
+                {composerOpen && (
+                  <ComposerPanel
+                    proposals={applyQueue}
+                    activeIndex={Math.min(reviewIndex, Math.max(0, applyQueue.length - 1))}
+                    onSelect={(index) => setReviewIndex(index)}
+                    onAcceptOne={(index) => {
+                      void acceptProposalAt(index)
+                    }}
+                    onRejectOne={rejectProposalAt}
+                    onAcceptAll={() => {
+                      void acceptAllProposals()
+                    }}
+                    onRejectAll={rejectAllProposals}
+                    onClose={() => setComposerOpen(false)}
+                  />
+                )}
+              </div>
             </div>
             {terminalOpen && (
               <>
@@ -1010,7 +1073,7 @@ export default function App() {
         open={currentProposal !== null}
         proposal={currentProposal}
         queueCount={applyQueue.length}
-        queueIndex={0}
+        queueIndex={Math.min(reviewIndex, Math.max(0, applyQueue.length - 1))}
         acceptLabel={applyQueue.length > 1 ? 'この変更を適用' : '適用する'}
         onAccept={() => {
           void acceptCurrentProposal()

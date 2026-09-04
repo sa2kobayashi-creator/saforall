@@ -14,7 +14,7 @@ type Props = {
   onChangeTab: (tab: BottomPanelTab) => void
   onCommandSent: () => void
   onClose: () => void
-  onOpenFile: (path: string) => void
+  onOpenFile: (path: string, line?: number) => void
 }
 
 export function BottomPanel({

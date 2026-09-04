@@ -1,0 +1,149 @@
+.composer-panel {
+  width: 240px;
+  min-width: 200px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 8px;
+}
+
+.composer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.composer-head strong {
+  display: block;
+  font-size: 13px;
+}
+
+.composer-head span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.composer-head button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  width: 24px;
+  height: 24px;
+}
+
+.composer-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.composer-actions button {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+  padding: 6px 4px;
+}
+
+.composer-actions .primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.composer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.composer-list li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.composer-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 6px;
+  font-size: 12px;
+}
+
+.composer-item.is-active,
+.composer-item:hover {
+  background: #243044;
+  border-color: var(--border);
+}
+
+.composer-mode {
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  flex-shrink: 0;
+}
+
+.composer-mode--create {
+  color: #7dcea0;
+  border-color: #3d8b57;
+}
+
+.composer-mode--append {
+  color: #e6c35c;
+  border-color: #c9a227;
+}
+
+.composer-mode--replace {
+  color: #8eb6f0;
+  border-color: #4a7fd4;
+}
+
+.composer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-item-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.composer-item-actions button {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  padding: 0;
+}
+
+.composer-hint {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+}

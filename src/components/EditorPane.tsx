@@ -1,6 +1,7 @@
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { useEffect, useRef } from 'react'
 import type { EditorSelection, OpenFile } from '../types'
+import type { ProblemItem } from './ProblemsPanel'
 import { disposeTabCompletions, registerTabCompletions } from '../lib/tabCompletions'
 import './EditorPane.css'
 
@@ -14,6 +15,8 @@ type Props = {
   onChange: (content: string) => void
   onSave: () => void
   onSelectionChange?: (selection: EditorSelection | null) => void
+  onDiagnostics?: (items: ProblemItem[]) => void
+  revealLine?: number | null
 }
 
 const DEFAULT_TAB_WIDTH = 160
@@ -29,7 +32,9 @@ export function EditorPane({
   onResizeTab,
   onChange,
   onSave,
-  onSelectionChange
+  onSelectionChange,
+  onDiagnostics,
+  revealLine
 }: Props) {
   const file = tabs.find((tab) => tab.path === activePath) ?? null
   const dragRef = useRef<{ path: string; startX: number; startWidth: number } | null>(
@@ -37,10 +42,13 @@ export function EditorPane({
   )
   const selectionHandlerRef = useRef(onSelectionChange)
   selectionHandlerRef.current = onSelectionChange
+  const diagnosticsHandlerRef = useRef(onDiagnostics)
+  diagnosticsHandlerRef.current = onDiagnostics
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
   const fileMetaRef = useRef<{ path: string; language: string } | null>(null)
   fileMetaRef.current = file ? { path: file.path, language: file.language } : null
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
 
   useEffect(() => {
     return () => {
@@ -48,8 +56,78 @@ export function EditorPane({
     }
   }, [])
 
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor || !revealLine || revealLine < 1) return
+    editor.revealLineInCenter(revealLine)
+    editor.setPosition({ lineNumber: revealLine, column: 1 })
+    editor.focus()
+  }, [revealLine, activePath])
+
   const handleMount: OnMount = (editor, monaco) => {
+    editorRef.current = editor
     registerTabCompletions(monaco, () => fileMetaRef.current)
+
+    try {
+      monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+        noSemanticValidation: false,
+        noSyntaxValidation: false
+      })
+      monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+        noSemanticValidation: false,
+        noSyntaxValidation: false
+      })
+    } catch {
+      // language service may be unavailable
+    }
+
+    const emitMarkers = () => {
+      const handler = diagnosticsHandlerRef.current
+      if (!handler) return
+      const markers = monaco.editor.getModelMarkers({})
+      const items: ProblemItem[] = markers
+        .filter((marker: { severity: number }) => marker.severity > 0)
+        .slice(0, 200)
+        .map(
+          (
+            marker: {
+              severity: number
+              resource: { path?: string }
+              startLineNumber: number
+              startColumn: number
+              message: string
+              source?: string
+            },
+            index: number
+          ) => {
+          const severity =
+            marker.severity === 8
+              ? 'error'
+              : marker.severity === 4
+                ? 'warning'
+                : 'info'
+          const resource = marker.resource.path
+            ? decodeURIComponent(marker.resource.path.replace(/^\//, ''))
+            : activePathRef.current ?? 'unknown'
+          const path = resource.replace(/^([A-Za-z])%3A/i, '$1:')
+          return {
+            id: `monaco:${path}:${marker.startLineNumber}:${marker.startColumn}:${index}`,
+            severity,
+            source: marker.source || 'LSP',
+            message: marker.message,
+            path,
+            line: marker.startLineNumber,
+            column: marker.startColumn
+          }
+        }
+        )
+      handler(items)
+    }
+
+    const sub = monaco.editor.onDidChangeMarkers(() => {
+      emitMarkers()
+    })
+    window.setTimeout(emitMarkers, 500)
 
     const emitSelection = () => {
       const handler = selectionHandlerRef.current
@@ -71,6 +149,10 @@ export function EditorPane({
 
     editor.onDidChangeCursorSelection(emitSelection)
     emitSelection()
+
+    editor.onDidDispose(() => {
+      sub.dispose()
+    })
   }
 
   if (tabs.length === 0 || !file) {

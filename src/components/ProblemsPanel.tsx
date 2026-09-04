@@ -6,11 +6,13 @@ export type ProblemItem = {
   source: string
   message: string
   path?: string
+  line?: number
+  column?: number
 }
 
 type Props = {
   problems: ProblemItem[]
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string, line?: number) => void
 }
 
 export function ProblemsPanel({ problems, onOpenFile }: Props) {
@@ -28,15 +30,23 @@ export function ProblemsPanel({ problems, onOpenFile }: Props) {
                 <button
                   type="button"
                   className="problems-message"
-                  onClick={() => onOpenFile(item.path!)}
+                  onClick={() => onOpenFile(item.path!, item.line)}
                 >
                   {item.message}
-                  <span className="problems-path">{item.path}</span>
+                  <span className="problems-path">
+                    {item.path}
+                    {item.line ? `:${item.line}` : ''}
+                  </span>
                 </button>
               ) : (
                 <span className="problems-message">
                   {item.message}
-                  {item.path && <span className="problems-path">{item.path}</span>}
+                  {item.path && (
+                    <span className="problems-path">
+                      {item.path}
+                      {item.line ? `:${item.line}` : ''}
+                    </span>
+                  )}
                 </span>
               )}
             </li>

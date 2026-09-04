@@ -307,7 +307,9 @@ export function ChatPanel({
     }
 
     const problemLines = problems.slice(0, 20).map((row) => {
-      const loc = row.path ? row.path : 'unknown'
+      const loc = row.path
+        ? `${row.path}${row.line ? `:${row.line}` : ''}`
+        : 'unknown'
       return `${row.severity}: ${loc} ${row.message}`
     })
 
@@ -736,6 +738,37 @@ export function ChatPanel({
             return
           }
 
+          if (event.type === 'agent_phase') {
+            const labels: Record<string, string> = {
+              plan: '計画',
+              explore: '探索',
+              edit: '編集',
+              verify: '検証'
+            }
+            const label = labels[event.phase] ?? event.phase
+            setBusy({
+              phase: 'thinking',
+              detail: event.note ? `Agent ${label}: ${event.note}` : `Agent フェーズ: ${label}`
+            })
+            const line = `\n\n📍 フェーズ: **${label}**${event.note ? ` — ${event.note}` : ''}`
+            if (!sawAssistant) {
+              sawAssistant = true
+              setMessages((prev) => [
+                ...prev,
+                { id: streamAssistantId, role: 'assistant', content: line.trim() }
+              ])
+            } else {
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === streamAssistantId
+                    ? { ...message, content: message.content + line }
+                    : message
+                )
+              )
+            }
+            return
+          }
+
           if (event.type === 'tool_call') {
             setBusy({ phase: 'thinking', detail: `ツール実行: ${event.name}` })
             const line = `\n\n🔧 \`${event.name}\` …`
@@ -984,7 +1017,7 @@ export function ChatPanel({
                     ? 'Workers AI 固定: 簡単な作業向けモデルをリスト選択'
                     : 'OpenAI 固定: モデルはリスト選択 / 自動可'}
             {routeLabel ? ` · 今回: ${routeLabel}` : ''}
-            {mode === 'ask' ? ' · Ask（差分確認）' : ' · Agent（複数変更をレビュー）'}
+            {mode === 'ask' ? ' · Ask（差分確認）' : ' · Agent（plan→explore→edit→verify）'}
           </div>
           {usageText && <div className="usage-bar">今月 {usageText}</div>}
 
