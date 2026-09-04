@@ -1,0 +1,31 @@
+.pending-edits-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #1f2a1a;
+  color: #b7dfb0;
+  font-size: 12px;
+}
+
+.pending-edits-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.pending-edits-actions button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.pending-edits-actions .primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}

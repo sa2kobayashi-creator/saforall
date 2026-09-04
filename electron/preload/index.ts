@@ -45,6 +45,24 @@ export type ChatStreamEvent =
     }
   | { type: 'delta'; text: string }
   | {
+      type: 'tool_call'
+      id: string
+      name: string
+      args: Record<string, unknown>
+    }
+  | {
+      type: 'tool_result'
+      id: string
+      name: string
+      ok: boolean
+      summary: string
+    }
+  | {
+      type: 'edit_proposal'
+      path: string
+      content: string
+    }
+  | {
       type: 'done'
       model: string
       engine?: string
@@ -52,6 +70,7 @@ export type ChatStreamEvent =
       estimated_usd?: number
       usage?: Record<string, { spent: number; limit: number; remaining: number }>
       assistant_message: Record<string, unknown>
+      used_tools?: boolean
     }
   | { type: 'error'; code: string; message: string }
 
@@ -68,6 +87,22 @@ const api = {
     ipcRenderer.invoke('fs:writeFile', filePath, content),
   readDir: (dirPath: string): Promise<DirEntry[]> =>
     ipcRenderer.invoke('fs:readDir', dirPath),
+  searchFiles: (cwd: string, query: string): Promise<string[]> =>
+    ipcRenderer.invoke('fs:searchFiles', cwd, query),
+  watchWorkspace: (cwd: string): Promise<boolean> =>
+    ipcRenderer.invoke('fs:watchWorkspace', cwd),
+  unwatchWorkspace: (): Promise<boolean> => ipcRenderer.invoke('fs:unwatchWorkspace'),
+  onWorkspaceChanged: (callback: (payload: { path: string }) => void) => {
+    const listener = (_event: unknown, payload: { path: string }): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('fs:workspaceChanged', listener)
+    return () => {
+      ipcRenderer.removeListener('fs:workspaceChanged', listener)
+    }
+  },
+  loadProjectRules: (cwd: string): Promise<string | null> =>
+    ipcRenderer.invoke('fs:loadProjectRules', cwd),
   stat: (filePath: string): Promise<{ isDirectory: boolean; size: number; mtimeMs: number }> =>
     ipcRenderer.invoke('fs:stat', filePath),
   health: (): Promise<HealthResult> => ipcRenderer.invoke('api:health'),

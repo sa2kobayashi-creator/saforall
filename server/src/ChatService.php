@@ -133,6 +133,12 @@ final class ChatService
             default => 'レーン: OpenAI。説明・設計・コード提案を丁寧に行ってください。',
         };
 
+        if ($mode === 'agent' && $engine !== 'cursor') {
+            $systemParts[] =
+                'Agent モードです。複数ファイルを扱うときは、コードブロックに必ずパスを付けてください'
+                . '（例: ```typescript src/App.tsx）。可能なら変更対象ごとにフルファイルを出してください。';
+        }
+
         $context = $body['context'] ?? null;
         if (is_array($context)) {
             $filePath = isset($context['path']) && is_string($context['path']) ? $context['path'] : null;
@@ -203,6 +209,31 @@ final class ChatService
                     $systemParts[] = "追加コンテキスト #{$index}: {$extraPath}"
                         . ($extraLang ? " (language: {$extraLang})" : '');
                     $systemParts[] = "```\n{$extraContent}\n```";
+                }
+            }
+
+            $rules = isset($context['rules']) && is_string($context['rules']) ? $context['rules'] : null;
+            if (is_string($rules) && $rules !== '') {
+                $maxRules = 12000;
+                if (mb_strlen($rules) > $maxRules) {
+                    $rules = mb_substr($rules, 0, $maxRules) . "\n\n... (truncated)";
+                }
+                $systemParts[] = "プロジェクトルール:\n{$rules}";
+            }
+
+            $problemRows = $context['problems'] ?? null;
+            if (is_array($problemRows) && count($problemRows) > 0) {
+                $lines = [];
+                foreach ($problemRows as $row) {
+                    if (is_string($row) && $row !== '') {
+                        $lines[] = $row;
+                    }
+                    if (count($lines) >= 20) {
+                        break;
+                    }
+                }
+                if (count($lines) > 0) {
+                    $systemParts[] = "Problems パネルの内容:\n" . implode("\n", $lines);
                 }
             }
         }

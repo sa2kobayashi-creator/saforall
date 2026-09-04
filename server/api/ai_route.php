@@ -61,4 +61,12 @@ Response::ok([
     'cursor_api_key' => $includeSecrets && $prepared['engine'] === 'cursor'
         ? $prepared['api_key']
         : null,
+    'provider' => $includeSecrets
+        ? [
+            'api_key' => $prepared['api_key'],
+            'base_url' => $prepared['base_url'],
+            'extra_headers' => $prepared['extra_headers'],
+            'messages' => $prepared['messages'],
+        ]
+        : null,
 ]);

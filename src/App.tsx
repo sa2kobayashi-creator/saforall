@@ -15,6 +15,8 @@ import {
 import type { ProblemItem } from './components/ProblemsPanel'
 import { ApplyPathDialog } from './components/ApplyPathDialog'
 import { ApplyDiffDialog, type ApplyDiffProposal } from './components/ApplyDiffDialog'
+import { PendingEditsBar } from './components/PendingEditsBar'
+import { QuickOpenDialog } from './components/QuickOpenDialog'
 import { UsagePanel } from './components/UsagePanel'
 import { WelcomeScreen } from './components/WelcomeScreen'
 import {
@@ -90,6 +92,7 @@ export default function App() {
     review?: boolean
   } | null>(null)
   const [applyQueue, setApplyQueue] = useState<ApplyDiffProposal[]>([])
+  const [quickOpen, setQuickOpen] = useState(false)
   const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
@@ -210,12 +213,17 @@ export default function App() {
   )
 
   const closeWorkspace = useCallback(() => {
+    if (typeof window.saforall.unwatchWorkspace === 'function') {
+      void window.saforall.unwatchWorkspace()
+    }
     setWorkspacePath(null)
     setWorkspaceId(null)
     setTabs([])
     setActivePath(null)
     setTabWidths({})
     setPendingCommand(null)
+    setApplyQueue([])
+    setEditorSelection(null)
     saveLastWorkspace(null)
     setStatus('フォルダを開いて始めましょう')
   }, [])
@@ -388,6 +396,50 @@ export default function App() {
       setNotice((current) => (current === message ? null : current))
     }, 4000)
   }, [])
+
+  useEffect(() => {
+    if (!workspacePath || typeof window.saforall.watchWorkspace !== 'function') return
+    void window.saforall.watchWorkspace(workspacePath)
+    const off =
+      typeof window.saforall.onWorkspaceChanged === 'function'
+        ? window.saforall.onWorkspaceChanged((payload) => {
+            const changed = payload.path
+            setTabs((current) => {
+              const hit = current.find((tab) => tab.path === changed)
+              if (!hit || hit.dirty) {
+                if (hit?.dirty) {
+                  showNotice(`外部で変更あり（未保存のため保持）: ${changed}`)
+                }
+                return current
+              }
+              void window.saforall.readFile(changed).then((content) => {
+                setTabs((tabs) =>
+                  tabs.map((tab) =>
+                    tab.path === changed ? { ...tab, content, dirty: false } : tab
+                  )
+                )
+                showNotice(`外部変更を再読込: ${changed}`)
+              })
+              return current
+            })
+          })
+        : null
+    return () => {
+      off?.()
+      void window.saforall.unwatchWorkspace?.()
+    }
+  }, [workspacePath, showNotice])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
+        event.preventDefault()
+        if (workspacePath) setQuickOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [workspacePath])
 
   const runCommand = useCallback(
     (code: string, options?: ApplyCodeOptions) => {
@@ -778,6 +830,21 @@ export default function App() {
           />
           <main className="main-pane">
             <div className="editor-area">
+              <PendingEditsBar
+                count={applyQueue.length}
+                currentPath={currentProposal?.targetPath ?? null}
+                onReview={() => {
+                  showNotice(
+                    applyQueue.length > 0
+                      ? '差分ダイアログで確認できます'
+                      : '変更候補はありません'
+                  )
+                }}
+                onAcceptAll={() => {
+                  void acceptAllProposals()
+                }}
+                onRejectAll={rejectAllProposals}
+              />
               <EditorPane
                 tabs={tabs}
                 activePath={activePath}
@@ -839,6 +906,7 @@ export default function App() {
                 file={activeFile}
                 openFiles={tabs}
                 selection={editorSelection}
+                problems={problems}
                 backendConnected={backend.connected}
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
@@ -950,6 +1018,14 @@ export default function App() {
         onReject={rejectCurrentProposal}
         onAcceptAll={applyQueue.length > 1 ? () => void acceptAllProposals() : undefined}
         onRejectAll={applyQueue.length > 1 ? rejectAllProposals : undefined}
+      />
+      <QuickOpenDialog
+        open={quickOpen}
+        workspacePath={workspacePath}
+        onClose={() => setQuickOpen(false)}
+        onOpenFile={(path) => {
+          void openFileAt(path)
+        }}
       />
       <CloneDialog
         open={cloneOpen}

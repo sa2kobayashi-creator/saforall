@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { dirname, join } from 'path'
+import { watch, type FSWatcher } from 'fs'
 import { mkdir, readFile, writeFile, readdir, stat } from 'fs/promises'
 import { apiRequest, checkHealth, streamChat } from './api'
 import {
@@ -21,6 +22,10 @@ import {
   resizeTerminal,
   writeTerminal
 } from './terminal'
+import { loadProjectRules, searchFilesByName } from './workspaceTools'
+
+let workspaceWatcher: FSWatcher | null = null
+let watchDebounce: ReturnType<typeof setTimeout> | null = null
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -104,6 +109,43 @@ ipcMain.handle('fs:stat', async (_event, filePath: string) => {
     size: info.size,
     mtimeMs: info.mtimeMs
   }
+})
+
+ipcMain.handle('fs:searchFiles', async (_event, cwd: string, query: string) => {
+  return searchFilesByName(cwd, query, 50)
+})
+
+ipcMain.handle('fs:loadProjectRules', async (_event, cwd: string) => {
+  return loadProjectRules(cwd)
+})
+
+ipcMain.handle('fs:watchWorkspace', async (event, cwd: string) => {
+  if (workspaceWatcher) {
+    workspaceWatcher.close()
+    workspaceWatcher = null
+  }
+  try {
+    workspaceWatcher = watch(cwd, { recursive: true }, (_eventType, filename) => {
+      if (!filename) return
+      if (watchDebounce) clearTimeout(watchDebounce)
+      watchDebounce = setTimeout(() => {
+        event.sender.send('fs:workspaceChanged', {
+          path: join(cwd, filename.toString())
+        })
+      }, 400)
+    })
+    return true
+  } catch {
+    return false
+  }
+})
+
+ipcMain.handle('fs:unwatchWorkspace', async () => {
+  if (workspaceWatcher) {
+    workspaceWatcher.close()
+    workspaceWatcher = null
+  }
+  return true
 })
 
 ipcMain.handle('api:health', async () => checkHealth())

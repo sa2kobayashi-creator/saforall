@@ -51,6 +51,7 @@ const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: 'Ctrl/Cmd + O', action: 'フォルダを開く' },
   { keys: 'Ctrl/Cmd + S', action: 'ファイルを保存' },
   { keys: 'Ctrl/Cmd + ,', action: '設定を開く' },
+  { keys: 'Ctrl/Cmd + P', action: 'ファイルを名前検索して開く' },
   { keys: 'Ctrl/Cmd + L', action: 'AI チャットの表示切替' },
   { keys: 'Ctrl/Cmd + Shift + E', action: 'Explorer を表示' },
   { keys: 'Ctrl/Cmd + Shift + G', action: 'Source Control を表示' },

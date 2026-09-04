@@ -154,6 +154,24 @@ export type ChatStreamEvent =
     }
   | { type: 'delta'; text: string }
   | {
+      type: 'tool_call'
+      id: string
+      name: string
+      args: Record<string, unknown>
+    }
+  | {
+      type: 'tool_result'
+      id: string
+      name: string
+      ok: boolean
+      summary: string
+    }
+  | {
+      type: 'edit_proposal'
+      path: string
+      content: string
+    }
+  | {
       type: 'done'
       model: string
       engine?: string
@@ -161,6 +179,7 @@ export type ChatStreamEvent =
       estimated_usd?: number
       usage?: MonthUsage
       assistant_message: Record<string, unknown>
+      used_tools?: boolean
     }
   | { type: 'error'; code: string; message: string }
 
@@ -179,6 +198,12 @@ type RouteData = {
   cursor_run_id: number | null
   usage: MonthUsage
   cursor_api_key: string | null
+  provider?: {
+    api_key: string
+    base_url: string
+    extra_headers: string[]
+    messages: Array<{ role: string; content: string }>
+  } | null
 }
 
 export async function streamChat(
@@ -225,6 +250,64 @@ export async function streamChat(
 
   if (decided.engine === 'cursor') {
     await runCursorStream(requestBody, decided, onEvent)
+    return
+  }
+
+  const mode = typeof decided.mode === 'string' ? decided.mode : 'ask'
+  const workspacePath =
+    typeof requestBody.workspace_path === 'string' ? requestBody.workspace_path : ''
+  const canToolAgent =
+    mode === 'agent' &&
+    workspacePath.trim() !== '' &&
+    decided.engine !== 'gemini' &&
+    decided.provider &&
+    decided.provider.api_key &&
+    decided.provider.base_url &&
+    decided.provider.base_url !== 'gemini-native'
+
+  if (canToolAgent && decided.provider) {
+    try {
+      const { runToolAgent } = await import('./toolAgent')
+      await runToolAgent({
+        workspacePath,
+        apiKey: decided.provider.api_key,
+        baseUrl: decided.provider.base_url,
+        model: decided.model,
+        extraHeaders: decided.provider.extra_headers ?? [],
+        messages: decided.provider.messages ?? [],
+        engine: decided.engine,
+        taskType: decided.task_type,
+        sessionId: decided.session_id,
+        onEvent,
+        complete: async (content) => {
+          const completed = await fetchJson<{
+            assistant_message: Record<string, unknown>
+            estimated_usd: number
+            usage: MonthUsage
+          }>(
+            'POST',
+            '/ai/complete',
+            {
+              session_id: decided.session_id,
+              content,
+              engine: decided.engine,
+              task_type: decided.task_type,
+              model: decided.model,
+              fallback_from: decided.fallback_from
+            },
+            { timeoutMs: 15_000 }
+          )
+          if (!completed.ok || !completed.data) return null
+          return completed.data
+        }
+      })
+    } catch (error) {
+      onEvent({
+        type: 'error',
+        code: 'TOOL_AGENT_FAILED',
+        message: error instanceof Error ? error.message : 'Tool Agent の実行に失敗しました'
+      })
+    }
     return
   }
 

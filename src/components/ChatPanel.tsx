@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { ConfirmDialog } from './ConfirmDialog'
 import { MessageContent } from './MessageContent'
 import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
+import { languageFromPath } from '../lib/language'
 import { DEFAULT_COST_LIMITS, USAGE_ENGINE_KEYS, DEFAULT_ENABLED_MODELS, optionsForEngine, parseModelList, type ProviderEngine } from '../lib/llmModels'
 import type {
   AiEngine,
@@ -13,12 +14,14 @@ import type {
   EditorSelection,
   OpenFile
 } from '../types'
+import type { ProblemItem } from './ProblemsPanel'
 import './ChatPanel.css'
 
 type Props = {
   file: OpenFile | null
   openFiles: OpenFile[]
   selection: EditorSelection | null
+  problems?: ProblemItem[]
   backendConnected: boolean
   workspaceId: number | null
   workspacePath: string | null
@@ -103,6 +106,7 @@ export function ChatPanel({
   file,
   openFiles,
   selection,
+  problems = [],
   backendConnected,
   workspaceId,
   workspacePath,
@@ -231,7 +235,7 @@ export function ChatPanel({
     )
   }, [])
 
-  const buildContextPayload = useCallback(() => {
+  const buildContextPayload = useCallback(async () => {
     const mentioned = new Set<string>()
     const atMatches = input.match(/@([^\s@]+)/g) ?? []
     for (const token of atMatches) {
@@ -242,18 +246,46 @@ export function ChatPanel({
           mentioned.add(open.path)
         }
       }
+      if (workspacePath && typeof window.saforall.searchFiles === 'function') {
+        try {
+          const found = await window.saforall.searchFiles(workspacePath, needle)
+          for (const rel of found.slice(0, 3)) {
+            const abs = rel.includes(':') || rel.startsWith('/') || rel.startsWith('\\')
+              ? rel
+              : `${workspacePath.replace(/[\\/]+$/, '')}${workspacePath.includes('\\') ? '\\' : '/'}${rel.replace(/^[\\/]+/, '')}`
+            mentioned.add(abs)
+          }
+        } catch {
+          // ignore search failures
+        }
+      }
     }
 
     const filePaths = new Set<string>([...attachedPaths, ...Array.from(mentioned)])
     if (file?.path) filePaths.delete(file.path)
 
-    const files = openFiles
-      .filter((open) => filePaths.has(open.path))
-      .map((open) => ({
+    const files: Array<{ path: string; content: string; language?: string }> = []
+    for (const open of openFiles) {
+      if (!filePaths.has(open.path)) continue
+      files.push({
         path: open.path,
         content: open.content,
         language: open.language
-      }))
+      })
+      filePaths.delete(open.path)
+    }
+    for (const path of Array.from(filePaths)) {
+      try {
+        const content = await window.saforall.readFile(path)
+        files.push({
+          path,
+          content,
+          language: languageFromPath(path)
+        })
+      } catch {
+        // skip unreadable
+      }
+    }
 
     const selectionPayload =
       selection && selection.text.trim() !== ''
@@ -265,7 +297,21 @@ export function ChatPanel({
           }
         : null
 
-    if (!file && files.length === 0 && !selectionPayload) {
+    let rules: string | null = null
+    if (workspacePath && typeof window.saforall.loadProjectRules === 'function') {
+      try {
+        rules = await window.saforall.loadProjectRules(workspacePath)
+      } catch {
+        rules = null
+      }
+    }
+
+    const problemLines = problems.slice(0, 20).map((row) => {
+      const loc = row.path ? row.path : 'unknown'
+      return `${row.severity}: ${loc} ${row.message}`
+    })
+
+    if (!file && files.length === 0 && !selectionPayload && !rules && problemLines.length === 0) {
       return null
     }
 
@@ -274,9 +320,11 @@ export function ChatPanel({
       content: file?.content ?? null,
       language: file?.language ?? null,
       selection: selectionPayload,
-      files
+      files,
+      rules,
+      problems: problemLines
     }
-  }, [attachedPaths, file, input, openFiles, selection])
+  }, [attachedPaths, file, input, openFiles, problems, selection, workspacePath])
 
   const changeMode = (next: ChatMode) => {
     setMode(next)
@@ -605,7 +653,7 @@ export function ChatPanel({
             ? undefined
             : modelChoice,
         workspace_path: workspacePath,
-        context: buildContextPayload()
+        context: await buildContextPayload()
       }
 
       if (typeof window.saforall.chatStream !== 'function') {
@@ -649,6 +697,7 @@ export function ChatPanel({
       let finalAssistantId: string | null = null
       let finalAssistantContent: string | null = null
       let usedEngine: string = engine
+      let usedTools = false
 
       await window.saforall.chatStream(payload, {
         onEvent: (event) => {
@@ -687,7 +736,54 @@ export function ChatPanel({
             return
           }
 
+          if (event.type === 'tool_call') {
+            setBusy({ phase: 'thinking', detail: `ツール実行: ${event.name}` })
+            const line = `\n\n🔧 \`${event.name}\` …`
+            if (!sawAssistant) {
+              sawAssistant = true
+              setMessages((prev) => [
+                ...prev,
+                { id: streamAssistantId, role: 'assistant', content: line.trim() }
+              ])
+            } else {
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === streamAssistantId
+                    ? { ...message, content: message.content + line }
+                    : message
+                )
+              )
+            }
+            return
+          }
+
+          if (event.type === 'tool_result') {
+            setBusy({
+              phase: 'thinking',
+              detail: event.ok ? `完了: ${event.summary}` : `失敗: ${event.summary}`
+            })
+            const line = event.ok ? ` ✓ ${event.summary}` : ` ✗ ${event.summary}`
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === streamAssistantId
+                  ? { ...message, content: message.content + line }
+                  : message
+              )
+            )
+            return
+          }
+
+          if (event.type === 'edit_proposal') {
+            setBusy({ phase: 'applying', detail: `変更候補: ${event.path}` })
+            void onApplyCode(event.content, event.path, languageFromPath(event.path), {
+              auto: true,
+              review: true
+            })
+            return
+          }
+
           if (event.type === 'delta') {
+            if (!event.text) return
             setBusy({ phase: 'streaming', detail: '応答を受信中…' })
             if (!sawAssistant) {
               sawAssistant = true
@@ -715,6 +811,9 @@ export function ChatPanel({
           if (event.type === 'done') {
             if (event.engine) {
               usedEngine = event.engine
+            }
+            if (event.used_tools) {
+              usedTools = true
             }
             if (event.usage) {
               const parts = USAGE_ENGINE_KEYS.map((key) => {
@@ -757,7 +856,7 @@ export function ChatPanel({
         }
       })
 
-      if (finalAssistantId && finalAssistantContent && usedEngine !== 'cursor') {
+      if (finalAssistantId && finalAssistantContent && usedEngine !== 'cursor' && !usedTools) {
         await runAgentActions(finalAssistantId, finalAssistantContent)
       }
       void refreshSessions()
