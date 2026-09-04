@@ -696,59 +696,6 @@ export function ChatPanel({
   return (
     <aside className="chat-panel" aria-label="AI チャット" style={{ width }}>
       <div className="chat-layout">
-        <div className={`chat-history${historyOpen ? ' is-open' : ''}`} aria-label="チャット履歴">
-          <div className="chat-history-head">
-            <strong>履歴</strong>
-            <button
-              type="button"
-              className="chat-history-new"
-              disabled={!backendConnected || busy !== null || loading}
-              onClick={() => void startNewChat()}
-              title="新しいチャット"
-            >
-              ＋ 新規
-            </button>
-          </div>
-          <div className="chat-history-list">
-            {sessions.length === 0 ? (
-              <p className="chat-history-empty">まだ履歴がありません</p>
-            ) : (
-              sessions.map((row) => {
-                const id = Number(row.id)
-                const active = id === sessionId
-                return (
-                  <div
-                    key={id}
-                    className={`chat-history-item${active ? ' is-active' : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className="chat-history-open"
-                      disabled={busy !== null || loading}
-                      onClick={() => void selectSession(id)}
-                      title={row.title}
-                    >
-                      <span className="chat-history-title">{row.title || 'New chat'}</span>
-                      <span className="chat-history-time">
-                        {formatSessionTime(row.updated_at || row.created_at)}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="chat-history-delete"
-                      disabled={busy !== null || loading}
-                      title="削除"
-                      onClick={() => setPendingDeleteId(id)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-
         <div className="chat-main">
           <div className="chat-header">
             <div className="chat-header-left">
@@ -926,6 +873,59 @@ export function ChatPanel({
               {busy ? '実行中…' : '送信'}
             </button>
           </form>
+        </div>
+
+        <div className={`chat-history${historyOpen ? ' is-open' : ''}`} aria-label="チャット履歴">
+          <div className="chat-history-head">
+            <strong>履歴</strong>
+            <button
+              type="button"
+              className="chat-history-new"
+              disabled={!backendConnected || busy !== null || loading}
+              onClick={() => void startNewChat()}
+              title="新しいチャット"
+            >
+              ＋ 新規
+            </button>
+          </div>
+          <div className="chat-history-list">
+            {sessions.length === 0 ? (
+              <p className="chat-history-empty">まだ履歴がありません</p>
+            ) : (
+              sessions.map((row) => {
+                const id = Number(row.id)
+                const active = id === sessionId
+                return (
+                  <div
+                    key={id}
+                    className={`chat-history-item${active ? ' is-active' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="chat-history-open"
+                      disabled={busy !== null || loading}
+                      onClick={() => void selectSession(id)}
+                      title={row.title}
+                    >
+                      <span className="chat-history-title">{row.title || 'New chat'}</span>
+                      <span className="chat-history-time">
+                        {formatSessionTime(row.updated_at || row.created_at)}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-history-delete"
+                      disabled={busy !== null || loading}
+                      title="削除"
+                      onClick={() => setPendingDeleteId(id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })
+            )}
+          </div>
         </div>
       </div>
 

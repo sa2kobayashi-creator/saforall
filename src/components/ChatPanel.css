@@ -19,7 +19,7 @@
 .chat-history {
   width: 0;
   overflow: hidden;
-  border-right: 0;
+  border-left: 0;
   background: #12161c;
   display: flex;
   flex-direction: column;
@@ -29,7 +29,7 @@
 
 .chat-history.is-open {
   width: 176px;
-  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
 }
 
 .chat-history-head {
