@@ -1,5 +1,6 @@
-import { readdir, readFile, stat } from 'fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'path'
+import { readdir, readFile, stat, writeFile, mkdir, unlink } from 'fs/promises'
+import { spawn } from 'child_process'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { searchIndexedContent } from './workspaceIndex'
 
 const SKIP_DIRS = new Set([
@@ -163,4 +164,157 @@ export async function searchFilesByName(
 
   await walk(root, 0)
   return hits
+}
+
+const DANGEROUS_SHELL =
+  /\b(format\s+[a-z]:|mkfs\b|diskpart\b|shutdown(\s|\/)|reboot\b|rm\s+-rf\s+\/(?=\s|$)|del\s+\/[sq]\b|rd\s+\/s\b|reg\s+delete\b|Remove-Item\b.*-Recurse\b|Invoke-WebRequest\b.*\|\s*iex\b|curl\b.*\|\s*sh\b)/i
+
+export function assertSafeShellCommand(command: string): void {
+  const trimmed = command.trim()
+  if (!trimmed) throw new Error('command が空です')
+  if (trimmed.length > 2000) throw new Error('command が長すぎます')
+  if (DANGEROUS_SHELL.test(trimmed)) {
+    throw new Error('危険な可能性があるコマンドはブロックしました')
+  }
+}
+
+export function truncateShellOutput(text: string, max = 12_000): string {
+  if (text.length <= max) return text
+  const head = Math.floor(max * 0.65)
+  const tail = max - head - 40
+  return `${text.slice(0, head)}\n\n... (truncated ${text.length - max} chars) ...\n\n${text.slice(-tail)}`
+}
+
+export type ShellRunResult = {
+  ok: boolean
+  exitCode: number | null
+  stdout: string
+  stderr: string
+  timedOut: boolean
+  cwd: string
+  command: string
+}
+
+export async function toolRunShell(
+  workspaceRoot: string,
+  command: string,
+  options?: { cwd?: string; timeoutMs?: number }
+): Promise<ShellRunResult> {
+  assertSafeShellCommand(command)
+  const cwdRel = options?.cwd?.trim() || '.'
+  const cwd = resolveWorkspacePath(workspaceRoot, cwdRel)
+  const timeoutMs = Math.min(Math.max(options?.timeoutMs ?? 60_000, 5_000), 180_000)
+
+  return await new Promise((resolvePromise) => {
+    const child = spawn(command, {
+      cwd,
+      shell: true,
+      windowsHide: true,
+      env: { ...process.env, FORCE_COLOR: '0', CI: '1' }
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      try {
+        child.kill()
+      } catch {
+        // ignore
+      }
+    }, timeoutMs)
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf-8')
+      if (stdout.length > 200_000) stdout = truncateShellOutput(stdout, 180_000)
+    })
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf-8')
+      if (stderr.length > 200_000) stderr = truncateShellOutput(stderr, 180_000)
+    })
+
+    const finish = (exitCode: number | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolvePromise({
+        ok: !timedOut && exitCode === 0,
+        exitCode,
+        stdout: truncateShellOutput(stdout),
+        stderr: truncateShellOutput(stderr),
+        timedOut,
+        cwd: relative(resolve(workspaceRoot), cwd) || '.',
+        command
+      })
+    }
+
+    child.on('error', (error) => {
+      stderr += (stderr ? '\n' : '') + error.message
+      finish(1)
+    })
+    child.on('close', (code) => finish(timedOut ? null : code))
+  })
+}
+
+/** Temporarily write pending edits, run work, then restore originals. */
+export async function withMaterializedEdits<T>(
+  workspaceRoot: string,
+  pendingEdits: Map<string, string>,
+  work: () => Promise<T>
+): Promise<T> {
+  if (pendingEdits.size === 0) return work()
+
+  const backups = new Map<string, string | null>()
+  for (const [relPath, content] of Array.from(pendingEdits.entries())) {
+    const absolute = resolveWorkspacePath(workspaceRoot, relPath)
+    try {
+      backups.set(relPath, await readFile(absolute, 'utf-8'))
+    } catch {
+      backups.set(relPath, null)
+    }
+    await mkdir(dirname(absolute), { recursive: true })
+    await writeFile(absolute, content, 'utf-8')
+  }
+
+  try {
+    return await work()
+  } finally {
+    for (const [relPath, original] of Array.from(backups.entries())) {
+      const absolute = resolveWorkspacePath(workspaceRoot, relPath)
+      try {
+        if (original === null) await unlink(absolute)
+        else await writeFile(absolute, original, 'utf-8')
+      } catch {
+        // best-effort restore
+      }
+    }
+  }
+}
+
+export async function suggestVerifyCommand(workspaceRoot: string): Promise<string | null> {
+  try {
+    const raw = await readFile(resolveWorkspacePath(workspaceRoot, 'package.json'), 'utf-8')
+    const pkg = JSON.parse(raw) as { scripts?: Record<string, string> }
+    const scripts = pkg.scripts ?? {}
+    if (scripts.test) return 'npm test'
+    if (scripts.typecheck) return 'npm run typecheck'
+    if (scripts.lint) return 'npm run lint'
+    if (scripts.build) return 'npm run build'
+  } catch {
+    // ignore
+  }
+  try {
+    await stat(resolveWorkspacePath(workspaceRoot, 'pyproject.toml'))
+    return 'python -m pytest -q'
+  } catch {
+    // ignore
+  }
+  try {
+    await stat(resolveWorkspacePath(workspaceRoot, 'Cargo.toml'))
+    return 'cargo test'
+  } catch {
+    // ignore
+  }
+  return null
 }

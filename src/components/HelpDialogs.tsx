@@ -117,7 +117,7 @@ export function DocumentationDialog({ open, onClose }: SimpleProps) {
             バックエンドが起動している必要があります。
           </li>
           <li>
-            <strong>AI チャット</strong> — Ctrl/Cmd + L で右側のチャットを開き、Ask / Agent モードで質問や編集を依頼します。
+            <strong>AI チャット</strong> — Ctrl/Cmd + L で右側のチャットを開き、Ask / Agent モードで質問や編集を依頼します。Agent は verify で `run_shell`（例: npm test）によるシェル検証ループを行います。
             <code>@</code> でファイルや <code>@selection</code> / <code>@problems</code> / <code>@rules</code> を添付できます。
           </li>
           <li>

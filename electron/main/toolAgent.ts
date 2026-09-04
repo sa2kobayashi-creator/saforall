@@ -1,9 +1,12 @@
 import type { ChatStreamEvent, MonthUsage } from './api'
 import {
   loadProjectRules,
+  suggestVerifyCommand,
   toolListDir,
   toolReadFile,
-  toolSearch
+  toolRunShell,
+  toolSearch,
+  withMaterializedEdits
 } from './workspaceTools'
 
 type ProviderMessage =
@@ -104,14 +107,47 @@ const TOOLS = [
         required: ['path', 'content']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_shell',
+      description:
+        'Run a short shell command in the workspace (e.g. npm test, npm run typecheck). Pending edit_file proposals are temporarily applied for the run, then restored. Prefer package scripts. Blocked: destructive system commands.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description: 'Shell command, e.g. "npm test" or "npm run typecheck"'
+          },
+          cwd: {
+            type: 'string',
+            description: 'Optional subdirectory relative to workspace (default .)'
+          },
+          timeout_ms: {
+            type: 'number',
+            description: 'Timeout in ms (default 60000, max 180000)'
+          }
+        },
+        required: ['command']
+      }
+    }
   }
 ]
 
 const PHASE_TOOLS: Record<AgentPhase, Set<string>> = {
   plan: new Set(['set_phase', 'list_dir', 'search_code', 'read_file']),
   explore: new Set(['set_phase', 'list_dir', 'search_code', 'read_file']),
-  edit: new Set(['set_phase', 'read_file', 'search_code', 'list_dir', 'edit_file']),
-  verify: new Set(['set_phase', 'read_file', 'search_code', 'list_dir'])
+  edit: new Set(['set_phase', 'read_file', 'search_code', 'list_dir', 'edit_file', 'run_shell']),
+  verify: new Set([
+    'set_phase',
+    'read_file',
+    'search_code',
+    'list_dir',
+    'run_shell',
+    'edit_file'
+  ])
 }
 
 export type ToolAgentParams = {
@@ -280,7 +316,9 @@ async function runTool(
   editedPaths: Set<string>,
   verifiedPaths: Set<string>,
   readCache: Map<string, string>,
-  editSummaries: Map<string, string>
+  editSummaries: Map<string, string>,
+  pendingEdits: Map<string, string>,
+  shellState: { attempts: number; passed: boolean; lastExit: number | null }
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
   const repaired = repairToolArguments(argsJson)
   let args: Record<string, unknown> = {}
@@ -352,10 +390,19 @@ async function runTool(
     if (name === 'read_file') {
       const path = String(args.path ?? '')
       const cacheKey = path.replace(/\\/g, '/').toLowerCase()
-      let content = readCache.get(cacheKey)
+      let content: string | undefined
+      for (const [pendingPath, pendingContent] of Array.from(pendingEdits.entries())) {
+        if (pathKeyMatchLoose(pendingPath, path)) {
+          content = pendingContent
+          break
+        }
+      }
       if (content === undefined) {
-        content = await toolReadFile(workspacePath, path)
-        readCache.set(cacheKey, content)
+        content = readCache.get(cacheKey)
+        if (content === undefined) {
+          content = await toolReadFile(workspacePath, path)
+          readCache.set(cacheKey, content)
+        }
       }
       if (Array.from(editedPaths).some((row) => pathKeyMatchLoose(row, path))) {
         verifiedPaths.add(path)
@@ -423,11 +470,13 @@ async function runTool(
       }
 
       editedPaths.add(path)
+      pendingEdits.set(path, content)
       editSummaries.set(
         path,
         `${content.split(/\r?\n/).length} lines · ${content.length} chars`
       )
-      // Re-edit invalidates prior verification and read cache for this path
+      // Re-edit invalidates prior verification, shell pass, and read cache for this path
+      shellState.passed = false
       for (const row of Array.from(verifiedPaths)) {
         if (pathKeyMatchLoose(row, path)) verifiedPaths.delete(row)
       }
@@ -448,10 +497,54 @@ async function runTool(
           queued: true,
           path,
           warning,
-          note: warning ?? 'Queued for Composer review. Continue editing other files or set_phase verify.'
+          note:
+            warning ??
+            'Queued for Composer review. Use run_shell in verify to test with proposals temporarily applied.'
         }),
         ok: true
       }
+    }
+
+    if (name === 'run_shell') {
+      const command = String(args.command ?? '')
+      const cwd = typeof args.cwd === 'string' ? args.cwd : undefined
+      const timeoutMs =
+        typeof args.timeout_ms === 'number'
+          ? args.timeout_ms
+          : typeof args.timeoutMs === 'number'
+            ? args.timeoutMs
+            : undefined
+      const result = await withMaterializedEdits(workspacePath, pendingEdits, () =>
+        toolRunShell(workspacePath, command, { cwd, timeoutMs })
+      )
+      shellState.attempts += 1
+      shellState.lastExit = result.exitCode
+      if (result.ok) shellState.passed = true
+      else shellState.passed = false
+
+      const payload = {
+        ok: result.ok,
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+        cwd: result.cwd,
+        command: result.command,
+        appliedPendingEdits: Array.from(pendingEdits.keys()).slice(0, 40),
+        stdout: result.stdout,
+        stderr: result.stderr,
+        note: result.ok
+          ? 'Command succeeded. Pending edits were restored after the run; accept Composer to keep them.'
+          : 'Command failed. Inspect stdout/stderr, set_phase edit (or edit_file), then run_shell again.'
+      }
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: result.ok,
+        summary: result.timedOut
+          ? `timeout: ${command}`
+          : `exit ${result.exitCode ?? '?'} · ${command}`
+      })
+      return { content: JSON.stringify(payload), ok: result.ok }
     }
 
     onEvent({
@@ -502,17 +595,23 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   }
 
   const rules = await loadProjectRules(workspacePath)
+  const suggestedVerify = await suggestVerifyCommand(workspacePath)
   const agentSystem = [
     'あなたは saforall の長時間コーディング Agent です。大規模リファクタも担当します。',
     '必ずフェーズを進めます: plan → explore → edit → verify。',
     'set_phase でフェーズを宣言してから作業してください。',
     'plan: 変更方針を短く立てる（必要なら軽く list/search）。',
     'explore: read_file / search_code で深く調査（関連ファイルを複数読む）。',
-    'edit: edit_file で複数ファイルを提案（Composer レビュー用。即時保存されない）。',
-    'verify: 編集した各ファイルを必ず read_file で再確認し、不整合があれば explore/edit に戻る。verify 未確認のまま最終回答してはいけない。verify では edit_file 不可。',
-    'ツール失敗時は別パス/クエリで自己修正。同じ呼び出しを繰り返さない。',
-    '最終回答は日本語で、変更ファイル一覧と注意点を短くまとめる。',
-    `ワークスペース: ${workspacePath}`
+    'edit: edit_file で複数ファイルを提案（Composer レビュー用。即時永続保存されない）。',
+    'verify: 編集ファイルを read_file で確認し、run_shell で test/typecheck を実行する。失敗したら edit に戻って修正し、再度 run_shell。',
+    'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
+    '破壊的コマンドは禁止。短い検証コマンド（npm test / typecheck 等）を優先。',
+    'ツール失敗時は別パス/クエリ/コマンドで自己修正。同じ呼び出しを繰り返さない。',
+    '最終回答は日本語で、変更ファイル一覧・シェル結果・注意点を短くまとめる。',
+    `ワークスペース: ${workspacePath}`,
+    suggestedVerify
+      ? `推奨検証コマンド: ${suggestedVerify}`
+      : 'package.json / テスト設定を探し、適切な検証コマンドを run_shell で実行する。'
   ]
   if (rules) {
     agentSystem.push('プロジェクトルール:\n' + rules)
@@ -532,18 +631,22 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   onEvent({ type: 'agent_phase', phase, note: '計画を開始' })
 
   let finalText = ''
-  const maxSteps = 40
+  const maxSteps = 48
   let consecutiveToolFailures = 0
   const recentSignatures: string[] = []
   const progressNotes: string[] = []
   const editedPaths = new Set<string>()
   const verifiedPaths = new Set<string>()
   const editSummaries = new Map<string, string>()
+  const pendingEdits = new Map<string, string>()
   const readCache = new Map<string, string>()
+  const shellState = { attempts: 0, passed: false, lastExit: null as number | null }
   let exploreReads = 0
   let verifyNudgeCount = 0
+  let shellNudgeCount = 0
   let finalizeBlockCount = 0
   let verifyIncomplete = false
+  let shellIncomplete = false
 
   for (let step = 0; step < maxSteps; step += 1) {
     let completion: ChatCompletionResponse
@@ -638,7 +741,9 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
                 editedPaths,
                 verifiedPaths,
                 readCache,
-                editSummaries
+                editSummaries,
+                pendingEdits,
+                shellState
               )
               return { call, result, skippedDup: false as const }
             })
@@ -669,7 +774,9 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           editedPaths,
           verifiedPaths,
           readCache,
-          editSummaries
+          editSummaries,
+          pendingEdits,
+          shellState
         )
         orderedResults.push({ call, result, skippedDup: false })
       }
@@ -748,7 +855,9 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           .join(', ')
         messages.push({
           role: 'user',
-          content: `システム: 編集提案があります（${list}）。追加編集がなければ set_phase verify へ進み、各ファイルを read_file で確認してください。`
+          content: `システム: 編集提案があります（${list}）。追加編集がなければ set_phase verify へ進み、read_file 確認のあと run_shell で検証してください${
+            suggestedVerify ? `（例: ${suggestedVerify}）` : ''
+          }。`
         })
       }
 
@@ -759,14 +868,46 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           const list = pending.slice(0, 12).join(', ')
           messages.push({
             role: 'user',
-            content: `システム: verify 未完了です。次の編集ファイルを必ず read_file してください（確認後に最終回答可）: ${list}`
+            content: `システム: verify 未完了です。次の編集ファイルを必ず read_file してください（確認後に run_shell）: ${list}`
           })
-        } else if (pending.length === 0 && editedPaths.size > 0 && verifyNudgeCount < 4) {
-          verifyNudgeCount = 4
+        } else if (
+          pending.length === 0 &&
+          editedPaths.size > 0 &&
+          shellState.attempts === 0 &&
+          shellNudgeCount < 2
+        ) {
+          shellNudgeCount += 1
+          messages.push({
+            role: 'user',
+            content: `システム: ファイル確認は完了。次に run_shell で検証してください${
+              suggestedVerify
+                ? `（推奨: ${suggestedVerify}）`
+                : '（npm test / typecheck / プロジェクトのテストコマンド）'
+            }。失敗したら set_phase edit で修正し、再実行。`
+          })
+        } else if (
+          pending.length === 0 &&
+          editedPaths.size > 0 &&
+          shellState.attempts > 0 &&
+          !shellState.passed &&
+          shellNudgeCount < 4
+        ) {
+          shellNudgeCount += 1
+          messages.push({
+            role: 'user',
+            content: `システム: run_shell が失敗しています（exit=${shellState.lastExit ?? 'timeout'}）。エラーを直し set_phase edit → edit_file → 再度 run_shell してください。`
+          })
+        } else if (
+          pending.length === 0 &&
+          editedPaths.size > 0 &&
+          shellState.passed &&
+          verifyNudgeCount < 5
+        ) {
+          verifyNudgeCount = 5
           messages.push({
             role: 'user',
             content:
-              'システム: 編集ファイルの再読込は完了しています。不整合がなければ最終回答を日本語でまとめ、問題があれば set_phase edit に戻ってください。'
+              'システム: read + run_shell 成功です。最終回答を日本語でまとめ、Composer で差分を適用するよう促してください。'
           })
         }
       }
@@ -792,7 +933,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       messages.push({
         role: 'user',
         content:
-          'システム: 編集提案後の最終回答は verify 完了後のみです。set_phase verify を呼び、編集ファイルを read_file で確認してからまとめてください。'
+          'システム: 編集提案後の最終回答は verify 完了後のみです。set_phase verify → read_file → run_shell の順で確認してください。'
       })
       continue
     }
@@ -818,12 +959,46 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         })
         continue
       }
+      if (
+        pending.length === 0 &&
+        shellState.attempts === 0 &&
+        finalizeBlockCount < 7
+      ) {
+        finalizeBlockCount += 1
+        messages.push({
+          role: 'assistant',
+          content: message.content ?? null
+        })
+        messages.push({
+          role: 'user',
+          content: `システム: 最終回答の前に run_shell で検証してください${
+            suggestedVerify ? `（推奨: ${suggestedVerify}）` : ''
+          }。`
+        })
+        continue
+      }
+      if (pending.length === 0 && shellState.attempts > 0 && !shellState.passed && finalizeBlockCount < 9) {
+        finalizeBlockCount += 1
+        messages.push({
+          role: 'assistant',
+          content: message.content ?? null
+        })
+        messages.push({
+          role: 'user',
+          content:
+            'システム: シェル検証が失敗したままです。修正してから再実行するか、失敗内容を明記したうえで最終回答してください。'
+        })
+        continue
+      }
       if (pending.length > 0) {
         verifyIncomplete = true
         finalText =
           (message.content ?? '').trim() ||
           `verify 未完了のまま終了しました。未確認: ${pending.join(', ')}`
         break
+      }
+      if (shellState.attempts === 0 || !shellState.passed) {
+        shellIncomplete = true
       }
     }
 
@@ -834,6 +1009,10 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   if (verifyIncomplete && finalText) {
     finalText +=
       '\n\n⚠ verify が完了していません。Composer の差分を必ず人手で確認してください。'
+  }
+  if (shellIncomplete && finalText) {
+    finalText +=
+      '\n\n⚠ シェル検証（run_shell）が未成功です。Composer 適用前にローカルで test/typecheck を実行してください。'
   }
 
   if (!finalText) {

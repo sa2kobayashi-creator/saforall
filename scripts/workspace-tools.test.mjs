@@ -150,6 +150,41 @@ test('buildRunFileCommand supports node inspect', () => {
   assert.match(buildRunFileCommand('D:/app/index.js', true), /node --inspect-brk=9229/)
 })
 
+function assertSafeShellCommand(command) {
+  const trimmed = (command || '').trim()
+  if (!trimmed) throw new Error('command が空です')
+  if (trimmed.length > 2000) throw new Error('command が長すぎます')
+  const dangerous =
+    /\b(format\s+[a-z]:|mkfs\b|diskpart\b|shutdown(\s|\/)|reboot\b|rm\s+-rf\s+\/(?=\s|$)|del\s+\/[sq]\b|rd\s+\/s\b|reg\s+delete\b|Remove-Item\b.*-Recurse\b|Invoke-WebRequest\b.*\|\s*iex\b|curl\b.*\|\s*sh\b)/i
+  if (dangerous.test(trimmed)) {
+    throw new Error('危険な可能性があるコマンドはブロックしました')
+  }
+}
+
+function truncateShellOutput(text, max = 12_000) {
+  if (text.length <= max) return text
+  const head = Math.floor(max * 0.65)
+  const tail = max - head - 40
+  return `${text.slice(0, head)}\n\n... (truncated ${text.length - max} chars) ...\n\n${text.slice(-tail)}`
+}
+
+test('assertSafeShellCommand allows npm test', () => {
+  assert.doesNotThrow(() => assertSafeShellCommand('npm test'))
+  assert.doesNotThrow(() => assertSafeShellCommand('npm run typecheck'))
+})
+
+test('assertSafeShellCommand blocks destructive commands', () => {
+  assert.throws(() => assertSafeShellCommand('rm -rf /'))
+  assert.throws(() => assertSafeShellCommand('shutdown /s'))
+})
+
+test('truncateShellOutput keeps head and tail', () => {
+  const text = 'a'.repeat(20_000)
+  const out = truncateShellOutput(text, 1000)
+  assert.ok(out.includes('truncated'))
+  assert.ok(out.length < text.length)
+})
+
 function findReplaceableBlock(existing, code) {
   const snippet = code.replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '')
   if (!snippet || snippet.length < 12) return null
