@@ -204,6 +204,91 @@ export const DEFAULT_ROUTER_ENGINES: Array<(typeof USAGE_ENGINE_KEYS)[number]> =
   'cursor'
 ]
 
+export type RouterProfile = 'balanced' | 'cheapest' | 'quality'
+
+export type RouterAutoPolicy = {
+  ask_avoid_cursor: boolean
+  cursor_requires_agent: boolean
+  cursor_strong_signals_only: boolean
+  prefer_cheap_models: boolean
+  gemini_for_mid_tasks: boolean
+  workers_max_chars: number
+  fix_words_to_cursor: boolean
+}
+
+export const ROUTER_PROFILE_LABELS: Record<RouterProfile, string> = {
+  balanced: 'バランス（おすすめ・標準）',
+  cheapest: '最安優先',
+  quality: '品質優先'
+}
+
+export const DEFAULT_ROUTER_PROFILE: RouterProfile = 'balanced'
+
+export function routerPolicyPreset(profile: RouterProfile): RouterAutoPolicy {
+  if (profile === 'cheapest') {
+    return {
+      ask_avoid_cursor: true,
+      cursor_requires_agent: true,
+      cursor_strong_signals_only: true,
+      prefer_cheap_models: true,
+      gemini_for_mid_tasks: true,
+      workers_max_chars: 400,
+      fix_words_to_cursor: false
+    }
+  }
+  if (profile === 'quality') {
+    return {
+      ask_avoid_cursor: false,
+      cursor_requires_agent: false,
+      cursor_strong_signals_only: false,
+      prefer_cheap_models: false,
+      gemini_for_mid_tasks: false,
+      workers_max_chars: 80,
+      fix_words_to_cursor: true
+    }
+  }
+  return {
+    ask_avoid_cursor: true,
+    cursor_requires_agent: true,
+    cursor_strong_signals_only: true,
+    prefer_cheap_models: true,
+    gemini_for_mid_tasks: true,
+    workers_max_chars: 200,
+    fix_words_to_cursor: false
+  }
+}
+
+export function parseRouterProfile(raw: unknown): RouterProfile {
+  if (raw === 'cheapest' || raw === 'quality' || raw === 'balanced') return raw
+  return DEFAULT_ROUTER_PROFILE
+}
+
+export function parseRouterAutoPolicy(
+  raw: unknown,
+  profile: RouterProfile = DEFAULT_ROUTER_PROFILE
+): RouterAutoPolicy {
+  const base = routerPolicyPreset(profile)
+  if (typeof raw !== 'string' || raw.trim() === '') return base
+  try {
+    const parsed = JSON.parse(raw) as Partial<RouterAutoPolicy>
+    return {
+      ask_avoid_cursor: parsed.ask_avoid_cursor ?? base.ask_avoid_cursor,
+      cursor_requires_agent: parsed.cursor_requires_agent ?? base.cursor_requires_agent,
+      cursor_strong_signals_only:
+        parsed.cursor_strong_signals_only ?? base.cursor_strong_signals_only,
+      prefer_cheap_models: parsed.prefer_cheap_models ?? base.prefer_cheap_models,
+      gemini_for_mid_tasks: parsed.gemini_for_mid_tasks ?? base.gemini_for_mid_tasks,
+      workers_max_chars: Math.max(
+        40,
+        Math.min(800, Number(parsed.workers_max_chars ?? base.workers_max_chars) || base.workers_max_chars)
+      ),
+      fix_words_to_cursor: parsed.fix_words_to_cursor ?? base.fix_words_to_cursor
+    }
+  } catch {
+    return base
+  }
+}
+
 export function parseEngineList(
   raw: unknown,
   fallback: readonly (typeof USAGE_ENGINE_KEYS)[number][] = DEFAULT_ROUTER_ENGINES

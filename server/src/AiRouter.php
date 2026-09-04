@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/RouterPolicy.php';
+
 final class AiRouter
 {
     public const ENGINES = ['auto', 'cursor', 'openai', 'gemini', 'workers'];
@@ -16,17 +18,30 @@ final class AiRouter
      *   engine:string,
      *   task_type:string,
      *   fallback_from:?string,
-     *   fallback_reason:?string
+     *   fallback_reason:?string,
+     *   mode:string,
+     *   policy_profile:string
      * }
      */
-    public static function decide(PDO $pdo, array $settings, string $requested, string $message): array
-    {
+    public static function decide(
+        PDO $pdo,
+        array $settings,
+        string $requested,
+        string $message,
+        string $mode = 'ask'
+    ): array {
         $requested = strtolower(trim($requested));
         if (!in_array($requested, self::ENGINES, true)) {
             $requested = 'auto';
         }
 
-        $taskType = self::classify($message);
+        $mode = strtolower(trim($mode));
+        if ($mode !== 'agent') {
+            $mode = 'ask';
+        }
+
+        $policy = RouterPolicy::load($settings);
+        $taskType = self::classify($message, $policy);
         $enabled = self::enabledEngines($settings);
         $ready = self::readyMap($settings);
 
@@ -42,13 +57,18 @@ final class AiRouter
                 );
             }
 
-            $preferred = self::engineForTask($taskType);
+            $preferred = self::engineForTask($taskType, $policy, $mode);
+            // Ask で Cursor 回避など、ポリシーで希望を再調整
+            $preferred = self::applyModeGuards($preferred, $taskType, $policy, $mode);
+
             $engine = self::firstAvailable(
-                self::preferenceChain($preferred),
+                self::preferenceChain($preferred, $policy),
                 $enabled,
                 $ready,
                 $pdo,
-                $settings
+                $settings,
+                $policy,
+                $mode
             );
 
             if ($engine === null) {
@@ -75,6 +95,8 @@ final class AiRouter
                 'task_type' => $taskType,
                 'fallback_from' => $fallbackFrom,
                 'fallback_reason' => $fallbackReason,
+                'mode' => $mode,
+                'policy_profile' => (string) $policy['profile'],
             ];
         }
 
@@ -101,6 +123,8 @@ final class AiRouter
             'task_type' => $taskType,
             'fallback_from' => null,
             'fallback_reason' => null,
+            'mode' => $mode,
+            'policy_profile' => (string) $policy['profile'],
         ];
     }
 
@@ -167,16 +191,20 @@ final class AiRouter
     }
 
     /**
-     * 希望エンジンから、代替候補の優先順位を作る。
-     *
+     * @param array<string, mixed> $policy
      * @return list<string>
      */
-    private static function preferenceChain(string $preferred): array
+    private static function preferenceChain(string $preferred, array $policy): array
     {
+        $cheapMid = !empty($policy['gemini_for_mid_tasks']);
         $chains = [
-            'workers' => ['workers', 'gemini', 'openai', 'cursor'],
+            'workers' => $cheapMid
+                ? ['workers', 'gemini', 'openai', 'cursor']
+                : ['workers', 'openai', 'gemini', 'cursor'],
             'gemini' => ['gemini', 'workers', 'openai', 'cursor'],
-            'openai' => ['openai', 'gemini', 'workers', 'cursor'],
+            'openai' => $cheapMid
+                ? ['openai', 'gemini', 'workers', 'cursor']
+                : ['openai', 'workers', 'gemini', 'cursor'],
             'cursor' => ['cursor', 'openai', 'gemini', 'workers'],
         ];
         return $chains[$preferred] ?? ['openai', 'gemini', 'workers', 'cursor'];
@@ -187,13 +215,16 @@ final class AiRouter
      * @param list<string> $enabled
      * @param array<string, bool> $ready
      * @param array<string, mixed> $settings
+     * @param array<string, mixed> $policy
      */
     private static function firstAvailable(
         array $chain,
         array $enabled,
         array $ready,
         PDO $pdo,
-        array $settings
+        array $settings,
+        array $policy,
+        string $mode
     ): ?string {
         foreach ($chain as $engine) {
             if (!in_array($engine, $enabled, true)) {
@@ -202,15 +233,20 @@ final class AiRouter
             if (!($ready[$engine] ?? false)) {
                 continue;
             }
+            if (!self::engineAllowedByPolicy($engine, $policy, $mode)) {
+                continue;
+            }
             if (!self::withinBudget($pdo, $settings, $engine)) {
                 continue;
             }
             return $engine;
         }
 
-        // チェーンに無い有効エンジンも最後に試す
         foreach ($enabled as $engine) {
             if (!($ready[$engine] ?? false)) {
+                continue;
+            }
+            if (!self::engineAllowedByPolicy($engine, $policy, $mode)) {
                 continue;
             }
             if (!self::withinBudget($pdo, $settings, $engine)) {
@@ -220,6 +256,23 @@ final class AiRouter
         }
 
         return null;
+    }
+
+    /**
+     * @param array<string, mixed> $policy
+     */
+    private static function engineAllowedByPolicy(string $engine, array $policy, string $mode): bool
+    {
+        if ($engine !== 'cursor') {
+            return true;
+        }
+        if (!empty($policy['ask_avoid_cursor']) && $mode !== 'agent') {
+            return false;
+        }
+        if (!empty($policy['cursor_requires_agent']) && $mode !== 'agent') {
+            return false;
+        }
+        return true;
     }
 
     private static function label(string $engine): string
@@ -233,9 +286,14 @@ final class AiRouter
         };
     }
 
-    public static function classify(string $message): string
+    /**
+     * @param array<string, mixed> $policy
+     */
+    public static function classify(string $message, array $policy = []): string
     {
         $text = mb_strtolower($message);
+        $fixToCursor = !empty($policy['fix_words_to_cursor']);
+        $workersMax = isset($policy['workers_max_chars']) ? (int) $policy['workers_max_chars'] : 200;
 
         if (self::matches($text, ['テストして', 'テストを通', '失敗するまで', 'test and fix', 'make tests pass'])) {
             return 'test_fix';
@@ -249,9 +307,16 @@ final class AiRouter
         if (self::matches($text, ['リポジトリ', 'コードベース全体', 'プロジェクト全体', 'analyze repo'])) {
             return 'repo_analysis';
         }
-        if (self::matches($text, ['直して', '修正して', 'バグ', '実装して', 'fix', 'implement', 'バグを直'])) {
+
+        // 標準では「直して」だけでは Cursor にしない（軽い修正扱いに落とす）
+        if ($fixToCursor && self::matches($text, ['直して', '修正して', 'バグ', '実装して', 'fix', 'implement', 'バグを直'])) {
             return 'patch_small';
         }
+        if (!$fixToCursor && self::matches($text, ['直して', '修正して', 'バグを直', 'fix this', 'fix bug'])) {
+            // 単発修正っぽい語は OpenAI/Gemini レーン（codegen 寄り）へ
+            return 'codegen';
+        }
+
         if (self::matches($text, ['設計', 'アーキテクチャ', '方針', 'architecture', 'design'])) {
             return 'design';
         }
@@ -261,24 +326,69 @@ final class AiRouter
         if (self::matches($text, ['要約', '翻訳', '短く', 'ドキュメント', 'コメントを書いて', 'summarize', 'translate', 'docs'])) {
             return 'summarize';
         }
-        if (str_contains($message, '```') || self::matches($text, ['コードを書いて', '生成して', 'write code'])) {
+        if (str_contains($message, '```') || self::matches($text, ['コードを書いて', '生成して', '実装して', 'write code', 'implement'])) {
             return 'codegen';
         }
-        if (mb_strlen($message) < 80 && !str_contains($message, "\n")) {
+
+        // Workers 短文判定（改行ありでも文字数以内なら light_qa）
+        $plain = trim($message);
+        if (mb_strlen($plain) < $workersMax) {
             return 'light_qa';
         }
 
         return 'explain';
     }
 
-    public static function engineForTask(string $taskType): string
+    /**
+     * @param array<string, mixed> $policy
+     */
+    public static function engineForTask(string $taskType, array $policy = [], string $mode = 'ask'): string
     {
+        $geminiMid = !empty($policy['gemini_for_mid_tasks']);
+        $strongOnly = !empty($policy['cursor_strong_signals_only']);
+
         return match ($taskType) {
-            'light_qa', 'summarize' => 'workers',
-            'explain', 'codegen', 'design' => 'openai',
-            'patch_small', 'patch_multi', 'repo_analysis', 'test_fix', 'long_dev' => 'cursor',
-            default => 'openai',
+            'light_qa' => 'workers',
+            'summarize' => $geminiMid ? 'gemini' : 'workers',
+            'explain' => $geminiMid ? 'gemini' : 'openai',
+            'codegen' => 'openai',
+            'design' => 'openai',
+            // 強いシグナルのみ Cursor（標準）
+            'patch_multi', 'repo_analysis', 'test_fix', 'long_dev' => 'cursor',
+            'patch_small' => ($strongOnly && $mode === 'agent') ? 'cursor' : 'openai',
+            default => $geminiMid ? 'gemini' : 'openai',
         };
+    }
+
+    /**
+     * @param array<string, mixed> $policy
+     */
+    private static function applyModeGuards(
+        string $preferred,
+        string $taskType,
+        array $policy,
+        string $mode
+    ): string {
+        if ($preferred !== 'cursor') {
+            return $preferred;
+        }
+
+        if (!empty($policy['ask_avoid_cursor']) && $mode !== 'agent') {
+            return !empty($policy['gemini_for_mid_tasks']) ? 'gemini' : 'openai';
+        }
+
+        if (!empty($policy['cursor_requires_agent']) && $mode !== 'agent') {
+            return !empty($policy['gemini_for_mid_tasks']) ? 'gemini' : 'openai';
+        }
+
+        if (!empty($policy['cursor_strong_signals_only'])) {
+            $strong = ['patch_multi', 'repo_analysis', 'test_fix', 'long_dev'];
+            if (!in_array($taskType, $strong, true)) {
+                return 'openai';
+            }
+        }
+
+        return $preferred;
     }
 
     /**

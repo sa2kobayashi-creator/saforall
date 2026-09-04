@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/src/bootstrap.php';
 require_once dirname(__DIR__) . '/src/AppSettings.php';
 require_once dirname(__DIR__) . '/src/UsageService.php';
+require_once dirname(__DIR__) . '/src/RouterPolicy.php';
 require_once dirname(__DIR__) . '/src/AiRouter.php';
 require_once dirname(__DIR__) . '/src/ChatService.php';
 
@@ -49,6 +50,8 @@ Response::ok([
     'task_type' => $prepared['task_type'],
     'fallback_from' => $prepared['fallback_from'],
     'fallback_reason' => $prepared['fallback_reason'],
+    'mode' => $prepared['mode'] ?? 'ask',
+    'policy_profile' => $prepared['policy_profile'] ?? 'balanced',
     'model' => $prepared['model'],
     'session_id' => $prepared['session_id'],
     'user_message_id' => $prepared['user_message_id'],

@@ -184,7 +184,9 @@ final class ModelCatalog
 
         usort($pool, static fn (array $a, array $b): int => $a['cost'] <=> $b['cost']);
 
-        $tiers = self::tiersForTask($taskType);
+        require_once __DIR__ . '/RouterPolicy.php';
+        $policy = RouterPolicy::load($settings);
+        $tiers = self::tiersForTask($taskType, !empty($policy['prefer_cheap_models']));
         foreach ($tiers as $tier) {
             foreach ($pool as $row) {
                 if ($row['tier'] === $tier) {
@@ -199,11 +201,20 @@ final class ModelCatalog
     /**
      * @return list<string>
      */
-    private static function tiersForTask(string $taskType): array
+    private static function tiersForTask(string $taskType, bool $preferCheap = true): array
     {
+        if (!$preferCheap) {
+            return match ($taskType) {
+                'design', 'long_dev', 'test_fix' => ['strong', 'standard', 'cheap'],
+                'explain', 'codegen', 'patch_multi', 'repo_analysis', 'patch_small' => ['standard', 'cheap', 'strong'],
+                default => ['cheap', 'standard', 'strong'],
+            };
+        }
+
+        // 標準（安価優先）: 重いタスクだけ strong を先に
         return match ($taskType) {
             'design', 'long_dev', 'test_fix' => ['strong', 'standard', 'cheap'],
-            'explain', 'codegen', 'patch_multi', 'repo_analysis', 'patch_small' => ['standard', 'cheap', 'strong'],
+            'patch_multi', 'repo_analysis' => ['standard', 'cheap', 'strong'],
             default => ['cheap', 'standard', 'strong'],
         };
     }

@@ -7,12 +7,19 @@ import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_LLM_MODEL,
   DEFAULT_ROUTER_ENGINES,
+  DEFAULT_ROUTER_PROFILE,
   DEFAULT_WORKERS_MODEL,
   ENGINE_LABELS,
+  ROUTER_PROFILE_LABELS,
   USAGE_ENGINE_KEYS,
   parseEngineList,
   parseModelList,
-  type ProviderEngine
+  parseRouterAutoPolicy,
+  parseRouterProfile,
+  routerPolicyPreset,
+  type ProviderEngine,
+  type RouterAutoPolicy,
+  type RouterProfile
 } from '../lib/llmModels'
 import './SettingsPanel.css'
 
@@ -52,6 +59,10 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
   const [routerEngines, setRouterEngines] = useState<Array<(typeof USAGE_ENGINE_KEYS)[number]>>([
     ...DEFAULT_ROUTER_ENGINES
   ])
+  const [routerProfile, setRouterProfile] = useState<RouterProfile>(DEFAULT_ROUTER_PROFILE)
+  const [routerPolicy, setRouterPolicy] = useState<RouterAutoPolicy>(() =>
+    routerPolicyPreset(DEFAULT_ROUTER_PROFILE)
+  )
 
   const [usageText, setUsageText] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
@@ -140,6 +151,9 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
           setLimitWorkers(settings['cost.workers.monthly_usd'])
         }
         setRouterEngines(parseEngineList(settings['router.enabled_engines'], DEFAULT_ROUTER_ENGINES))
+        const profile = parseRouterProfile(settings['router.profile'])
+        setRouterProfile(profile)
+        setRouterPolicy(parseRouterAutoPolicy(settings['router.auto_policy'], profile))
       }
 
       if (usageResult.ok && usageResult.data?.usage) {
@@ -278,6 +292,8 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
 
     const settings: Record<string, string> = {
       'router.enabled_engines': JSON.stringify(routerEngines),
+      'router.profile': routerProfile,
+      'router.auto_policy': JSON.stringify(routerPolicy),
       'llm.openai.base_url': openaiBaseUrl.trim(),
       'llm.openai.models': JSON.stringify(openaiModels),
       'llm.openai.model': preferred('openai', openaiModels, DEFAULT_LLM_MODEL),
@@ -357,8 +373,77 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
         <form className="settings-form" onSubmit={(event) => void onSubmit(event)}>
           <h3 className="settings-section-title">Auto パイプライン</h3>
           <p className="settings-hint">
-            チャットで「自動」を選んだとき、ここにチェックした AI だけを使います。オフにした AI（例:
-            OpenAI）は Auto では選ばれません。個別に固定選択した場合は使えます。
+            チャットで「自動」を選んだときの振り分け方針です。標準は「バランス（おすすめ）」＝安価分散の改善版です。
+          </p>
+
+          <label>
+            Auto プロファイル
+            <select
+              value={routerProfile}
+              disabled={!backendConnected}
+              onChange={(event) => {
+                const next = parseRouterProfile(event.target.value)
+                setRouterProfile(next)
+                setRouterPolicy(routerPolicyPreset(next))
+              }}
+            >
+              {(Object.keys(ROUTER_PROFILE_LABELS) as RouterProfile[]).map((key) => (
+                <option key={key} value={key}>
+                  {ROUTER_PROFILE_LABELS[key]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="router-policy" role="group" aria-label="Auto 詳細オプション">
+            {(
+              [
+                ['ask_avoid_cursor', 'Ask では Cursor を使わない'],
+                ['cursor_requires_agent', 'Cursor は Agent モードのときだけ'],
+                ['cursor_strong_signals_only', 'Cursor は強い修正シグナル時のみ'],
+                ['prefer_cheap_models', 'モデルは安い候補を優先'],
+                ['gemini_for_mid_tasks', '説明・要約は Gemini を優先'],
+                ['fix_words_to_cursor', '「直して」等で即 Cursor（非推奨）']
+              ] as const
+            ).map(([key, label]) => (
+              <label key={key} className="router-engine-item">
+                <span>{label}</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(routerPolicy[key])}
+                  disabled={!backendConnected}
+                  onChange={() => {
+                    setRouterPolicy((current) => ({
+                      ...current,
+                      [key]: !current[key]
+                    }))
+                  }}
+                />
+              </label>
+            ))}
+            <label>
+              Workers 短文判定の文字数上限
+              <input
+                type="number"
+                min={40}
+                max={800}
+                value={routerPolicy.workers_max_chars}
+                disabled={!backendConnected}
+                onChange={(event) => {
+                  const value = Number(event.target.value)
+                  setRouterPolicy((current) => ({
+                    ...current,
+                    workers_max_chars: Number.isFinite(value)
+                      ? Math.max(40, Math.min(800, value))
+                      : current.workers_max_chars
+                  }))
+                }}
+              />
+            </label>
+          </div>
+
+          <p className="settings-hint">
+            有効エンジン: オフにした AI は Auto では選ばれません（固定選択は可能）。
           </p>
           <div className="router-engines" role="group" aria-label="Auto 有効エンジン">
             {USAGE_ENGINE_KEYS.map((key) => (

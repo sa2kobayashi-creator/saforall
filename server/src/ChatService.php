@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/ModelCatalog.php';
+require_once __DIR__ . '/RouterPolicy.php';
 
 final class ChatService
 {
@@ -46,9 +47,13 @@ final class ChatService
         $requested = isset($body['engine']) && is_string($body['engine'])
             ? $body['engine']
             : (isset($body['task_tier']) && $body['task_tier'] === 'design' ? 'openai' : 'auto');
+        $mode = isset($body['mode']) && is_string($body['mode']) ? strtolower(trim($body['mode'])) : 'ask';
+        if ($mode !== 'agent') {
+            $mode = 'ask';
+        }
 
         if ($userMessageId <= 0) {
-            $decision = AiRouter::decide($pdo, $settings, $requested, $message);
+            $decision = AiRouter::decide($pdo, $settings, $requested, $message, $mode);
             $insertUser = $pdo->prepare(
                 'INSERT INTO chat_messages (session_id, role, content)
                  VALUES (:session_id, :role, :content)'
@@ -80,6 +85,8 @@ final class ChatService
                 'task_type' => isset($body['task_type']) ? (string) $body['task_type'] : 'explain',
                 'fallback_from' => isset($body['fallback_from']) ? (string) $body['fallback_from'] : null,
                 'fallback_reason' => isset($body['fallback_reason']) ? (string) $body['fallback_reason'] : null,
+                'mode' => $mode,
+                'policy_profile' => RouterPolicy::load($settings)['profile'],
             ];
         }
 
@@ -168,6 +175,8 @@ final class ChatService
             'task_type' => $decision['task_type'],
             'fallback_from' => $decision['fallback_from'],
             'fallback_reason' => $decision['fallback_reason'],
+            'mode' => $decision['mode'] ?? $mode,
+            'policy_profile' => $decision['policy_profile'] ?? 'balanced',
             'model' => $provider['model'],
             'api_key' => $provider['api_key'],
             'base_url' => $provider['base_url'],

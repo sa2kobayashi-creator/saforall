@@ -129,13 +129,22 @@ export function ChatPanel({
     kind: 'run' | 'apply'
   } | null>(null)
   const [sessions, setSessions] = useState<ChatSessionRecord[]>([])
-  const [historyOpen, setHistoryOpen] = useState(true)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null)
 
   const modeRef = useRef(mode)
   modeRef.current = mode
   const sessionIdRef = useRef(sessionId)
   sessionIdRef.current = sessionId
+  const prevChatWidthRef = useRef(width)
+
+  // 幅を狭めたタイミングだけ履歴を自動で畳む
+  useEffect(() => {
+    if (width < 340 && prevChatWidthRef.current >= 340) {
+      setHistoryOpen(false)
+    }
+    prevChatWidthRef.current = width
+  }, [width])
 
   const activeSession = useMemo(
     () => sessions.find((row) => Number(row.id) === sessionId) ?? null,
@@ -501,6 +510,7 @@ export function ChatPanel({
         session_id: id,
         message: text,
         engine,
+        mode,
         model:
           engine === 'auto' || modelChoice === 'auto-within-engine'
             ? undefined
@@ -573,8 +583,10 @@ export function ChatPanel({
           if (event.type === 'route') {
             usedEngine = event.engine
             const reason = event.fallback_reason ? `（${event.fallback_reason}）` : ''
+            const profile = event.policy_profile ? ` · ${event.policy_profile}` : ''
+            const modeTag = event.mode ? ` · ${event.mode}` : ''
             setRouteLabel(
-              `${event.engine} · ${event.model} / ${event.task_type}${reason}`
+              `${event.engine} · ${event.model} / ${event.task_type}${modeTag}${profile}${reason}`
             )
             if (event.usage) {
               const parts = USAGE_ENGINE_KEYS.map((key) => {

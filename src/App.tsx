@@ -28,11 +28,13 @@ import {
 import { languageFromPath } from './lib/language'
 import { prefetchAllModelCatalogs } from './lib/modelCatalogCache'
 import {
+  chatWidthMax,
+  CHAT_WIDTH_MIN,
   loadLayoutPrefs,
   saveLayoutPrefs,
   type UsageLayoutMode
 } from './lib/layoutPrefs'
-import { pushRecentWorkspace } from './lib/recentWorkspaces'
+import { pushRecentWorkspace, loadLastWorkspace, saveLastWorkspace } from './lib/recentWorkspaces'
 import type {
   ApplyCodeOptions,
   BackendStatus,
@@ -197,8 +199,55 @@ export default function App() {
     setActivePath(null)
     setTabWidths({})
     setPendingCommand(null)
+    saveLastWorkspace(null)
     setStatus('フォルダを開いて始めましょう')
   }, [])
+
+  // Reload 後も最後のフォルダを復元
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const last = loadLastWorkspace()
+      if (!last) return
+      try {
+        const info = await window.saforall.stat(last)
+        if (cancelled) return
+        if (!info.isDirectory) {
+          saveLastWorkspace(null)
+          return
+        }
+        await openWorkspaceAt(last)
+      } catch {
+        if (!cancelled) saveLastWorkspace(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // 起動時のみ
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 起動時にオフライン復元した場合、API 接続後に workspace_id を付ける
+  useEffect(() => {
+    if (!backend.connected || !workspacePath || workspaceId !== null) return
+    let cancelled = false
+    ;(async () => {
+      const result = await window.saforall.request<{ workspace: WorkspaceRecord }>(
+        'POST',
+        '/workspaces',
+        { path: workspacePath }
+      )
+      if (cancelled) return
+      if (result.ok && result.data?.workspace) {
+        setWorkspaceId(Number(result.data.workspace.id))
+        setStatus(`ワークスペース: ${workspacePath}（DB #${result.data.workspace.id}）`)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [backend.connected, workspacePath, workspaceId])
 
   const toggleUsage = useCallback(() => {
     setUsageMode((current) => {
@@ -655,13 +704,18 @@ export default function App() {
               </>
             )}
           </main>
-          {chatOpen && (
+          {chatOpen ? (
             <>
               <ResizeHandle
                 direction="horizontal"
-                title="チャットの幅を変更"
+                title="チャットの幅を変更（左へ＝チャット拡大／右へ＝エディタ拡大）"
                 onResize={(delta) => {
-                  setChatWidth((width) => Math.min(640, Math.max(280, width - delta)))
+                  const reservedLeft =
+                    48 + sidebarWidth + 4 + (usageMode === 'right' ? usageWidth + 4 : 0)
+                  const max = chatWidthMax(reservedLeft)
+                  setChatWidth((width) =>
+                    Math.min(max, Math.max(CHAT_WIDTH_MIN, width - delta))
+                  )
                 }}
               />
               <ChatPanel
@@ -673,6 +727,15 @@ export default function App() {
                 onApplyCode={applyCode}
               />
             </>
+          ) : (
+            <button
+              type="button"
+              className="chat-collapsed-rail"
+              title="AI チャットを表示"
+              onClick={() => setChatOpen(true)}
+            >
+              AI
+            </button>
           )}
           {usageDocked && (
             <>

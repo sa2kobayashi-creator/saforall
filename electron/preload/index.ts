@@ -39,6 +39,8 @@ export type ChatStreamEvent =
       task_type: string
       model: string
       fallback_reason?: string | null
+      mode?: string
+      policy_profile?: string
       usage?: Record<string, { spent: number; limit: number; remaining: number }>
     }
   | { type: 'delta'; text: string }

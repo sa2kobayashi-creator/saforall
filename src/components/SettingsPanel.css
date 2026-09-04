@@ -297,6 +297,17 @@
   background: var(--bg);
 }
 
+.router-policy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
 .router-engine-item {
   display: flex !important;
   flex-direction: row !important;

@@ -16,6 +16,24 @@
   width: 100%;
 }
 
+.chat-collapsed-rail {
+  flex-shrink: 0;
+  width: 28px;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: #151a22;
+  color: var(--text-muted);
+  writing-mode: vertical-rl;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chat-collapsed-rail:hover {
+  color: #d7ecff;
+  background: #1b2a38;
+}
+
 .main-pane {
   flex: 1;
   min-width: 0;

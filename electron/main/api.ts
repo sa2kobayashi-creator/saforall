@@ -148,6 +148,8 @@ export type ChatStreamEvent =
       task_type: string
       model: string
       fallback_reason?: string | null
+      mode?: string
+      policy_profile?: string
       usage?: MonthUsage
     }
   | { type: 'delta'; text: string }
@@ -168,6 +170,8 @@ type RouteData = {
   task_type: string
   fallback_from: string | null
   fallback_reason: string | null
+  mode?: string
+  policy_profile?: string
   model: string
   session_id: number
   user_message_id: number
@@ -214,6 +218,8 @@ export async function streamChat(
     task_type: decided.task_type,
     model: decided.model,
     fallback_reason: decided.fallback_reason,
+    mode: decided.mode,
+    policy_profile: decided.policy_profile,
     usage: decided.usage
   })
 

@@ -28,7 +28,7 @@
 }
 
 .chat-history.is-open {
-  width: 196px;
+  width: 176px;
   border-right: 1px solid var(--border);
 }
 
