@@ -45,6 +45,10 @@ export function ExtensionsPanel({
     Array<{ name: string; description?: string; serverId: string }>
   >([])
   const [mcpServers, setMcpServers] = useState<Array<{ id: string; command: string }>>([])
+  const [mcpStatuses, setMcpStatuses] = useState<
+    Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }>
+  >([])
+  const [mcpSummary, setMcpSummary] = useState<string | null>(null)
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpError, setMcpError] = useState<string | null>(null)
 
@@ -52,11 +56,30 @@ export function ExtensionsPanel({
     if (!workspacePath || typeof window.saforall.listMcp !== 'function') return
     setMcpBusy(true)
     setMcpError(null)
+    setMcpSummary(null)
     try {
       const result = await window.saforall.listMcp(workspacePath)
       setMcpServers(result.servers.map((row) => ({ id: row.id, command: row.command })))
       setMcpTools(result.tools)
+      setMcpStatuses(result.statuses ?? [])
+      const summary =
+        result.summary ??
+        `読込完了: サーバー ${result.servers.length} / ツール ${result.tools.length} 件`
+      setMcpSummary(summary)
+      if (result.servers.length === 0) {
+        setMcpError('mcp.json にサーバーがありません')
+      } else if (result.tools.length === 0) {
+        const fails = (result.statuses ?? [])
+          .filter((row) => !row.ok)
+          .map((row) => `${row.serverId}: ${row.error ?? '起動失敗'}`)
+        setMcpError(
+          fails.length > 0
+            ? `サーバーは見つかったがツールを取得できませんでした。\n${fails.join('\n')}`
+            : 'サーバーはありますが、公開ツールが 0 件です'
+        )
+      }
     } catch (error) {
+      setMcpSummary(null)
       setMcpError(error instanceof Error ? error.message : String(error))
     } finally {
       setMcpBusy(false)
@@ -109,8 +132,23 @@ export function ExtensionsPanel({
         <button type="button" disabled={!workspacePath || mcpBusy} onClick={() => void refreshMcp()}>
           {mcpBusy ? '読込中…' : 'MCP ツールを読み込む'}
         </button>
+        {mcpBusy && <p className="extensions-perms">MCP サーバーに接続しています…</p>}
+        {mcpSummary && !mcpBusy && (
+          <p className={`extensions-status ${mcpTools.length > 0 ? 'ok' : 'warn'}`}>{mcpSummary}</p>
+        )}
         {mcpError && <p className="extensions-error">{mcpError}</p>}
-        {mcpServers.length > 0 && (
+        {mcpStatuses.length > 0 && (
+          <ul className="extensions-status-list">
+            {mcpStatuses.map((row) => (
+              <li key={row.serverId} className={row.ok ? 'ok' : 'fail'}>
+                {row.ok
+                  ? `✓ ${row.serverId} · ツール ${row.toolCount} 件`
+                  : `✗ ${row.serverId} · ${row.error ?? '失敗'}`}
+              </li>
+            ))}
+          </ul>
+        )}
+        {mcpServers.length > 0 && mcpStatuses.length === 0 && (
           <p className="extensions-perms">
             servers: {mcpServers.map((row) => row.id).join(', ')}
           </p>
@@ -126,6 +164,9 @@ export function ExtensionsPanel({
               </li>
             ))}
           </ul>
+        )}
+        {!mcpBusy && mcpSummary && mcpTools.length === 0 && !mcpError && (
+          <p className="extensions-empty">ツール一覧は空です</p>
         )}
       </div>
 

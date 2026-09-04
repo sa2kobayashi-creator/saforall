@@ -265,6 +265,8 @@ const api = {
   ): Promise<{
     servers: Array<{ id: string; command: string; args?: string[] }>
     tools: Array<{ name: string; description?: string; serverId: string }>
+    statuses?: Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }>
+    summary?: string
   }> => ipcRenderer.invoke('mcp:list', cwd),
   callMcp: (params: {
     cwd: string

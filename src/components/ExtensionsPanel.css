@@ -107,6 +107,48 @@
   font-size: 10px !important;
 }
 
+.extensions-status {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.extensions-status.ok {
+  color: #3fb950;
+}
+
+.extensions-status.warn {
+  color: #d29922;
+}
+
+.extensions-status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.extensions-status-list .ok {
+  color: #3fb950;
+}
+
+.extensions-status-list .fail {
+  color: #f85149;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.extensions-error {
+  margin: 0;
+  font-size: 11px;
+  color: #f85149;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .extensions-commands .danger {
   border-color: #8a3a3a;
   color: #f0a0a0;

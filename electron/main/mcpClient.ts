@@ -296,19 +296,52 @@ export class McpManager {
   async listWorkspaceTools(workspaceRoot: string): Promise<{
     servers: McpServerConfig[]
     tools: McpToolInfo[]
+    statuses: Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }>
+    summary: string
   }> {
     await this.ensureWorkspace(workspaceRoot)
     const servers = await loadMcpConfig(workspaceRoot)
     const tools: McpToolInfo[] = []
+    const statuses: Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }> =
+      []
+
+    if (servers.length === 0) {
+      return {
+        servers,
+        tools,
+        statuses,
+        summary: 'mcp.json が見つからないか、サーバー定義が空です'
+      }
+    }
+
     for (const server of servers.slice(0, 6)) {
       try {
         const session = await this.getOrStart(server, workspaceRoot)
-        tools.push(...session.listedTools)
-      } catch {
-        // server missing / failed — skip
+        const listed = session.listedTools
+        tools.push(...listed)
+        statuses.push({
+          serverId: server.id,
+          ok: true,
+          toolCount: listed.length
+        })
+      } catch (error) {
+        statuses.push({
+          serverId: server.id,
+          ok: false,
+          toolCount: 0,
+          error: error instanceof Error ? error.message : String(error)
+        })
       }
     }
-    return { servers, tools }
+
+    const okCount = statuses.filter((row) => row.ok).length
+    const failCount = statuses.length - okCount
+    const summary =
+      failCount === 0
+        ? `読込完了: サーバー ${okCount} / ツール ${tools.length} 件`
+        : `読込完了（一部失敗）: 成功 ${okCount} · 失敗 ${failCount} · ツール ${tools.length} 件`
+
+    return { servers, tools, statuses, summary }
   }
 
   async callTool(
