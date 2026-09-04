@@ -27,6 +27,8 @@ export type MenuCommand =
   | 'view:debug'
   | 'view:extensions'
   | 'edit:inline'
+  | 'agent:bugbot'
+  | 'agent:background'
   | 'help:welcome'
   | 'help:docs'
   | 'help:shortcuts'
@@ -90,6 +92,15 @@ export function setupApplicationMenu(): void {
           label: 'Inline Edit Selection',
           accelerator: 'CmdOrCtrl+K',
           click: () => send('edit:inline')
+        },
+        { type: 'separator' },
+        {
+          label: 'Run Bugbot on Diff',
+          click: () => send('agent:bugbot')
+        },
+        {
+          label: 'Background Agent…',
+          click: () => send('agent:background')
         },
         { type: 'separator' },
         { role: 'selectAll' }

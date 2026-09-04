@@ -124,6 +124,16 @@ export function DocumentationDialog({ open, onClose }: SimpleProps) {
             <strong>インライン編集</strong> — コードを選択して Ctrl/Cmd + K で指示付きのその場編集ができます。
           </li>
           <li>
+            <strong>デバッグ</strong> — js/ts は CDP、Python は debugpy（要 pip install debugpy）。
+          </li>
+          <li>
+            <strong>Bugbot / Background Agent</strong> — Edit メニューから差分レビューや裏方 Agent
+            をチャット経由で起動できます。
+          </li>
+          <li>
+            <strong>LSP</strong> — `typescript-language-server` / `pylsp` が PATH にあれば外部診断を取り込みます。
+          </li>
+          <li>
             <strong>ターミナル / Git</strong> — Ctrl + ` でターミナル、Activity Bar の Source Control で Git 操作ができます。
           </li>
         </ol>

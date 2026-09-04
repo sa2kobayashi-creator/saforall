@@ -341,3 +341,29 @@ export async function pullRepository(cwd: string): Promise<GitOpResult> {
   }
   return { ok: true, stdout: result.stdout || result.stderr }
 }
+
+export async function getGitDiff(
+  cwd: string,
+  options?: { staged?: boolean; maxChars?: number }
+): Promise<GitOpResult> {
+  const guard = await ensureRepo(cwd)
+  if (guard) return guard
+  const args = options?.staged ? ['diff', '--staged'] : ['diff', 'HEAD']
+  const result = await runGit(args, cwd, 30_000)
+  if (result.code !== 0 && !result.stdout) {
+    const fallback = await runGit(['diff'], cwd, 30_000)
+    const text = fallback.stdout || fallback.stderr
+    const max = options?.maxChars ?? 60_000
+    return {
+      ok: fallback.code === 0 || !!fallback.stdout,
+      stdout: text.length > max ? `${text.slice(0, max)}\n... (truncated)` : text,
+      error: fallback.code !== 0 && !fallback.stdout ? fallback.stderr : undefined
+    }
+  }
+  const text = result.stdout || result.stderr
+  const max = options?.maxChars ?? 60_000
+  return {
+    ok: true,
+    stdout: text.length > max ? `${text.slice(0, max)}\n... (truncated)` : text
+  }
+}

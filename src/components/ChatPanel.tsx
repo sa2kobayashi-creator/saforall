@@ -34,6 +34,8 @@ type Props = {
   workspaceId: number | null
   workspacePath: string | null
   width: number
+  pendingPrompt?: string | null
+  onPendingPromptConsumed?: () => void
   onApplyCode: (
     code: string,
     pathHint?: string,
@@ -119,6 +121,8 @@ export function ChatPanel({
   workspaceId,
   workspacePath,
   width,
+  pendingPrompt = null,
+  onPendingPromptConsumed,
   onApplyCode
 }: Props) {
   const [input, setInput] = useState('')
@@ -767,6 +771,16 @@ export function ChatPanel({
       cancelled = true
     }
   }, [backendConnected, loadMessagesForSession, sessionsQuery, workspaceId])
+
+  useEffect(() => {
+    if (!pendingPrompt) return
+    const text = pendingPrompt
+    onPendingPromptConsumed?.()
+    if (/Bugbot|Background Agent/.test(text)) {
+      changeMode('agent')
+    }
+    setInput(text)
+  }, [pendingPrompt, onPendingPromptConsumed])
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()

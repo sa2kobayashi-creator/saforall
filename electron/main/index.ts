@@ -6,6 +6,7 @@ import { apiRequest, checkHealth, streamChat } from './api'
 import {
   cloneRepository,
   commitChanges,
+  getGitDiff,
   getGitStatus,
   initRepository,
   pullRepository,
@@ -24,20 +25,23 @@ import {
 } from './terminal'
 import { loadProjectRules, searchFilesByName } from './workspaceTools'
 import { loadWorkspaceExtensions } from './extensions'
+import { type DebugBreakpoint, type DebugSession } from './debugSession'
 import {
-  getActiveDebugSession,
-  startDebugSession,
-  stopDebugSession,
-  type DebugBreakpoint,
-  type DebugSession
-} from './debugSession'
-import { buildDebugLaunch, DEBUG_INSPECT_PORT } from './lib/runCommands'
+  continueUnifiedDebug,
+  evaluateUnifiedDebug,
+  startUnifiedDebug,
+  stepOverUnifiedDebug,
+  stopUnifiedDebug
+} from './debugRouter'
 import {
   ensureWorkspaceIndex,
   invalidateWorkspaceIndex,
   searchIndexedSymbols
 } from './workspaceIndex'
 import { listWorkspaceMcpTools } from './mcpClient'
+import { lspManager, type LspDiagnostic } from './lspClient'
+import { listBackgroundJobs } from './backgroundJobs'
+import { searchOpenVsx } from './marketplace'
 
 let workspaceWatcher: FSWatcher | null = null
 let watchDebounce: ReturnType<typeof setTimeout> | null = null
@@ -77,13 +81,15 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   killAllTerminals()
-  void stopDebugSession()
+  void stopUnifiedDebug()
+  void lspManager.dispose()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
   killAllTerminals()
-  void stopDebugSession()
+  void stopUnifiedDebug()
+  void lspManager.dispose()
 })
 
 ipcMain.handle('dialog:openDirectory', async () => {
@@ -252,6 +258,11 @@ ipcMain.handle('git:push', async (_event, cwd: string) => pushRepository(cwd))
 ipcMain.handle('git:pull', async (_event, cwd: string) => pullRepository(cwd))
 
 ipcMain.handle(
+  'git:diff',
+  async (_event, cwd: string, options?: { staged?: boolean }) => getGitDiff(cwd, options)
+)
+
+ipcMain.handle(
   'terminal:create',
   async (
     _event,
@@ -305,65 +316,66 @@ ipcMain.handle(
       port?: number
     }
   ) => {
-    const launch = buildDebugLaunch(params.filePath, params.port ?? DEBUG_INSPECT_PORT)
-    if (!launch) {
-      return {
-        ok: false as const,
-        error: 'デバッグ対応は .js / .ts / .mjs / .cjs / .tsx のみです'
-      }
-    }
-    try {
-      await startDebugSession({
-        command: launch.command,
-        args: launch.args,
-        cwd: params.cwd,
-        breakpoints: params.breakpoints,
-        port: launch.port,
-        onCreated: attachDebugSessionListeners
-      })
-      return { ok: true as const, port: launch.port, display: launch.display }
-    } catch (error) {
-      return {
-        ok: false as const,
-        error: error instanceof Error ? error.message : String(error)
-      }
-    }
+    return startUnifiedDebug({
+      ...params,
+      onEvent: (payload) => broadcastDebug('debug:event', payload),
+      onCdpCreated: attachDebugSessionListeners
+    })
   }
 )
 
-ipcMain.handle('debug:continue', async () => {
-  const session = getActiveDebugSession()
-  if (!session) return { ok: false as const, error: 'no debug session' }
-  await session.continue()
-  return { ok: true as const }
-})
+ipcMain.handle('debug:continue', async () => continueUnifiedDebug())
 
-ipcMain.handle('debug:stepOver', async () => {
-  const session = getActiveDebugSession()
-  if (!session) return { ok: false as const, error: 'no debug session' }
-  await session.stepOver()
-  return { ok: true as const }
-})
+ipcMain.handle('debug:stepOver', async () => stepOverUnifiedDebug())
 
 ipcMain.handle('debug:stop', async () => {
-  await stopDebugSession()
+  await stopUnifiedDebug()
   broadcastDebug('debug:event', { type: 'exited', code: null })
   return { ok: true as const }
 })
 
 ipcMain.handle(
   'debug:evaluate',
-  async (_event, expression: string, callFrameId?: string) => {
-    const session = getActiveDebugSession()
-    if (!session) return { ok: false as const, error: 'no debug session' }
-    try {
-      const value = await session.evaluate(expression, callFrameId)
-      return { ok: true as const, value }
-    } catch (error) {
-      return {
-        ok: false as const,
-        error: error instanceof Error ? error.message : String(error)
-      }
+  async (_event, expression: string, callFrameId?: string) =>
+    evaluateUnifiedDebug(expression, callFrameId)
+)
+
+ipcMain.handle(
+  'lsp:sync',
+  async (_event, params: { cwd: string; path: string; content: string }) => {
+    await lspManager.ensureForFile(params.cwd, params.path, params.content)
+    return true
+  }
+)
+
+lspManager.setDiagnosticsHandler((items: LspDiagnostic[]) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('lsp:diagnostics', { items })
+  }
+})
+
+ipcMain.handle('marketplace:search', async (_event, query: string) => searchOpenVsx(query))
+
+ipcMain.handle('jobs:list', async () => listBackgroundJobs())
+
+ipcMain.handle(
+  'bugbot:prepare',
+  async (_event, cwd: string) => {
+    const diff = await getGitDiff(cwd)
+    if (!diff.ok || !diff.stdout?.trim()) {
+      return { ok: false as const, error: diff.error || 'レビュー対象の差分がありません' }
+    }
+    return {
+      ok: true as const,
+      diff: diff.stdout,
+      prompt: [
+        '【Bugbot】次の git diff をレビューしてください。',
+        'バグ・回帰リスク・欠けているテストを重要度付きで日本語指摘。修正案はコードブロックで。',
+        '',
+        '```diff',
+        diff.stdout.slice(0, 50000),
+        '```'
+      ].join('\n')
     }
   }
 )

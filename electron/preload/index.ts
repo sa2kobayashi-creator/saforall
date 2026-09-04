@@ -149,6 +149,63 @@ const api = {
     callFrameId?: string
   ): Promise<{ ok: boolean; value?: string; error?: string }> =>
     ipcRenderer.invoke('debug:evaluate', expression, callFrameId),
+  syncLsp: (params: {
+    cwd: string
+    path: string
+    content: string
+  }): Promise<boolean> => ipcRenderer.invoke('lsp:sync', params),
+  onLspDiagnostics: (
+    callback: (payload: {
+      items: Array<{
+        path: string
+        severity: 'error' | 'warning' | 'info'
+        message: string
+        line: number
+        column: number
+        source: string
+      }>
+    }) => void
+  ) => {
+    const listener = (
+      _event: unknown,
+      payload: {
+        items: Array<{
+          path: string
+          severity: 'error' | 'warning' | 'info'
+          message: string
+          line: number
+          column: number
+          source: string
+        }>
+      }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('lsp:diagnostics', listener)
+    return () => ipcRenderer.removeListener('lsp:diagnostics', listener)
+  },
+  searchMarketplace: (
+    query: string
+  ): Promise<{
+    ok: boolean
+    items: Array<{
+      id: string
+      name: string
+      description: string
+      url: string
+      downloads?: number
+    }>
+    error?: string
+  }> => ipcRenderer.invoke('marketplace:search', query),
+  prepareBugbot: (
+    cwd: string
+  ): Promise<{ ok: boolean; prompt?: string; diff?: string; error?: string }> =>
+    ipcRenderer.invoke('bugbot:prepare', cwd),
+  gitDiff: (
+    cwd: string,
+    options?: { staged?: boolean }
+  ): Promise<{ ok: boolean; stdout?: string; error?: string }> =>
+    ipcRenderer.invoke('git:diff', cwd, options),
   searchSymbols: (
     cwd: string,
     query: string
@@ -377,6 +434,8 @@ const api = {
         | 'view:debug'
         | 'view:extensions'
         | 'edit:inline'
+        | 'agent:bugbot'
+        | 'agent:background'
         | 'help:welcome'
         | 'help:docs'
         | 'help:shortcuts'
@@ -414,6 +473,8 @@ const api = {
         | 'view:debug'
         | 'view:extensions'
         | 'edit:inline'
+        | 'agent:bugbot'
+        | 'agent:background'
         | 'help:welcome'
         | 'help:docs'
         | 'help:shortcuts'

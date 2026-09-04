@@ -33,6 +33,12 @@ export function ExtensionsPanel({
     required: ExtensionPermission[]
     run: string
   } | null>(null)
+  const [marketQuery, setMarketQuery] = useState('')
+  const [marketItems, setMarketItems] = useState<
+    Array<{ id: string; name: string; description: string; url: string; downloads?: number }>
+  >([])
+  const [marketBusy, setMarketBusy] = useState(false)
+  const [marketError, setMarketError] = useState<string | null>(null)
 
   const resolveRun = (command: ExtensionCommand) =>
     command.run.replaceAll(
@@ -71,6 +77,55 @@ export function ExtensionsPanel({
         `.saforall/extensions/*.json` を読み込みます。実行には権限承認が必要です（`{'{file}'}` =
         アクティブファイル）。
       </p>
+
+      <div className="extensions-market">
+        <strong>Marketplace (Open VSX)</strong>
+        <p>検索のみ（VSIX 実行ランタイムは未対応）。</p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            void (async () => {
+              setMarketBusy(true)
+              setMarketError(null)
+              try {
+                const result = await window.saforall.searchMarketplace(marketQuery)
+                if (!result.ok) {
+                  setMarketError(result.error ?? '検索失敗')
+                  setMarketItems([])
+                } else {
+                  setMarketItems(result.items)
+                }
+              } catch (error) {
+                setMarketError(error instanceof Error ? error.message : String(error))
+              } finally {
+                setMarketBusy(false)
+              }
+            })()
+          }}
+        >
+          <input
+            value={marketQuery}
+            onChange={(event) => setMarketQuery(event.target.value)}
+            placeholder="例: python, prettier"
+          />
+          <button type="submit" disabled={marketBusy || !marketQuery.trim()}>
+            {marketBusy ? '…' : '検索'}
+          </button>
+        </form>
+        {marketError && <p className="extensions-empty">{marketError}</p>}
+        <ul className="extensions-list">
+          {marketItems.map((item) => (
+            <li key={item.id} className="extensions-card">
+              <div className="extensions-card-title">{item.name}</div>
+              <p>{item.description || item.id}</p>
+              <a href={item.url} target="_blank" rel="noreferrer">
+                Open VSX で見る
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+
       {extensions.length === 0 ? (
         <p className="extensions-empty">拡張はまだありません</p>
       ) : (

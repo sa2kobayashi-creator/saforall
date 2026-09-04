@@ -7,10 +7,34 @@
   gap: 8px;
 }
 
-.extensions-head {
+.extensions-market {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.extensions-market form {
+  display: flex;
+  gap: 6px;
+}
+
+.extensions-market input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.extensions-market a {
+  color: var(--accent);
+  font-size: 11px;
 }
 
 .extensions-head button {

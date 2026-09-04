@@ -104,6 +104,8 @@ export default function App() {
   const [quickOpen, setQuickOpen] = useState(false)
   const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null)
   const [monacoProblems, setMonacoProblems] = useState<ProblemItem[]>([])
+  const [lspProblems, setLspProblems] = useState<ProblemItem[]>([])
+  const [pendingChatPrompt, setPendingChatPrompt] = useState<string | null>(null)
   const [revealLine, setRevealLine] = useState<number | null>(null)
   const [extensions, setExtensions] = useState<WorkspaceExtension[]>([])
   const [extensionGrants, setExtensionGrants] = useState<
@@ -163,8 +165,9 @@ export default function App() {
       }
     }
     items.push(...monacoProblems)
+    items.push(...lspProblems)
     return items
-  }, [backend, tabs, monacoProblems])
+  }, [backend, tabs, monacoProblems, lspProblems])
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
 
@@ -786,9 +789,10 @@ export default function App() {
       !lower.endsWith('.mjs') &&
       !lower.endsWith('.cjs') &&
       !lower.endsWith('.ts') &&
-      !lower.endsWith('.tsx')
+      !lower.endsWith('.tsx') &&
+      !lower.endsWith('.py')
     ) {
-      showNotice('ブレークポイント付きデバッグは js/ts のみ対応です')
+      showNotice('ブレークポイント付きデバッグは js/ts/py のみ対応です')
       return
     }
 
@@ -1018,6 +1022,39 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (typeof window.saforall.onLspDiagnostics !== 'function') return
+    const unsubscribe = window.saforall.onLspDiagnostics((payload) => {
+      setLspProblems(
+        (payload.items ?? []).map((row, index) => ({
+          id: `lsp:${row.path}:${row.line}:${row.column}:${index}`,
+          severity: row.severity,
+          source: row.source || 'LSP',
+          message: row.message,
+          path: row.path,
+          line: row.line,
+          column: row.column
+        }))
+      )
+    })
+    return () => {
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!workspacePath || !activeFile) return
+    if (typeof window.saforall.syncLsp !== 'function') return
+    const handle = window.setTimeout(() => {
+      void window.saforall.syncLsp({
+        cwd: workspacePath,
+        path: activeFile.path,
+        content: activeFile.content
+      })
+    }, 700)
+    return () => window.clearTimeout(handle)
+  }, [workspacePath, activeFile?.path, activeFile?.content])
+
+  useEffect(() => {
     let cancelled = false
     let bindings: Awaited<ReturnType<typeof loadWorkspaceKeybindings>> = []
     void loadWorkspaceKeybindings(workspacePath).then((rows) => {
@@ -1138,6 +1175,32 @@ export default function App() {
         case 'edit:inline':
           setInlineEditTrigger((n) => n + 1)
           break
+        case 'agent:bugbot':
+          void (async () => {
+            if (!workspacePath) {
+              showNotice('先にフォルダを開いてください')
+              return
+            }
+            const prepared = await window.saforall.prepareBugbot(workspacePath)
+            if (!prepared.ok || !prepared.prompt) {
+              showNotice(prepared.error ?? 'Bugbot を開始できません')
+              return
+            }
+            setChatOpen(true)
+            setPendingChatPrompt(prepared.prompt)
+            showNotice('Bugbot: 差分レビューをチャットで開始します')
+          })()
+          break
+        case 'agent:background': {
+          const prompt = window.prompt('Background Agent に依頼する内容')
+          if (!prompt?.trim()) break
+          setChatOpen(true)
+          setPendingChatPrompt(
+            `【Background Agent】以下を Agent モードで実行してください。\n\n${prompt.trim()}`
+          )
+          showNotice('Background Agent をチャットで開始します')
+          break
+        }
         case 'help:welcome':
           closeWorkspace()
           break
@@ -1170,10 +1233,12 @@ export default function App() {
     runCommand,
     saveFile,
     setUsageLayout,
+    showNotice,
     startDebug,
     stepOverDebug,
     stopDebug,
-    toggleUsage
+    toggleUsage,
+    workspacePath
   ])
 
   return (
@@ -1408,6 +1473,8 @@ export default function App() {
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
                 width={chatWidth}
+                pendingPrompt={pendingChatPrompt}
+                onPendingPromptConsumed={() => setPendingChatPrompt(null)}
                 onApplyCode={applyCode}
               />
             </>
