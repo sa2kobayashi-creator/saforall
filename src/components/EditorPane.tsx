@@ -24,6 +24,16 @@ type Props = {
   onSelectionChange?: (selection: EditorSelection | null) => void
   onDiagnostics?: (items: ProblemItem[]) => void
   onOpenDefinition?: (path: string, line?: number) => void
+  onApplyLspEdits?: (
+    edits: Array<{
+      path: string
+      startLine: number
+      startColumn: number
+      endLine: number
+      endColumn: number
+      newText: string
+    }>
+  ) => Promise<void> | void
   revealLine?: number | null
   breakpoints?: DebugBreakpointMap
   onToggleBreakpoint?: (path: string, line: number) => void
@@ -48,6 +58,7 @@ export function EditorPane({
   onSelectionChange,
   onDiagnostics,
   onOpenDefinition,
+  onApplyLspEdits,
   revealLine,
   breakpoints = {},
   onToggleBreakpoint,
@@ -64,6 +75,8 @@ export function EditorPane({
   diagnosticsHandlerRef.current = onDiagnostics
   const openDefinitionRef = useRef(onOpenDefinition)
   openDefinitionRef.current = onOpenDefinition
+  const applyLspEditsRef = useRef(onApplyLspEdits)
+  applyLspEditsRef.current = onApplyLspEdits
   const toggleBpRef = useRef(onToggleBreakpoint)
   toggleBpRef.current = onToggleBreakpoint
   const breakpointsRef = useRef(breakpoints)
@@ -201,7 +214,8 @@ export function EditorPane({
       () => fileMetaRef.current,
       (path, line) => {
         openDefinitionRef.current?.(path, line)
-      }
+      },
+      (edits) => applyLspEditsRef.current?.(edits)
     )
 
     editor.addAction({

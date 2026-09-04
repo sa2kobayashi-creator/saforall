@@ -24,6 +24,19 @@ export type LspLocation = {
   column: number
 }
 
+export type LspHover = {
+  contents: string
+}
+
+export type LspTextEdit = {
+  path: string
+  startLine: number
+  startColumn: number
+  endLine: number
+  endColumn: number
+  newText: string
+}
+
 type LspMessage = {
   jsonrpc?: string
   id?: number
@@ -59,6 +72,93 @@ function severityFromLsp(value: unknown): LspDiagnostic['severity'] {
   if (n === 1) return 'error'
   if (n === 2) return 'warning'
   return 'info'
+}
+
+function formatHoverContents(contents: unknown): string {
+  if (!contents) return ''
+  if (typeof contents === 'string') return contents
+  if (Array.isArray(contents)) {
+    return contents
+      .map((row) => formatHoverContents(row))
+      .filter(Boolean)
+      .join('\n\n')
+  }
+  if (typeof contents === 'object') {
+    const row = contents as { kind?: string; value?: string; language?: string }
+    if (typeof row.value === 'string') {
+      if (row.language) return '```' + row.language + '\n' + row.value + '\n```'
+      return row.value
+    }
+  }
+  return String(contents)
+}
+
+function parseWorkspaceEdits(result: unknown): LspTextEdit[] {
+  if (!result || typeof result !== 'object') return []
+  const edits: LspTextEdit[] = []
+  const changes = (result as { changes?: Record<string, unknown[]> }).changes
+  if (changes && typeof changes === 'object') {
+    for (const [uri, rows] of Object.entries(changes)) {
+      if (!Array.isArray(rows)) continue
+      for (const row of rows) {
+        const edit = row as {
+          newText?: string
+          range?: {
+            start?: { line?: number; character?: number }
+            end?: { line?: number; character?: number }
+          }
+        }
+        edits.push({
+          path: fromUri(uri),
+          startLine: Number(edit.range?.start?.line ?? 0) + 1,
+          startColumn: Number(edit.range?.start?.character ?? 0) + 1,
+          endLine: Number(edit.range?.end?.line ?? 0) + 1,
+          endColumn: Number(edit.range?.end?.character ?? 0) + 1,
+          newText: String(edit.newText ?? '')
+        })
+      }
+    }
+  }
+  const documentChanges = (result as { documentChanges?: unknown[] }).documentChanges
+  if (Array.isArray(documentChanges)) {
+    for (const change of documentChanges) {
+      if (!change || typeof change !== 'object') continue
+      const doc = change as {
+        textDocument?: { uri?: string }
+        edits?: unknown[]
+      }
+      const uri = doc.textDocument?.uri
+      if (!uri || !Array.isArray(doc.edits)) continue
+      for (const row of doc.edits) {
+        const edit = row as {
+          newText?: string
+          range?: {
+            start?: { line?: number; character?: number }
+            end?: { line?: number; character?: number }
+          }
+        }
+        edits.push({
+          path: fromUri(uri),
+          startLine: Number(edit.range?.start?.line ?? 0) + 1,
+          startColumn: Number(edit.range?.start?.character ?? 0) + 1,
+          endLine: Number(edit.range?.end?.line ?? 0) + 1,
+          endColumn: Number(edit.range?.end?.character ?? 0) + 1,
+          newText: String(edit.newText ?? '')
+        })
+      }
+    }
+  }
+  return edits.slice(0, 200)
+}
+
+function languageIdForPath(filePath: string, fallback: string): string {
+  const lower = filePath.toLowerCase()
+  if (lower.endsWith('.tsx')) return 'typescriptreact'
+  if (lower.endsWith('.ts')) return 'typescript'
+  if (lower.endsWith('.jsx')) return 'javascriptreact'
+  if (lower.endsWith('.js')) return 'javascript'
+  if (lower.endsWith('.py')) return 'python'
+  return fallback
 }
 
 /** Minimal stdio LSP client (diagnostics-focused). */
@@ -105,7 +205,12 @@ export class LspClient extends EventEmitter {
               documentationFormat: ['plaintext', 'markdown']
             }
           },
-          definition: { linkSupport: false }
+          definition: { linkSupport: false },
+          hover: {
+            contentFormat: ['markdown', 'plaintext']
+          },
+          references: {},
+          rename: { prepareSupport: false }
         }
       },
       clientInfo: { name: 'saforall', version: '0.1.0' }
@@ -113,11 +218,11 @@ export class LspClient extends EventEmitter {
     this.notify('initialized', {})
   }
 
-  async openDocument(filePath: string, text: string): Promise<void> {
+  async openDocument(filePath: string, text: string, languageId?: string): Promise<void> {
     this.notify('textDocument/didOpen', {
       textDocument: {
         uri: toUri(filePath),
-        languageId: this.languageId,
+        languageId: languageId || this.languageId,
         version: 1,
         text
       }
@@ -214,6 +319,66 @@ export class LspClient extends EventEmitter {
       })
     }
     return locations.slice(0, 20)
+  }
+
+  async hover(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspHover | null> {
+    const response = await this.request('textDocument/hover', {
+      textDocument: { uri: toUri(filePath) },
+      position: { line, character }
+    })
+    const result = response.result
+    if (!result || typeof result !== 'object') return null
+    const contents = (result as { contents?: unknown }).contents
+    const text = formatHoverContents(contents)
+    if (!text.trim()) return null
+    return { contents: text.slice(0, 8000) }
+  }
+
+  async references(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspLocation[]> {
+    const response = await this.request('textDocument/references', {
+      textDocument: { uri: toUri(filePath) },
+      position: { line, character },
+      context: { includeDeclaration: true }
+    })
+    const result = response.result
+    const rows = Array.isArray(result) ? result : []
+    const locations: LspLocation[] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue
+      const loc = row as {
+        uri?: string
+        range?: { start?: { line?: number; character?: number } }
+      }
+      if (!loc.uri) continue
+      locations.push({
+        path: fromUri(loc.uri),
+        line: Number(loc.range?.start?.line ?? 0) + 1,
+        column: Number(loc.range?.start?.character ?? 0) + 1
+      })
+    }
+    return locations.slice(0, 100)
+  }
+
+  async rename(
+    filePath: string,
+    line: number,
+    character: number,
+    newName: string
+  ): Promise<LspTextEdit[]> {
+    const response = await this.request('textDocument/rename', {
+      textDocument: { uri: toUri(filePath) },
+      position: { line, character },
+      newName
+    })
+    return parseWorkspaceEdits(response.result)
   }
 
   async stop(): Promise<void> {
@@ -324,7 +489,7 @@ export type LspServerConfig = {
 const DEFAULT_SERVERS: LspServerConfig[] = [
   {
     languageId: 'typescript',
-    extensions: ['.ts', '.tsx'],
+    extensions: ['.ts', '.tsx', '.js', '.jsx'],
     command: 'typescript-language-server',
     args: ['--stdio'],
     source: 'tsserver'
@@ -380,7 +545,8 @@ export class LspManager {
     const key = filePath.toLowerCase()
     const version = (this.versions.get(key) ?? 0) + 1
     this.versions.set(key, version)
-    if (version === 1) await client.openDocument(filePath, text)
+    const languageId = languageIdForPath(filePath, config.languageId)
+    if (version === 1) await client.openDocument(filePath, text, languageId)
     else await client.changeDocument(filePath, text, version)
   }
 
@@ -416,6 +582,49 @@ export class LspManager {
     if (!client) return []
     try {
       return await client.definition(filePath, line, character)
+    } catch {
+      return []
+    }
+  }
+
+  async hover(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspHover | null> {
+    const client = this.clientForPath(filePath)
+    if (!client) return null
+    try {
+      return await client.hover(filePath, line, character)
+    } catch {
+      return null
+    }
+  }
+
+  async references(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspLocation[]> {
+    const client = this.clientForPath(filePath)
+    if (!client) return []
+    try {
+      return await client.references(filePath, line, character)
+    } catch {
+      return []
+    }
+  }
+
+  async rename(
+    filePath: string,
+    line: number,
+    character: number,
+    newName: string
+  ): Promise<LspTextEdit[]> {
+    const client = this.clientForPath(filePath)
+    if (!client) return []
+    try {
+      return await client.rename(filePath, line, character, newName)
     } catch {
       return []
     }

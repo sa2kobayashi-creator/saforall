@@ -443,6 +443,58 @@ export default function App() {
     }, 4000)
   }, [])
 
+  const applyLspEdits = useCallback(
+    async (
+      edits: Array<{
+        path: string
+        startLine: number
+        startColumn: number
+        endLine: number
+        endColumn: number
+        newText: string
+      }>
+    ) => {
+      if (edits.length === 0) return
+      const { applyTextEdits } = await import('./lib/textEdits')
+      const byPath = new Map<string, typeof edits>()
+      for (const edit of edits) {
+        const list = byPath.get(edit.path) ?? []
+        list.push(edit)
+        byPath.set(edit.path, list)
+      }
+
+      for (const [filePath, pathEdits] of Array.from(byPath.entries())) {
+        try {
+          const open = tabsRef.current.find((tab) => tab.path === filePath)
+          const original = open?.content ?? (await window.saforall.readFile(filePath))
+          const next = applyTextEdits(original, pathEdits)
+          await window.saforall.writeFile(filePath, next)
+          setTabs((current) => {
+            const exists = current.some((tab) => tab.path === filePath)
+            if (exists) {
+              return current.map((tab) =>
+                tab.path === filePath ? { ...tab, content: next, dirty: false } : tab
+              )
+            }
+            return [
+              ...current,
+              {
+                path: filePath,
+                content: next,
+                language: languageFromPath(filePath),
+                dirty: false
+              }
+            ]
+          })
+        } catch (error) {
+          showNotice(`リネーム適用失敗: ${filePath} · ${String(error)}`)
+        }
+      }
+      showNotice(`リネームを ${byPath.size} ファイルに適用しました`)
+    },
+    [showNotice]
+  )
+
   useEffect(() => {
     if (!workspacePath || typeof window.saforall.watchWorkspace !== 'function') return
     void window.saforall.watchWorkspace(workspacePath)
@@ -1359,6 +1411,7 @@ export default function App() {
                   onOpenDefinition={(path, line) => {
                     void openFileAt(path, line)
                   }}
+                  onApplyLspEdits={(edits) => applyLspEdits(edits)}
                   revealLine={revealLine}
                   breakpoints={breakpoints}
                   onToggleBreakpoint={toggleBreakpoint}

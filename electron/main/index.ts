@@ -368,6 +368,41 @@ ipcMain.handle(
     lspManager.definition(params.path, params.line, params.character)
 )
 
+ipcMain.handle(
+  'lsp:hover',
+  async (
+    _event,
+    params: { path: string; line: number; character: number }
+  ): Promise<{ contents: string } | null> =>
+    lspManager.hover(params.path, params.line, params.character)
+)
+
+ipcMain.handle(
+  'lsp:references',
+  async (
+    _event,
+    params: { path: string; line: number; character: number }
+  ): Promise<Array<{ path: string; line: number; column: number }>> =>
+    lspManager.references(params.path, params.line, params.character)
+)
+
+ipcMain.handle(
+  'lsp:rename',
+  async (
+    _event,
+    params: { path: string; line: number; character: number; newName: string }
+  ): Promise<
+    Array<{
+      path: string
+      startLine: number
+      startColumn: number
+      endLine: number
+      endColumn: number
+      newText: string
+    }>
+  > => lspManager.rename(params.path, params.line, params.character, params.newName)
+)
+
 lspManager.setDiagnosticsHandler((items: LspDiagnostic[]) => {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('lsp:diagnostics', { items })

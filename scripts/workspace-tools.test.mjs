@@ -225,6 +225,38 @@ test('decodeTextBuffer keeps UTF-8', () => {
   assert.match(decoded.text, /日本語/)
 })
 
+function applyTextEdits(source, edits) {
+  const lines = source.replace(/\r\n/g, '\n').split('\n')
+  const ordered = [...edits].sort((a, b) => {
+    if (a.startLine !== b.startLine) return b.startLine - a.startLine
+    return b.startColumn - a.startColumn
+  })
+  for (const edit of ordered) {
+    const startLine = Math.max(1, edit.startLine) - 1
+    const endLine = Math.max(1, edit.endLine) - 1
+    const startCol = Math.max(1, edit.startColumn) - 1
+    const endCol = Math.max(1, edit.endColumn) - 1
+    if (startLine >= lines.length) continue
+    const before = lines[startLine].slice(0, startCol)
+    const afterLine = lines[Math.min(endLine, lines.length - 1)] ?? ''
+    const after = afterLine.slice(endCol)
+    const inserted = edit.newText.replace(/\r\n/g, '\n').split('\n')
+    inserted[0] = before + (inserted[0] ?? '')
+    inserted[inserted.length - 1] = (inserted[inserted.length - 1] ?? '') + after
+    lines.splice(startLine, endLine - startLine + 1, ...inserted)
+  }
+  return lines.join('\n')
+}
+
+test('applyTextEdits renames symbol spans', () => {
+  const source = 'const foo = 1\nconsole.log(foo)\n'
+  const next = applyTextEdits(source, [
+    { startLine: 1, startColumn: 7, endLine: 1, endColumn: 10, newText: 'bar' },
+    { startLine: 2, startColumn: 13, endLine: 2, endColumn: 16, newText: 'bar' }
+  ])
+  assert.equal(next, 'const bar = 1\nconsole.log(bar)\n')
+})
+
 function findReplaceableBlock(existing, code) {
   const snippet = code.replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '')
   if (!snippet || snippet.length < 12) return null

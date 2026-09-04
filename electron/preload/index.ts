@@ -173,6 +173,32 @@ const api = {
     character: number
   }): Promise<Array<{ path: string; line: number; column: number }>> =>
     ipcRenderer.invoke('lsp:definition', params),
+  lspHover: (params: {
+    path: string
+    line: number
+    character: number
+  }): Promise<{ contents: string } | null> => ipcRenderer.invoke('lsp:hover', params),
+  lspReferences: (params: {
+    path: string
+    line: number
+    character: number
+  }): Promise<Array<{ path: string; line: number; column: number }>> =>
+    ipcRenderer.invoke('lsp:references', params),
+  lspRename: (params: {
+    path: string
+    line: number
+    character: number
+    newName: string
+  }): Promise<
+    Array<{
+      path: string
+      startLine: number
+      startColumn: number
+      endLine: number
+      endColumn: number
+      newText: string
+    }>
+  > => ipcRenderer.invoke('lsp:rename', params),
   onLspDiagnostics: (
     callback: (payload: {
       items: Array<{

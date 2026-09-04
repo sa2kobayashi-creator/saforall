@@ -5,14 +5,37 @@ type InlineRequest = {
   language: string
   prefix: string
   suffix: string
+  nearby?: string
 }
 
 let providerDisposable: { dispose: () => void } | null = null
 let seq = 0
+let lastKey = ''
+let lastCompletion = ''
+let lastAt = 0
 
 export function disposeTabCompletions(): void {
   providerDisposable?.dispose()
   providerDisposable = null
+}
+
+function cacheKey(path: string, prefix: string, suffix: string): string {
+  return `${path}::${prefix.slice(-120)}::${suffix.slice(0, 40)}`
+}
+
+function extractNearbyContext(full: string, offset: number): string {
+  const start = Math.max(0, offset - 900)
+  const end = Math.min(full.length, offset + 400)
+  const window = full.slice(start, end)
+  const lines = window.split(/\r?\n/)
+  // Prefer recent function/class headers for better completions
+  const headers = lines
+    .filter((line) =>
+      /^\s*(export\s+)?(async\s+)?(function|class|const|let|type|interface|def)\b/.test(line)
+    )
+    .slice(-6)
+  if (headers.length === 0) return ''
+  return headers.join('\n').slice(0, 600)
 }
 
 export function registerTabCompletions(
@@ -30,34 +53,62 @@ export function registerTabCompletions(
           getOffsetAt: (pos: { lineNumber: number; column: number }) => number
           getValue: () => string
           getLanguageId: () => string
+          getLineContent: (line: number) => string
         },
         position: { lineNumber: number; column: number },
-        _context: unknown,
+        context: { triggerKind?: number },
         token: { isCancellationRequested: boolean }
       ) => {
         const meta = getMeta()
         if (!meta) return { items: [] }
 
         const requestId = ++seq
-        await delay(380)
+        // Adaptive debounce: faster when continuing to type in the same line.
+        const waitMs = context?.triggerKind === 1 ? 220 : 320
+        await delay(waitMs)
         if (token.isCancellationRequested || requestId !== seq) {
           return { items: [] }
         }
 
         const offset = model.getOffsetAt(position)
         const full = model.getValue()
-        const prefix = full.slice(Math.max(0, offset - 3500), offset)
-        const suffix = full.slice(offset, Math.min(full.length, offset + 1200))
+        const line = model.getLineContent(position.lineNumber)
+        const before = line.slice(0, Math.max(0, position.column - 1))
 
-        if (prefix.trim().length < 8) {
+        // Skip empty / comment-only / just-closed string contexts
+        if (before.trim().length < 2) return { items: [] }
+        if (/^\s*(\/\/|#)/.test(before) && !/[`'"({[]/.test(before.slice(-1))) {
           return { items: [] }
         }
 
+        const prefix = full.slice(Math.max(0, offset - 4500), offset)
+        const suffix = full.slice(offset, Math.min(full.length, offset + 1600))
+        if (prefix.trim().length < 6) return { items: [] }
+
+        const key = cacheKey(meta.path, prefix, suffix)
+        if (key === lastKey && lastCompletion && Date.now() - lastAt < 12_000) {
+          return {
+            items: [
+              {
+                insertText: lastCompletion,
+                range: new monaco.Range(
+                  position.lineNumber,
+                  position.column,
+                  position.lineNumber,
+                  position.column
+                )
+              }
+            ]
+          }
+        }
+
+        const nearby = extractNearbyContext(full, offset)
         const payload: InlineRequest = {
           path: meta.path,
           language: meta.language || model.getLanguageId(),
           prefix,
-          suffix
+          suffix,
+          nearby: nearby || undefined
         }
 
         try {
@@ -68,7 +119,7 @@ export function registerTabCompletions(
             'POST',
             '/ai/inline',
             payload,
-            { timeoutMs: 12_000 }
+            { timeoutMs: 10_000 }
           )
           if (token.isCancellationRequested || requestId !== seq) {
             return { items: [] }
@@ -77,8 +128,17 @@ export function registerTabCompletions(
             return { items: [] }
           }
 
-          const insertText = result.data.completion.replace(/\r\n/g, '\n')
+          let insertText = result.data.completion.replace(/\r\n/g, '\n')
+          // Avoid repeating the token the user already typed
+          const typed = before.match(/[A-Za-z0-9_$]+$/)?.[0] ?? ''
+          if (typed && insertText.startsWith(typed)) {
+            insertText = insertText.slice(typed.length)
+          }
           if (!insertText.trim()) return { items: [] }
+
+          lastKey = key
+          lastCompletion = insertText
+          lastAt = Date.now()
 
           return {
             items: [

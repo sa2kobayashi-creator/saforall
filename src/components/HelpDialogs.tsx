@@ -131,7 +131,7 @@ export function DocumentationDialog({ open, onClose }: SimpleProps) {
             をチャット経由で起動できます。
           </li>
           <li>
-            <strong>LSP</strong> — `typescript-language-server` / `pylsp` が PATH にあれば診断・補完・定義ジャンプ（F12）を利用できます。
+            <strong>LSP</strong> — `typescript-language-server` / `pylsp` が PATH にあれば診断・補完・定義ジャンプ（F12）・ホバー・参照検索（Shift+F12）・リネーム（F2）を利用できます。
           </li>
           <li>
             <strong>プレビュー</strong> — Markdown / HTML ではタブ右の「編集 / 分割 / プレビュー」で表示を切り替えられます。

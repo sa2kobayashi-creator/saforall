@@ -5,13 +5,28 @@ type Disposables = Array<{ dispose: () => void }>
 type Position = { lineNumber: number; column: number }
 type ModelLike = {
   getWordUntilPosition: (pos: Position) => {
+    word?: string
     startColumn: number
     endColumn: number
   }
+  getWordAtPosition?: (pos: Position) => {
+    word: string
+    startColumn: number
+    endColumn: number
+  } | null
 }
 type CancellationToken = { isCancellationRequested: boolean }
 type UriLike = { fsPath?: string; path: string }
 type SelectionLike = { startLineNumber?: number; startColumn?: number } | null | undefined
+
+export type LspTextEdit = {
+  path: string
+  startLine: number
+  startColumn: number
+  endLine: number
+  endColumn: number
+  newText: string
+}
 
 let disposables: Disposables = []
 
@@ -82,7 +97,8 @@ function mapKind(monaco: Monaco, kind?: number): number {
 export function registerLspProviders(
   monaco: Monaco,
   getMeta: () => { path: string; language: string } | null,
-  onOpenDefinition: (path: string, line: number, column?: number) => void
+  onOpenDefinition: (path: string, line: number, column?: number) => void,
+  onApplyEdits?: (edits: LspTextEdit[]) => Promise<void> | void
 ): void {
   disposeLspProviders()
 
@@ -159,9 +175,138 @@ export function registerLspProviders(
         }
       })
     )
+
+    disposables.push(
+      monaco.languages.registerHoverProvider(language, {
+        provideHover: async (_model: unknown, position: Position, token: CancellationToken) => {
+          const meta = getMeta()
+          if (!meta || typeof window.saforall.lspHover !== 'function') return null
+          try {
+            const hover = await window.saforall.lspHover({
+              path: meta.path,
+              line: position.lineNumber - 1,
+              character: position.column - 1
+            })
+            if (token.isCancellationRequested || !hover?.contents) return null
+            return {
+              contents: [{ value: hover.contents }]
+            }
+          } catch {
+            return null
+          }
+        }
+      })
+    )
+
+    disposables.push(
+      monaco.languages.registerReferenceProvider(language, {
+        provideReferences: async (
+          _model: unknown,
+          position: Position,
+          _context: unknown,
+          token: CancellationToken
+        ) => {
+          const meta = getMeta()
+          if (!meta || typeof window.saforall.lspReferences !== 'function') return []
+          try {
+            const locs = await window.saforall.lspReferences({
+              path: meta.path,
+              line: position.lineNumber - 1,
+              character: position.column - 1
+            })
+            if (token.isCancellationRequested) return []
+            return locs.map((loc) => ({
+              uri: monaco.Uri.file(loc.path),
+              range: new monaco.Range(loc.line, loc.column, loc.line, loc.column)
+            }))
+          } catch {
+            return []
+          }
+        }
+      })
+    )
+
+    disposables.push(
+      monaco.languages.registerRenameProvider(language, {
+        provideRenameEdits: async (
+          model: ModelLike,
+          position: Position,
+          newName: string,
+          token: CancellationToken
+        ) => {
+          const meta = getMeta()
+          if (!meta || typeof window.saforall.lspRename !== 'function') {
+            return { edits: [], rejectReason: 'LSP rename unavailable' }
+          }
+          try {
+            const edits = await window.saforall.lspRename({
+              path: meta.path,
+              line: position.lineNumber - 1,
+              character: position.column - 1,
+              newName
+            })
+            if (token.isCancellationRequested) {
+              return { edits: [], rejectReason: 'cancelled' }
+            }
+            if (edits.length === 0) {
+              return { edits: [], rejectReason: 'No rename edits from language server' }
+            }
+            if (onApplyEdits) {
+              await onApplyEdits(edits)
+              // Already applied via app; return empty so Monaco doesn't double-apply.
+              return { edits: [] }
+            }
+            return {
+              edits: edits.map((edit) => ({
+                resource: monaco.Uri.file(edit.path),
+                textEdit: {
+                  range: new monaco.Range(
+                    edit.startLine,
+                    edit.startColumn,
+                    edit.endLine,
+                    edit.endColumn
+                  ),
+                  text: edit.newText
+                }
+              }))
+            }
+          } catch (error) {
+            return {
+              edits: [],
+              rejectReason: error instanceof Error ? error.message : String(error)
+            }
+          }
+        },
+        resolveRenameLocation: (model: ModelLike, position: Position) => {
+          const at = model.getWordAtPosition?.(position)
+          const until = model.getWordUntilPosition(position)
+          const word = at?.word || until.word
+          if (!word) {
+            return {
+              rejectReason: 'Rename is only available on a symbol name'
+            }
+          }
+          const startColumn = at && 'startColumn' in at && typeof (at as { startColumn?: number }).startColumn === 'number'
+            ? (at as { startColumn: number }).startColumn
+            : until.startColumn
+          const endColumn = at && 'endColumn' in at && typeof (at as { endColumn?: number }).endColumn === 'number'
+            ? (at as { endColumn: number }).endColumn
+            : until.endColumn
+          return {
+            range: {
+              startLineNumber: position.lineNumber,
+              startColumn,
+              endLineNumber: position.lineNumber,
+              endColumn
+            },
+            text: word
+          }
+        }
+      })
+    )
   }
 
-  // Route Monaco go-to-definition into our tab opener (F12 / Ctrl+click)
+  // Route Monaco go-to-definition / references into our tab opener
   const openerApi = monaco.editor as typeof monaco.editor & {
     registerEditorOpener?: (opener: {
       openCodeEditor: (
