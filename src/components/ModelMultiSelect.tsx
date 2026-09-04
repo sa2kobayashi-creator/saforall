@@ -1,6 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ModelOption, ProviderEngine } from '../lib/llmModels'
-import { catalogFor } from '../lib/llmModels'
+import {
+  fetchAndCacheCatalog,
+  initialCatalogOptions,
+  loadCachedCatalog,
+  mergeCatalogWithBuiltin
+} from '../lib/modelCatalogCache'
 
 type Props = {
   engine: ProviderEngine
@@ -11,6 +16,13 @@ type Props = {
   canFetchLatest?: boolean
 }
 
+type DisplayRow = {
+  id: string
+  label: string
+  tierLabel: string
+  checked: boolean
+}
+
 export function ModelMultiSelect({
   engine,
   enabled,
@@ -18,14 +30,54 @@ export function ModelMultiSelect({
   disabled,
   canFetchLatest = true
 }: Props) {
-  const builtin = catalogFor(engine)
-  const [options, setOptions] = useState<ModelOption[]>(builtin)
+  const [options, setOptions] = useState<ModelOption[]>(() => initialCatalogOptions(engine))
   const [customId, setCustomId] = useState('')
   const [fetching, setFetching] = useState(false)
   const [fetchMessage, setFetchMessage] = useState<string | null>(null)
 
-  const knownIds = new Set(options.map((m) => m.id))
-  const extras = enabled.filter((id) => !knownIds.has(id))
+  // 起動時プリフェッチや他画面の取得結果を反映
+  useEffect(() => {
+    const cached = loadCachedCatalog(engine)
+    if (cached && cached.length > 0) {
+      setOptions(mergeCatalogWithBuiltin(engine, cached))
+    }
+
+    const onUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ engine?: ProviderEngine }>).detail
+      if (detail?.engine && detail.engine !== engine) return
+      const next = loadCachedCatalog(engine)
+      if (next && next.length > 0) {
+        setOptions(mergeCatalogWithBuiltin(engine, next))
+      }
+    }
+    window.addEventListener('saforall-model-catalog-updated', onUpdated)
+    return () => window.removeEventListener('saforall-model-catalog-updated', onUpdated)
+  }, [engine])
+
+  const knownIds = useMemo(() => new Set(options.map((m) => m.id)), [options])
+
+  const displayRows = useMemo((): DisplayRow[] => {
+    const enabledSet = new Set(enabled)
+    const byId = new Map(options.map((item) => [item.id, item]))
+    const checked: DisplayRow[] = enabled.map((id) => {
+      const hit = byId.get(id)
+      return {
+        id,
+        label: hit?.label ?? id,
+        tierLabel: hit ? hit.tier : 'カスタム',
+        checked: true
+      }
+    })
+    const unchecked: DisplayRow[] = options
+      .filter((item) => !enabledSet.has(item.id))
+      .map((item) => ({
+        id: item.id,
+        label: item.label,
+        tierLabel: item.tier,
+        checked: false
+      }))
+    return [...checked, ...unchecked]
+  }, [enabled, options])
 
   const toggle = (id: string) => {
     if (enabled.includes(id)) {
@@ -33,14 +85,26 @@ export function ModelMultiSelect({
       onChange(enabled.filter((item) => item !== id))
       return
     }
-    onChange([...enabled, id])
+    // 新しくチェックしたものは先頭（上）へ
+    onChange([id, ...enabled.filter((item) => item !== id)])
   }
 
   const addCustom = () => {
     const id = customId.trim()
     if (id === '') return
     if (!enabled.includes(id)) {
-      onChange([...enabled, id])
+      onChange([id, ...enabled])
+    }
+    if (!knownIds.has(id)) {
+      setOptions((current) => [
+        {
+          id,
+          label: id,
+          tier: 'standard',
+          costRank: 50
+        },
+        ...current
+      ])
     }
     setCustomId('')
   }
@@ -49,40 +113,16 @@ export function ModelMultiSelect({
     setFetching(true)
     setFetchMessage(null)
     try {
-      const result = await window.saforall.request<{
-        models: Array<{ id: string; label?: string; tier?: string }>
-      }>('GET', `/ai/models?engine=${encodeURIComponent(engine)}`)
-
-      if (!result.ok || !result.data?.models) {
-        setFetchMessage(result.error?.message ?? '最新モデルの取得に失敗しました')
+      const result = await fetchAndCacheCatalog(engine)
+      if (!result.ok) {
+        setFetchMessage(result.message)
         return
       }
-
-      const next: ModelOption[] = result.data.models.map((row, index) => ({
-        id: row.id,
-        label: row.label && row.label !== row.id ? `${row.label}（${row.id}）` : row.id,
-        tier: (row.tier as ModelOption['tier']) || 'standard',
-        costRank: index + 1
-      }))
-
-      if (next.length === 0) {
-        setFetchMessage('取得結果が空でした（キーや権限を確認してください）')
-        return
-      }
-
-      // 組み込みカタログの表示名を優先してマージ
-      const byId = new Map(next.map((item) => [item.id, item]))
-      for (const item of builtin) {
-        const hit = byId.get(item.id)
-        if (hit) {
-          byId.set(item.id, { ...hit, label: item.label, tier: item.tier })
-        } else {
-          byId.set(item.id, item)
-        }
-      }
-
-      setOptions(Array.from(byId.values()))
-      setFetchMessage(`${byId.size} 件のモデルを取得しました`)
+      setOptions(result.models)
+      setFetchMessage(`${result.count} 件のモデルを取得しました`)
+      window.dispatchEvent(
+        new CustomEvent('saforall-model-catalog-updated', { detail: { engine } })
+      )
     } catch (error) {
       setFetchMessage(String(error))
     } finally {
@@ -104,34 +144,22 @@ export function ModelMultiSelect({
         {fetchMessage && <span className="model-multi-fetch-msg">{fetchMessage}</span>}
       </div>
 
-      {options.map((option: ModelOption) => (
-        <label key={option.id} className="model-multi-item">
-          <span className="model-multi-label">
-            {option.label}
-            <small> · {option.tier}</small>
-          </span>
-          <input
-            type="checkbox"
-            checked={enabled.includes(option.id)}
-            disabled={disabled}
-            onChange={() => toggle(option.id)}
-          />
-        </label>
-      ))}
-      {extras.map((id) => (
-        <label key={id} className="model-multi-item">
-          <span className="model-multi-label">
-            {id}
-            <small> · カスタム</small>
-          </span>
-          <input
-            type="checkbox"
-            checked={enabled.includes(id)}
-            disabled={disabled}
-            onChange={() => toggle(id)}
-          />
-        </label>
-      ))}
+      <div className="model-multi-list">
+        {displayRows.map((row) => (
+          <label key={row.id} className={`model-multi-item${row.checked ? ' is-checked' : ''}`}>
+            <span className="model-multi-label">
+              {row.label}
+              <small> · {row.tierLabel}</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={row.checked}
+              disabled={disabled}
+              onChange={() => toggle(row.id)}
+            />
+          </label>
+        ))}
+      </div>
       <div className="model-multi-custom">
         <input
           value={customId}

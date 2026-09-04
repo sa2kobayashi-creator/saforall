@@ -228,3 +228,56 @@
 .chat-input button:hover {
   filter: brightness(1.08);
 }
+
+.chat-input button:disabled {
+  opacity: 0.65;
+  filter: none;
+}
+
+.chat-busy-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.chat-busy-bar.phase-thinking,
+.chat-busy-bar.phase-streaming {
+  background: #1a2433;
+  color: #9ec5ef;
+}
+
+.chat-busy-bar.phase-applying {
+  background: #1a2a22;
+  color: #9fdfb0;
+}
+
+.chat-busy-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-bubble.busy {
+  border-color: #27445f;
+  background: #152030;
+}
+
+.chat-busy-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: chat-busy-spin 0.7s linear infinite;
+}
+
+@keyframes chat-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

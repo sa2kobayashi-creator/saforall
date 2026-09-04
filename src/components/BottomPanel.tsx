@@ -72,6 +72,7 @@ export function BottomPanel({
           <TerminalPanel
             open={open}
             embedded
+            height={height}
             fitTrigger={activeTab}
             cwd={cwd}
             pendingCommand={activeTab === 'terminal' ? pendingCommand : null}

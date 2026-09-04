@@ -74,7 +74,10 @@ export function ChatPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage])
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
-  const [thinking, setThinking] = useState(false)
+  const [busy, setBusy] = useState<{
+    phase: 'thinking' | 'streaming' | 'applying'
+    detail?: string
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<ChatMode>(loadMode)
   const [engine, setEngine] = useState<AiEngine>(loadEngine)
@@ -161,18 +164,29 @@ export function ChatPanel({
     async (messageId: string, content: string) => {
       if (modeRef.current !== 'agent') return
 
-      const parts = parseMessageParts(content)
+      const parts = parseMessageParts(content).filter((part) => part.type === 'code')
+      if (parts.length === 0) return
+
+      setBusy({
+        phase: 'applying',
+        detail: `自動適用を開始（0/${parts.length}）`
+      })
+
       let count = 0
       for (const part of parts) {
-        if (part.type !== 'code') continue
         count += 1
+        const label = isShellLanguage(part.language)
+          ? `コマンド実行中（${count}/${parts.length}）`
+          : part.pathHint
+            ? `適用中（${count}/${parts.length}）: ${part.pathHint}`
+            : `適用中（${count}/${parts.length}）`
+        setBusy({ phase: 'applying', detail: label })
         await onApplyCode(part.code, part.pathHint, part.language, { auto: true })
         await new Promise((resolve) => window.setTimeout(resolve, 350))
       }
 
-      if (count > 0) {
-        setAutoAppliedIds((current) => ({ ...current, [messageId]: true }))
-      }
+      setAutoAppliedIds((current) => ({ ...current, [messageId]: true }))
+      setBusy({ phase: 'applying', detail: `自動適用完了（${parts.length}件）` })
     },
     [onApplyCode]
   )
@@ -304,9 +318,9 @@ export function ChatPanel({
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
     const text = input.trim()
-    if (!text || thinking || loading) return
+    if (!text || busy || loading) return
 
-    setThinking(true)
+    setBusy({ phase: 'thinking', detail: 'AI に問い合わせ中…' })
     setError(null)
     setInput('')
 
@@ -395,7 +409,7 @@ export function ChatPanel({
       await window.saforall.chatStream(payload, {
         onEvent: (event) => {
           if (event.type === 'user_message') {
-            setThinking(false)
+            setBusy({ phase: 'thinking', detail: '応答生成を待機中…' })
             const savedUser = toChatMessage(event.message as unknown as ChatMessageRecord)
             setMessages((prev) =>
               prev.map((message) =>
@@ -420,11 +434,15 @@ export function ChatPanel({
               })
               setUsageText(parts.join(' · '))
             }
+            setBusy({
+              phase: 'thinking',
+              detail: `${event.engine} · ${event.model} で応答中…`
+            })
             return
           }
 
           if (event.type === 'delta') {
-            setThinking(false)
+            setBusy({ phase: 'streaming', detail: '応答を受信中…' })
             if (!sawAssistant) {
               sawAssistant = true
               setMessages((prev) => [
@@ -475,7 +493,6 @@ export function ChatPanel({
           }
 
           if (event.type === 'error') {
-            setThinking(false)
             setError(event.message)
             setMessages((prev) => {
               const withoutStream = prev.filter(
@@ -498,9 +515,19 @@ export function ChatPanel({
         await runAgentActions(finalAssistantId, finalAssistantContent)
       }
     } finally {
-      setThinking(false)
+      setBusy(null)
     }
   }
+
+  const busyLabel =
+    busy?.detail ??
+    (busy?.phase === 'applying'
+      ? 'コード適用・コマンド実行中…'
+      : busy?.phase === 'streaming'
+        ? '応答を受信中…'
+        : busy
+          ? 'AI 応答待ち…'
+          : null)
 
   return (
     <aside className="chat-panel" aria-label="AI チャット" style={{ width }}>
@@ -616,21 +643,31 @@ export function ChatPanel({
             )}
           </div>
         ))}
-        {thinking && (
-          <div className="chat-bubble assistant">
+        {busy && busy.phase !== 'streaming' && (
+          <div className="chat-bubble assistant busy">
             <div className="chat-role">AI</div>
-            <div className="chat-content">考え中…</div>
+            <div className="chat-content chat-busy-inline">
+              <span className="chat-busy-spinner" aria-hidden />
+              {busyLabel}
+            </div>
           </div>
         )}
       </div>
+
+      {busy && (
+        <div className={`chat-busy-bar phase-${busy.phase}`} role="status" aria-live="polite">
+          <span className="chat-busy-spinner" aria-hidden />
+          <span>{busyLabel}</span>
+        </div>
+      )}
 
       <form className="chat-input" onSubmit={(event) => void onSubmit(event)}>
         <textarea
           value={input}
           onChange={(event) => setInput(event.target.value)}
           placeholder={
-            thinking
-              ? '応答待ち…'
+            busy
+              ? busyLabel ?? '実行中…'
               : loading
                 ? '履歴読み込み中…'
                 : mode === 'agent'
@@ -638,7 +675,7 @@ export function ChatPanel({
                   : 'コードについて質問する…'
           }
           rows={3}
-          disabled={thinking || loading}
+          disabled={busy !== null || loading}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault()
@@ -646,8 +683,8 @@ export function ChatPanel({
             }
           }}
         />
-        <button type="submit" disabled={thinking || loading || input.trim() === ''}>
-          送信
+        <button type="submit" disabled={busy !== null || loading || input.trim() === ''}>
+          {busy ? '実行中…' : '送信'}
         </button>
       </form>
 

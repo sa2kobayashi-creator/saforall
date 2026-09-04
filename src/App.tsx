@@ -25,6 +25,7 @@ import {
   shouldAppendToFile
 } from './lib/codeBlocks'
 import { languageFromPath } from './lib/language'
+import { prefetchAllModelCatalogs } from './lib/modelCatalogCache'
 import type {
   ApplyCodeOptions,
   BackendStatus,
@@ -132,6 +133,20 @@ export default function App() {
     }, 30_000)
     return () => window.clearInterval(timer)
   }, [checkBackend])
+
+  useEffect(() => {
+    if (!backend.connected) return
+    let cancelled = false
+    ;(async () => {
+      await prefetchAllModelCatalogs()
+      if (!cancelled) {
+        window.dispatchEvent(new CustomEvent('saforall-model-catalog-updated', { detail: {} }))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [backend.connected])
 
   const openWorkspaceAt = useCallback(
     async (path: string) => {
@@ -543,7 +558,7 @@ export default function App() {
                 title="下部パネルの高さを変更"
                 onResize={(delta) => {
                   setTerminalHeight((height) =>
-                    Math.min(500, Math.max(120, height - delta))
+                    Math.min(Math.floor(window.innerHeight * 0.7), Math.max(120, height - delta))
                   )
                 }}
               />

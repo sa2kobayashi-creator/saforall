@@ -71,11 +71,14 @@
 .terminal-host {
   flex: 1;
   min-height: 0;
+  height: 100%;
   padding: 4px 8px 8px;
+  overflow: hidden;
 }
 
 .terminal-host .xterm {
   height: 100%;
+  width: 100%;
 }
 
 .terminal-host .xterm-viewport {

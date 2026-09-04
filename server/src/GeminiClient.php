@@ -353,7 +353,10 @@ final class GeminiClient
             $message .= ': ' . $detail;
         }
         if ($status === 410 || $status === 403 || $status === 404) {
-            $message .= '。API キーを Google AI Studio で再発行するか、Cloud Console で Gemini API に制限し、モデルを gemini-flash-latest / gemini-2.5-flash に変更してください。';
+            $message .= '。API キーを Google AI Studio で再発行するか、Cloud Console で Gemini API に制限し、モデルを gemini-flash-latest / gemini-3.5-flash-lite / gemini-2.5-flash に変更してください。';
+        }
+        if ($status === 429) {
+            $message .= '。無料枠の上限かレート制限です。約40秒待つか、課金プランを確認し、チャット用モデル（gemini-flash-latest / gemini-3.5-flash-lite / gemini-2.5-flash）を選んでください。画像モデル（*-image）は使えません。別エンジン（OpenAI / Workers / Cursor）への切替も有効です。';
         }
         return $message;
     }

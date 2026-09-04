@@ -67,6 +67,10 @@ function fetchGeminiModels(array $settings): array
         if ($id === '' || !str_starts_with($id, 'gemini')) {
             continue;
         }
+        // 画像・埋め込み・音声などはチャット UI から除外
+        if (ModelCatalog::isNonChatGeminiModel($id)) {
+            continue;
+        }
         $methods = $row['supportedGenerationMethods'] ?? [];
         if (is_array($methods) && $methods !== [] && !in_array('generateContent', $methods, true)) {
             continue;

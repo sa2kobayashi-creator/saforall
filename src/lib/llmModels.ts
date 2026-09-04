@@ -23,29 +23,35 @@ export const OPENAI_MODEL_CATALOG: ModelOption[] = [
 
 export const GEMINI_MODEL_CATALOG: ModelOption[] = [
   { id: 'gemini-flash-latest', label: 'gemini-flash-latest（推奨・追従）', tier: 'cheap', costRank: 1 },
-  { id: 'gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite（安価）', tier: 'cheap', costRank: 2 },
+  { id: 'gemini-3.5-flash-lite', label: 'gemini-3.5-flash-lite（安価）', tier: 'cheap', costRank: 2 },
   { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash（標準）', tier: 'standard', costRank: 3 },
   { id: 'gemini-2.5-pro', label: 'gemini-2.5-pro（強）', tier: 'strong', costRank: 4 }
 ]
 
 export const WORKERS_MODEL_CATALOG: ModelOption[] = [
   {
-    id: '@cf/meta/llama-3.1-8b-instruct',
-    label: 'Llama 3.1 8B（安価）',
+    id: '@cf/meta/llama-3.1-8b-instruct-fp8',
+    label: 'Llama 3.1 8B FP8（安価・推奨）',
     tier: 'cheap',
     costRank: 1
+  },
+  {
+    id: '@cf/meta/llama-3.1-8b-instruct-fast',
+    label: 'Llama 3.1 8B Fast（安価）',
+    tier: 'cheap',
+    costRank: 2
   },
   {
     id: '@cf/qwen/qwen2.5-coder-32b-instruct',
     label: 'Qwen2.5 Coder 32B（標準）',
     tier: 'standard',
-    costRank: 2
+    costRank: 3
   },
   {
     id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-    label: 'Llama 3.3 70B（強）',
+    label: 'Llama 3.3 70B Fast（強）',
     tier: 'strong',
-    costRank: 3
+    costRank: 4
   }
 ]
 
@@ -80,7 +86,7 @@ export function optionsForEngine(engine: ProviderEngine, enabled: string[]): Mod
 export const DEFAULT_LLM_MODEL = 'gpt-4.1-mini'
 export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest'
 export const DEFAULT_CURSOR_MODEL = 'grok-4.6'
-export const DEFAULT_WORKERS_MODEL = '@cf/meta/llama-3.1-8b-instruct'
+export const DEFAULT_WORKERS_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8'
 
 /** @deprecated use catalogs */
 export const LLM_MODEL_OPTIONS = OPENAI_MODEL_CATALOG.map((m) => m.id)
@@ -99,7 +105,7 @@ export const ENGINE_MODEL_CATALOG: Record<ProviderEngine, ModelOption[]> = {
 export const DEFAULT_ENABLED_MODELS: Record<ProviderEngine, string[]> = {
   openai: ['gpt-4.1-mini', 'gpt-4.1'],
   gemini: ['gemini-flash-latest', 'gemini-2.5-flash'],
-  workers: ['@cf/meta/llama-3.1-8b-instruct', '@cf/qwen/qwen2.5-coder-32b-instruct'],
+  workers: ['@cf/meta/llama-3.1-8b-instruct-fp8', '@cf/qwen/qwen2.5-coder-32b-instruct'],
   cursor: [
     'auto',
     'grok-4.6',

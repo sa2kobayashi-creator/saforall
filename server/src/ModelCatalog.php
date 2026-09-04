@@ -21,14 +21,15 @@ final class ModelCatalog
         ],
         'gemini' => [
             ['id' => 'gemini-flash-latest', 'tier' => 'cheap', 'cost' => 1],
-            ['id' => 'gemini-2.5-flash-lite', 'tier' => 'cheap', 'cost' => 2],
+            ['id' => 'gemini-3.5-flash-lite', 'tier' => 'cheap', 'cost' => 2],
             ['id' => 'gemini-2.5-flash', 'tier' => 'standard', 'cost' => 3],
             ['id' => 'gemini-2.5-pro', 'tier' => 'strong', 'cost' => 4],
         ],
         'workers' => [
-            ['id' => '@cf/meta/llama-3.1-8b-instruct', 'tier' => 'cheap', 'cost' => 1],
-            ['id' => '@cf/qwen/qwen2.5-coder-32b-instruct', 'tier' => 'standard', 'cost' => 2],
-            ['id' => '@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'tier' => 'strong', 'cost' => 3],
+            ['id' => '@cf/meta/llama-3.1-8b-instruct-fp8', 'tier' => 'cheap', 'cost' => 1],
+            ['id' => '@cf/meta/llama-3.1-8b-instruct-fast', 'tier' => 'cheap', 'cost' => 2],
+            ['id' => '@cf/qwen/qwen2.5-coder-32b-instruct', 'tier' => 'standard', 'cost' => 3],
+            ['id' => '@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'tier' => 'strong', 'cost' => 4],
         ],
         'cursor' => [
             ['id' => 'auto', 'tier' => 'cheap', 'cost' => 1],
@@ -47,7 +48,7 @@ final class ModelCatalog
         'openai' => ['gpt-4.1-mini', 'gpt-4.1'],
         'gemini' => ['gemini-flash-latest', 'gemini-2.5-flash'],
         'workers' => [
-            '@cf/meta/llama-3.1-8b-instruct',
+            '@cf/meta/llama-3.1-8b-instruct-fp8',
             '@cf/qwen/qwen2.5-coder-32b-instruct',
         ],
         'cursor' => [
@@ -67,16 +68,56 @@ final class ModelCatalog
         'gpt-4o' => 'gpt-4.1',
         'gpt-3.5-turbo' => 'gpt-4.1-mini',
         'gpt-4-turbo' => 'gpt-4.1',
-        'gemini-2.0-flash-lite' => 'gemini-flash-latest',
+        'gemini-2.0-flash-lite' => 'gemini-3.5-flash-lite',
         'gemini-2.0-flash' => 'gemini-flash-latest',
         'gemini-1.5-flash' => 'gemini-flash-latest',
         'gemini-1.5-pro' => 'gemini-2.5-pro',
         'gemini-pro' => 'gemini-flash-latest',
-        'gemini-3.5-flash' => 'gemini-flash-latest',
-        'gemini-3.1-pro-preview' => 'gemini-2.5-pro',
+        'gemini-2.5-flash-lite' => 'gemini-3.5-flash-lite',
         'gemini-3-flash' => 'gemini-flash-latest',
         'gemini-3-flash-preview' => 'gemini-flash-latest',
+        // 画像生成モデルはチャット不可 → テキスト用へ
+        'gemini-2.5-flash-image' => 'gemini-flash-latest',
+        'gemini-2.5-flash-preview-image' => 'gemini-flash-latest',
+        'gemini-2.0-flash-preview-image-generation' => 'gemini-flash-latest',
+        'gemini-2.0-flash-exp-image-generation' => 'gemini-flash-latest',
+        '@cf/meta/llama-3.1-8b-instruct' => '@cf/meta/llama-3.1-8b-instruct-fp8',
+        '@cf/meta/llama-3.1-8b-instruct-awq' => '@cf/meta/llama-3.1-8b-instruct-fp8',
+        '@cf/meta/llama-3-8b-instruct' => '@cf/meta/llama-3.1-8b-instruct-fp8',
+        '@cf/meta/llama-3-8b-instruct-awq' => '@cf/meta/llama-3.1-8b-instruct-fp8',
+        '@cf/meta/llama-3.1-70b-instruct' => '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+        '@hf/meta-llama/meta-llama-3-8b-instruct' => '@cf/meta/llama-3.1-8b-instruct-fp8',
     ];
+
+    /**
+     * チャット向けにモデル ID を正規化する（画像・埋め込み等は除外）。
+     */
+    public static function normalizeModelId(string $engine, string $id): string
+    {
+        $id = trim($id);
+        if ($id === '') {
+            return $engine === 'gemini' ? 'gemini-flash-latest' : $id;
+        }
+
+        if (isset(self::RETIRED_MODELS[$id])) {
+            return self::RETIRED_MODELS[$id];
+        }
+
+        if ($engine === 'gemini' && self::isNonChatGeminiModel($id)) {
+            return 'gemini-flash-latest';
+        }
+
+        return $id;
+    }
+
+    public static function isNonChatGeminiModel(string $id): bool
+    {
+        $lower = strtolower($id);
+        return preg_match(
+            '/image|imagen|embedding|embed-content|tts|audio|lyria|robotics|aqa|computer-use/',
+            $lower
+        ) === 1;
+    }
 
     /**
      * @param array<string, mixed> $settings
@@ -107,7 +148,7 @@ final class ModelCatalog
         }
 
         return array_values(array_unique(array_map(
-            static fn (string $id): string => self::RETIRED_MODELS[$id] ?? $id,
+            static fn (string $id): string => self::normalizeModelId($engine, $id),
             $list
         )));
     }
@@ -119,7 +160,7 @@ final class ModelCatalog
     {
         $enabled = self::enabledModels($settings, $engine);
         if ($forcedModel !== null && trim($forcedModel) !== '') {
-            $forced = self::RETIRED_MODELS[trim($forcedModel)] ?? trim($forcedModel);
+            $forced = self::normalizeModelId($engine, trim($forcedModel));
             if (in_array($forced, $enabled, true) || $forced === 'auto') {
                 return $forced;
             }

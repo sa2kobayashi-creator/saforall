@@ -79,6 +79,22 @@
   opacity: 0.5;
 }
 
+.settings-test-result {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.settings-test-result.is-ok {
+  color: #9fdfb0;
+}
+
+.settings-test-result.is-error {
+  color: #f0a0a0;
+}
+
 .settings-hint {
   margin: 0;
   font-size: 11px;
@@ -145,6 +161,16 @@
   color: var(--text-muted);
 }
 
+.model-multi-list {
+  max-height: 150px; /* 約5件分 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: var(--bg);
+}
+
 .model-multi-item {
   display: flex;
   flex-direction: row;
@@ -153,7 +179,15 @@
   gap: 10px;
   font-size: 12px;
   color: var(--text);
+  min-height: 28px;
   padding: 4px 0;
+}
+
+.model-multi-item.is-checked {
+  background: rgba(61, 139, 253, 0.08);
+  border-radius: 4px;
+  padding: 4px 6px;
+  margin: 0;
 }
 
 .model-multi-label {

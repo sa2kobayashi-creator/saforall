@@ -261,12 +261,15 @@ final class LlmClient
             }
         }
 
-        if ($status === 404) {
+        if ($status === 404 || $status === 410) {
             $host = strtolower((string) (parse_url($url, PHP_URL_HOST) ?? ''));
             if (str_contains($host, 'groq.com')) {
                 $message .= '。いま Base URL は Groq です。gpt-* は使えません。'
                     . 'OpenAI を使うなら Base URL を https://api.openai.com/v1 に戻し、OpenAI の API キーを保存してください。'
                     . 'Groq のまま使うなら「最新を取得」で llama などの ID を選んでください。';
+            } elseif (str_contains($host, 'cloudflare.com')) {
+                $message .= '。Workers AI のモデルが廃止されている可能性があります。'
+                    . '例: @cf/meta/llama-3.1-8b-instruct-fp8 に変更するか「最新を取得」してください。';
             } elseif (str_contains($host, 'openai.com')) {
                 $message .= '。モデルがこのキーで使えない可能性があります。「最新を取得」で一覧から選んでください。';
             } else {

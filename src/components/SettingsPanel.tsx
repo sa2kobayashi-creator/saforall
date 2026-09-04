@@ -55,8 +55,11 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
 
   const [usageText, setUsageText] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
+  const [testStatus, setTestStatus] = useState<
+    Partial<Record<ProviderEngine, { ok: boolean; text: string }>>
+  >({})
   const [saving, setSaving] = useState(false)
-  const [testingOpenai, setTestingOpenai] = useState(false)
+  const [testingEngine, setTestingEngine] = useState<ProviderEngine | null>(null)
 
   useEffect(() => {
     if (!open || !backendConnected) return
@@ -147,6 +150,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
         setUsageText(parts.join(' · '))
       }
       setStatus(null)
+      setTestStatus({})
     })()
 
     return () => {
@@ -171,42 +175,89 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
   const preferred = (_engine: ProviderEngine, list: string[], fallback: string) =>
     list[0] ?? fallback
 
-  const testOpenai = async () => {
+  const renderTestResult = (engine: ProviderEngine) => {
+    const row = testStatus[engine]
+    if (!row) return null
+    return (
+      <p className={`settings-test-result${row.ok ? ' is-ok' : ' is-error'}`}>{row.text}</p>
+    )
+  }
+
+  const setEngineTestStatus = (engine: ProviderEngine, ok: boolean, text: string) => {
+    setTestStatus((prev) => ({ ...prev, [engine]: { ok, text } }))
+  }
+
+  const testEngine = async (engine: ProviderEngine) => {
     if (!backendConnected) {
-      setStatus('バックエンド未接続のためテストできません')
-      return
-    }
-    // 未保存のキーがある場合は先に保存を促す（テスト API は DB のキーを使う）
-    if (openaiKey.trim() !== '') {
-      setStatus('API キーを入力した直後は、先に「保存」してから接続テストしてください')
-      return
-    }
-    if (!openaiKeySet) {
-      setStatus('OpenAI API キーが未設定です')
+      setEngineTestStatus(engine, false, 'バックエンド未接続のためテストできません')
       return
     }
 
-    setTestingOpenai(true)
-    setStatus(null)
+    const pendingKey =
+      engine === 'openai'
+        ? openaiKey.trim() !== ''
+        : engine === 'gemini'
+          ? geminiKey.trim() !== ''
+          : engine === 'cursor'
+            ? cursorKey.trim() !== ''
+            : workersToken.trim() !== ''
+
+    if (pendingKey) {
+      setEngineTestStatus(
+        engine,
+        false,
+        'キーを入力した直後は、先に「保存」してから接続テストしてください'
+      )
+      return
+    }
+
+    const configured =
+      engine === 'openai'
+        ? openaiKeySet
+        : engine === 'gemini'
+          ? geminiKeySet
+          : engine === 'cursor'
+            ? cursorKeySet
+            : workersTokenSet && workersAccountId.trim() !== ''
+
+    if (!configured) {
+      setEngineTestStatus(engine, false, '設定が不足しています（キー等を保存してください）')
+      return
+    }
+
+    const model =
+      engine === 'openai'
+        ? preferred('openai', openaiModels, DEFAULT_LLM_MODEL)
+        : engine === 'gemini'
+          ? preferred('gemini', geminiModels, DEFAULT_GEMINI_MODEL)
+          : engine === 'cursor'
+            ? preferred('cursor', cursorModels, DEFAULT_CURSOR_MODEL)
+            : preferred('workers', workersModels, DEFAULT_WORKERS_MODEL)
+
+    setTestingEngine(engine)
+    setTestStatus((prev) => {
+      const next = { ...prev }
+      delete next[engine]
+      return next
+    })
     const result = await window.saforall.request<{
       ok: boolean
       model: string
       base_url: string
       sample: string
       note?: string
-    }>('POST', '/ai/test', {
-      engine: 'openai',
-      model: preferred('openai', openaiModels, DEFAULT_LLM_MODEL)
-    })
-    setTestingOpenai(false)
+    }>('POST', '/ai/test', { engine, model })
+    setTestingEngine(null)
 
     if (!result.ok) {
-      setStatus(result.error?.message ?? '接続テストに失敗しました')
+      setEngineTestStatus(engine, false, result.error?.message ?? '接続テストに失敗しました')
       return
     }
 
-    setStatus(
-      `接続OK（${result.data?.model} @ ${result.data?.base_url}）: ${result.data?.sample ?? ''}`
+    setEngineTestStatus(
+      engine,
+      true,
+      `接続OK（${result.data?.model}）: ${result.data?.sample ?? ''}`
     )
   }
 
@@ -365,7 +416,22 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
             <input value={limitWorkers} onChange={(event) => setLimitWorkers(event.target.value)} />
           </label>
 
-          <h3 className="settings-section-title">Workers AI モデル（複数選択）</h3>
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">Workers AI モデル（複数選択）</h3>
+            <button
+              type="button"
+              className="settings-test-btn"
+              disabled={
+                !backendConnected ||
+                (!workersTokenSet && workersToken.trim() === '') ||
+                testingEngine !== null
+              }
+              onClick={() => void testEngine('workers')}
+            >
+              {testingEngine === 'workers' ? 'テスト中…' : '接続テスト'}
+            </button>
+          </div>
+          {renderTestResult('workers')}
           <ModelMultiSelect
             engine="workers"
             enabled={workersModels}
@@ -403,12 +469,17 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
             <button
               type="button"
               className="settings-test-btn"
-              disabled={!backendConnected || (!openaiKeySet && openaiKey.trim() === '') || testingOpenai}
-              onClick={() => void testOpenai()}
+              disabled={
+                !backendConnected ||
+                (!openaiKeySet && openaiKey.trim() === '') ||
+                testingEngine !== null
+              }
+              onClick={() => void testEngine('openai')}
             >
-              {testingOpenai ? 'テスト中…' : '接続テスト'}
+              {testingEngine === 'openai' ? 'テスト中…' : '接続テスト'}
             </button>
           </div>
+          {renderTestResult('openai')}
           <p className="settings-hint">
             いまの Base URL が Groq（api.groq.com）のときは gpt-* は使えません。OpenAI
             公式を使う場合は下の「OpenAI 公式に戻す」を押してキーを保存してください。
@@ -453,7 +524,22 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
             />
           </label>
 
-          <h3 className="settings-section-title">Cursor モデル（複数選択）</h3>
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">Cursor モデル（複数選択）</h3>
+            <button
+              type="button"
+              className="settings-test-btn"
+              disabled={
+                !backendConnected ||
+                (!cursorKeySet && cursorKey.trim() === '') ||
+                testingEngine !== null
+              }
+              onClick={() => void testEngine('cursor')}
+            >
+              {testingEngine === 'cursor' ? 'テスト中…' : '接続テスト'}
+            </button>
+          </div>
+          {renderTestResult('cursor')}
           <p className="settings-hint">
             Grok 4.5/4.6・Claude Sonnet 4.5/4.6・Opus 5 などを候補にできます。アカウントで使える ID
             は Cursor 側の一覧に依存します。無い ID は下のカスタム追加で入れてください。
@@ -475,7 +561,22 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
             />
           </label>
 
-          <h3 className="settings-section-title">Gemini モデル（複数選択）</h3>
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">Gemini モデル（複数選択）</h3>
+            <button
+              type="button"
+              className="settings-test-btn"
+              disabled={
+                !backendConnected ||
+                (!geminiKeySet && geminiKey.trim() === '') ||
+                testingEngine !== null
+              }
+              onClick={() => void testEngine('gemini')}
+            >
+              {testingEngine === 'gemini' ? 'テスト中…' : '接続テスト'}
+            </button>
+          </div>
+          {renderTestResult('gemini')}
           <ModelMultiSelect
             engine="gemini"
             enabled={geminiModels}
@@ -496,14 +597,6 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
           {status && <p className="settings-status">{status}</p>}
 
           <div className="settings-actions">
-            <button
-              type="button"
-              className="settings-test-btn"
-              disabled={!backendConnected || (!openaiKeySet && openaiKey.trim() === '') || testingOpenai}
-              onClick={() => void testOpenai()}
-            >
-              {testingOpenai ? 'テスト中…' : 'OpenAI 接続テスト'}
-            </button>
             <button type="button" className="settings-close" onClick={onClose}>
               閉じる
             </button>

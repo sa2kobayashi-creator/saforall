@@ -109,7 +109,7 @@ export function TerminalPanel({
 
     void start()
 
-    const onResize = () => {
+    const applyFit = () => {
       try {
         fitAddon.fit()
         const id = sessionIdRef.current
@@ -120,11 +120,22 @@ export function TerminalPanel({
         // ignore fit errors while hidden
       }
     }
-    window.addEventListener('resize', onResize)
+
+    const onWindowResize = () => applyFit()
+    window.addEventListener('resize', onWindowResize)
+
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+            applyFit()
+          })
+        : null
+    resizeObserver?.observe(host)
 
     return () => {
       disposed = true
-      window.removeEventListener('resize', onResize)
+      window.removeEventListener('resize', onWindowResize)
+      resizeObserver?.disconnect()
       onDataDisposable.dispose()
       offData()
       offExit()
