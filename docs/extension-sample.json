@@ -1,0 +1,17 @@
+{
+  "id": "saforall.sample",
+  "name": "Sample Tools",
+  "description": "ワークスペース用サンプル拡張。コピーして .saforall/extensions に置いてください。",
+  "commands": [
+    {
+      "id": "sample.list",
+      "title": "List files",
+      "run": "Get-ChildItem -Name"
+    },
+    {
+      "id": "sample.run-file",
+      "title": "Echo active file",
+      "run": "Write-Output {file}"
+    }
+  ]
+}

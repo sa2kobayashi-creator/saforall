@@ -18,6 +18,9 @@ import { ApplyDiffDialog, type ApplyDiffProposal } from './components/ApplyDiffD
 import { PendingEditsBar } from './components/PendingEditsBar'
 import { ComposerPanel } from './components/ComposerPanel'
 import { QuickOpenDialog } from './components/QuickOpenDialog'
+import { ExtensionsPanel } from './components/ExtensionsPanel'
+import { buildNpmScriptCommand, buildRunFileCommand } from './lib/runCommands'
+import type { WorkspaceExtension } from './types/extensions'
 import { UsagePanel } from './components/UsagePanel'
 import { WelcomeScreen } from './components/WelcomeScreen'
 import {
@@ -99,6 +102,7 @@ export default function App() {
   const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null)
   const [monacoProblems, setMonacoProblems] = useState<ProblemItem[]>([])
   const [revealLine, setRevealLine] = useState<number | null>(null)
+  const [extensions, setExtensions] = useState<WorkspaceExtension[]>([])
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
@@ -641,6 +645,39 @@ export default function App() {
     ]
   )
 
+  const refreshExtensions = useCallback(async () => {
+    if (!workspacePath || typeof window.saforall.loadExtensions !== 'function') {
+      setExtensions([])
+      return
+    }
+    try {
+      const list = await window.saforall.loadExtensions(workspacePath)
+      setExtensions(list)
+    } catch {
+      setExtensions([])
+    }
+  }, [workspacePath])
+
+  useEffect(() => {
+    void refreshExtensions()
+  }, [refreshExtensions])
+
+  const runActiveFile = useCallback(
+    (inspect = false) => {
+      if (!activePath) {
+        showNotice('実行するファイルを開いてください')
+        return
+      }
+      const command = buildRunFileCommand(activePath, inspect)
+      if (!command) {
+        showNotice('このファイル種別の Run は未対応です（js/ts/py/ps1）')
+        return
+      }
+      runCommand(command)
+    },
+    [activePath, runCommand, showNotice]
+  )
+
   const currentProposal =
     applyQueue.length > 0
       ? applyQueue[Math.min(Math.max(reviewIndex, 0), applyQueue.length - 1)]
@@ -779,6 +816,19 @@ export default function App() {
           setSidebarView('scm')
           setScmSyncCommand('push')
           break
+        case 'run:file':
+          runActiveFile(false)
+          break
+        case 'run:file-inspect':
+          runActiveFile(true)
+          break
+        case 'run:npm-start':
+          runCommand(buildNpmScriptCommand('start'))
+          break
+        case 'view:extensions':
+          setSidebarView('extensions')
+          void refreshExtensions()
+          break
         case 'help:welcome':
           closeWorkspace()
           break
@@ -802,7 +852,7 @@ export default function App() {
     return () => {
       unsubscribe()
     }
-  }, [closeWorkspace, openWorkspace, saveFile, setUsageLayout, toggleUsage])
+  }, [closeWorkspace, openWorkspace, refreshExtensions, runActiveFile, runCommand, saveFile, setUsageLayout, toggleUsage])
 
   return (
     <div className="app-shell">
@@ -828,6 +878,7 @@ export default function App() {
             onChangeView={(view) => {
               setSidebarView(view)
               if (view === 'scm') setScmRefreshKey((key) => key + 1)
+              if (view === 'extensions') void refreshExtensions()
             }}
             onToggleChat={() => setChatOpen((v) => !v)}
             onOpenWorkspace={openWorkspace}
@@ -837,6 +888,7 @@ export default function App() {
               setBottomTab('terminal')
               setTerminalOpen((open) => !open)
             }}
+            onRunFile={() => runActiveFile(false)}
           />
           {sidebarView === 'explorer' ? (
             <Sidebar
@@ -846,7 +898,7 @@ export default function App() {
               onOpenWorkspace={openWorkspace}
               onOpenFile={openFileAt}
             />
-          ) : (
+          ) : sidebarView === 'scm' ? (
             <SourceControlPanel
               workspacePath={workspacePath}
               width={sidebarWidth}
@@ -861,6 +913,15 @@ export default function App() {
                 showNotice(message)
               }}
             />
+          ) : (
+            <div style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+              <ExtensionsPanel
+                extensions={extensions}
+                activeFilePath={activePath}
+                onRefresh={() => void refreshExtensions()}
+                onRun={(command) => runCommand(command)}
+              />
+            </div>
           )}
           <ResizeHandle
             direction="horizontal"

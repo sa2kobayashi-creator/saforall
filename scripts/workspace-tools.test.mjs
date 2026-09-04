@@ -12,7 +12,6 @@ function resolveWorkspacePath(workspaceRoot, targetPath) {
   return absolute
 }
 
-/** Mirror of electron/main/toolAgent.ts repairToolArguments */
 function repairToolArguments(raw) {
   const trimmed = (raw || '').trim()
   if (!trimmed) return '{}'
@@ -41,6 +40,36 @@ function repairToolArguments(raw) {
   }
 }
 
+function computeDiffStats(original, modified) {
+  const a = original.replace(/\r\n/g, '\n').split('\n')
+  const b = modified.replace(/\r\n/g, '\n').split('\n')
+  const setA = new Map()
+  for (const line of a) setA.set(line, (setA.get(line) ?? 0) + 1)
+  const setB = new Map()
+  for (const line of b) setB.set(line, (setB.get(line) ?? 0) + 1)
+  let removed = 0
+  let added = 0
+  for (const [line, count] of setA) {
+    const next = setB.get(line) ?? 0
+    if (count > next) removed += count - next
+  }
+  for (const [line, count] of setB) {
+    const prev = setA.get(line) ?? 0
+    if (count > prev) added += count - prev
+  }
+  return { added, removed }
+}
+
+function buildRunFileCommand(filePath, inspect = false) {
+  const lower = filePath.toLowerCase()
+  const quoted = `"${filePath.replace(/"/g, '\\"')}"`
+  if (lower.endsWith('.js')) return inspect ? `node --inspect ${quoted}` : `node ${quoted}`
+  if (lower.endsWith('.ts')) {
+    return inspect ? `npx --yes tsx --inspect ${quoted}` : `npx --yes tsx ${quoted}`
+  }
+  return null
+}
+
 test('resolveWorkspacePath allows children', () => {
   const root = resolve('D:/tmp/project')
   const child = resolveWorkspacePath(root, 'src/App.tsx')
@@ -62,4 +91,14 @@ test('repairToolArguments closes truncated object', () => {
   const parsed = JSON.parse(repaired)
   assert.equal(parsed.path, 'a.ts')
   assert.equal(typeof parsed.content, 'string')
+})
+
+test('computeDiffStats counts added/removed lines', () => {
+  const stats = computeDiffStats('a\nb\n', 'a\nc\n')
+  assert.equal(stats.added, 1)
+  assert.equal(stats.removed, 1)
+})
+
+test('buildRunFileCommand supports node inspect', () => {
+  assert.match(buildRunFileCommand('D:/app/index.js', true), /node --inspect/)
 })

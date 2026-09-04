@@ -23,6 +23,7 @@ import {
   writeTerminal
 } from './terminal'
 import { loadProjectRules, searchFilesByName } from './workspaceTools'
+import { loadWorkspaceExtensions } from './extensions'
 
 let workspaceWatcher: FSWatcher | null = null
 let watchDebounce: ReturnType<typeof setTimeout> | null = null
@@ -117,6 +118,10 @@ ipcMain.handle('fs:searchFiles', async (_event, cwd: string, query: string) => {
 
 ipcMain.handle('fs:loadProjectRules', async (_event, cwd: string) => {
   return loadProjectRules(cwd)
+})
+
+ipcMain.handle('fs:loadExtensions', async (_event, cwd: string) => {
+  return loadWorkspaceExtensions(cwd)
 })
 
 ipcMain.handle('fs:watchWorkspace', async (event, cwd: string) => {

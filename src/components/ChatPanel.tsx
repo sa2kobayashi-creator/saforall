@@ -769,6 +769,30 @@ export function ChatPanel({
             return
           }
 
+          if (event.type === 'agent_checkpoint') {
+            setBusy({
+              phase: 'thinking',
+              detail: `Checkpoint: ${event.summary}`
+            })
+            const line = `\n\n⏱️ Checkpoint · ${event.summary}`
+            if (!sawAssistant) {
+              sawAssistant = true
+              setMessages((prev) => [
+                ...prev,
+                { id: streamAssistantId, role: 'assistant', content: line.trim() }
+              ])
+            } else {
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === streamAssistantId
+                    ? { ...message, content: message.content + line }
+                    : message
+                )
+              )
+            }
+            return
+          }
+
           if (event.type === 'tool_call') {
             setBusy({ phase: 'thinking', detail: `ツール実行: ${event.name}` })
             const line = `\n\n🔧 \`${event.name}\` …`

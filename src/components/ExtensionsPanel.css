@@ -1,0 +1,78 @@
+.extensions-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+  gap: 8px;
+}
+
+.extensions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.extensions-head button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.extensions-lead,
+.extensions-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.extensions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.extensions-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg);
+}
+
+.extensions-card-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.extensions-card p {
+  margin: 4px 0 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.extensions-commands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.extensions-commands button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.extensions-commands button:hover {
+  border-color: var(--accent);
+}

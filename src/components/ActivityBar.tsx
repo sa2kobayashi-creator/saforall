@@ -1,6 +1,6 @@
 import './ActivityBar.css'
 
-export type SidebarView = 'explorer' | 'scm'
+export type SidebarView = 'explorer' | 'scm' | 'extensions'
 
 type Props = {
   activeView: SidebarView
@@ -14,6 +14,7 @@ type Props = {
   onOpenSettings: () => void
   onOpenUsage: () => void
   onToggleTerminal: () => void
+  onRunFile?: () => void
 }
 
 export function ActivityBar({
@@ -27,7 +28,8 @@ export function ActivityBar({
   onOpenWorkspace,
   onOpenSettings,
   onOpenUsage,
-  onToggleTerminal
+  onToggleTerminal,
+  onRunFile
 }: Props) {
   return (
     <aside className="activity-bar" aria-label="アクティビティバー">
@@ -47,6 +49,14 @@ export function ActivityBar({
       >
         ⎇
       </button>
+      <button
+        type="button"
+        className={`activity-btn ${activeView === 'extensions' ? 'active' : ''}`}
+        title="Extensions"
+        onClick={() => onChangeView('extensions')}
+      >
+        ▤
+      </button>
       <div className="activity-spacer" />
       <button
         type="button"
@@ -56,6 +66,11 @@ export function ActivityBar({
       >
         📂
       </button>
+      {onRunFile && (
+        <button type="button" className="activity-btn" title="Run Current File (F5)" onClick={onRunFile}>
+          ▶
+        </button>
+      )}
       <button
         type="button"
         className={`activity-btn ${chatOpen ? 'active' : ''}`}

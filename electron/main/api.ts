@@ -177,6 +177,12 @@ export type ChatStreamEvent =
       note?: string
     }
   | {
+      type: 'agent_checkpoint'
+      step: number
+      phase: string
+      summary: string
+    }
+  | {
       type: 'done'
       model: string
       engine?: string

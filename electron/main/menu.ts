@@ -18,6 +18,10 @@ export type MenuCommand =
   | 'git:refresh'
   | 'git:pull'
   | 'git:push'
+  | 'run:file'
+  | 'run:file-inspect'
+  | 'run:npm-start'
+  | 'view:extensions'
   | 'help:welcome'
   | 'help:docs'
   | 'help:shortcuts'
@@ -135,11 +139,36 @@ export function setupApplicationMenu(): void {
           accelerator: 'CmdOrCtrl+,',
           click: () => send('view:settings')
         },
+        {
+          label: 'Extensions',
+          accelerator: 'CmdOrCtrl+Shift+X',
+          click: () => send('view:extensions')
+        },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },
         { role: 'togglefullscreen' }
+      ]
+    },
+    {
+      label: 'Run',
+      submenu: [
+        {
+          label: 'Run Current File',
+          accelerator: 'F5',
+          click: () => send('run:file')
+        },
+        {
+          label: 'Debug Current File (inspect)',
+          accelerator: 'Shift+F5',
+          click: () => send('run:file-inspect')
+        },
+        { type: 'separator' },
+        {
+          label: 'npm start',
+          click: () => send('run:npm-start')
+        }
       ]
     },
     {
@@ -195,6 +224,10 @@ export function setupApplicationMenu(): void {
           click: () => send('help:shortcuts')
         },
         { type: 'separator' },
+        {
+          label: 'Extensions Folder Tips',
+          click: () => send('view:extensions')
+        },
         {
           label: 'Report Issue…',
           click: () => send('help:report')

@@ -523,11 +523,82 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         tool_calls: toolCalls
       })
 
-      for (const call of toolCalls) {
-        const argsRaw = call.function.arguments
-        const signature = toolSignature(call.function.name, repairToolArguments(argsRaw))
+      const canParallel = (name: string) =>
+        name === 'read_file' || name === 'list_dir' || name === 'search_code'
 
-        if (recentSignatures.includes(signature) && call.function.name !== 'set_phase') {
+      type OrderedRow = {
+        call: ToolCall
+        result: Awaited<ReturnType<typeof runTool>> | null
+        skippedDup: boolean
+      }
+      const orderedResults: OrderedRow[] = []
+
+      let i = 0
+      while (i < toolCalls.length) {
+        const batch: ToolCall[] = []
+        while (i < toolCalls.length && canParallel(toolCalls[i].function.name)) {
+          const sig = toolSignature(
+            toolCalls[i].function.name,
+            repairToolArguments(toolCalls[i].function.arguments)
+          )
+          if (recentSignatures.includes(sig)) {
+            orderedResults.push({ call: toolCalls[i], result: null, skippedDup: true })
+            i += 1
+            continue
+          }
+          recentSignatures.push(sig)
+          if (recentSignatures.length > 24) recentSignatures.shift()
+          batch.push(toolCalls[i])
+          i += 1
+          if (batch.length >= 4) break
+        }
+
+        if (batch.length > 0) {
+          const settled = await Promise.all(
+            batch.map(async (call) => {
+              const result = await runTool(
+                workspacePath,
+                call.function.name,
+                call.function.arguments,
+                onEvent,
+                call.id,
+                phase,
+                editedPaths
+              )
+              return { call, result, skippedDup: false as const }
+            })
+          )
+          orderedResults.push(...settled)
+          continue
+        }
+
+        const call = toolCalls[i]
+        i += 1
+        const sig = toolSignature(
+          call.function.name,
+          repairToolArguments(call.function.arguments)
+        )
+        if (call.function.name !== 'set_phase' && recentSignatures.includes(sig)) {
+          orderedResults.push({ call, result: null, skippedDup: true })
+          continue
+        }
+        recentSignatures.push(sig)
+        if (recentSignatures.length > 24) recentSignatures.shift()
+        const result = await runTool(
+          workspacePath,
+          call.function.name,
+          call.function.arguments,
+          onEvent,
+          call.id,
+          phase,
+          editedPaths
+        )
+        orderedResults.push({ call, result, skippedDup: false })
+      }
+
+      for (const row of orderedResults) {
+        const { call } = row
+        if (row.skippedDup || !row.result) {
           const dup = JSON.stringify({
             ok: false,
             error: 'duplicate tool call skipped — change path/query or advance phase'
@@ -549,19 +620,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           consecutiveToolFailures += 1
           continue
         }
-        recentSignatures.push(signature)
-        if (recentSignatures.length > 20) recentSignatures.shift()
 
-        const result = await runTool(
-          workspacePath,
-          call.function.name,
-          argsRaw,
-          onEvent,
-          call.id,
-          phase,
-          editedPaths
-        )
-
+        const result = row.result
         if (result.nextPhase) {
           phase = result.nextPhase
         }
@@ -580,11 +640,25 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         else consecutiveToolFailures += 1
       }
 
-      if (phase === 'explore' && exploreReads >= 8) {
+      if (step > 0 && step % 6 === 0) {
+        const summary = `step ${step + 1}/${maxSteps} · phase=${phase} · edits=${editedPaths.size} · ${progressNotes.slice(-4).join(', ')}`
+        onEvent({
+          type: 'agent_checkpoint',
+          step: step + 1,
+          phase,
+          summary
+        })
+        messages.push({
+          role: 'user',
+          content: `システムチェックポイント: ${summary}。必要なら続行、十分なら最終回答へ。`
+        })
+      }
+
+      if (phase === 'explore' && exploreReads >= 10) {
         messages.push({
           role: 'user',
           content:
-            'システム: 探索が十分です。set_phase で edit に進み、必要なファイルを edit_file してください。'
+            'システム: 深い探索が十分です。set_phase で edit に進み、大規模リファクタなら複数 edit_file を出してください。'
         })
         exploreReads = 0
       }

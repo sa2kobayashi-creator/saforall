@@ -1,4 +1,6 @@
+import { useEffect, useMemo } from 'react'
 import type { ApplyDiffProposal } from './ApplyDiffDialog'
+import { computeDiffStats } from '../lib/diffStats'
 import './ComposerPanel.css'
 
 type Props = {
@@ -28,6 +30,32 @@ export function ComposerPanel({
   onRejectAll,
   onClose
 }: Props) {
+  const stats = useMemo(
+    () => proposals.map((row) => computeDiffStats(row.original, row.modified)),
+    [proposals]
+  )
+
+  useEffect(() => {
+    if (proposals.length === 0) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        onSelect(Math.min(proposals.length - 1, activeIndex + 1))
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        onSelect(Math.max(0, activeIndex - 1))
+      } else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault()
+        onAcceptOne(activeIndex)
+      } else if (event.key === 'Delete' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault()
+        onRejectOne(activeIndex)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [proposals.length, activeIndex, onSelect, onAcceptOne, onRejectOne])
+
   if (proposals.length === 0) return null
 
   return (
@@ -52,6 +80,7 @@ export function ComposerPanel({
       <ul className="composer-list">
         {proposals.map((row, index) => {
           const name = row.targetPath.split(/[/\\]/).pop() ?? row.targetPath
+          const diff = stats[index]
           return (
             <li key={`${row.targetPath}-${index}`}>
               <button
@@ -64,12 +93,18 @@ export function ComposerPanel({
                   {modeLabel(row.mode)}
                 </span>
                 <span className="composer-name">{name}</span>
+                {diff && (
+                  <span className="composer-stats">
+                    <em className="plus">+{diff.added}</em>
+                    <em className="minus">-{diff.removed}</em>
+                  </span>
+                )}
               </button>
               <div className="composer-item-actions">
-                <button type="button" onClick={() => onAcceptOne(index)} title="適用">
+                <button type="button" onClick={() => onAcceptOne(index)} title="適用 (Ctrl+Enter)">
                   ✓
                 </button>
-                <button type="button" onClick={() => onRejectOne(index)} title="却下">
+                <button type="button" onClick={() => onRejectOne(index)} title="却下 (Ctrl+Delete)">
                   ✕
                 </button>
               </div>
@@ -77,7 +112,7 @@ export function ComposerPanel({
           )
         })}
       </ul>
-      <p className="composer-hint">選択すると差分レビューが開きます</p>
+      <p className="composer-hint">↑↓ 選択 · Ctrl+Enter 適用 · Ctrl+Delete 却下</p>
     </aside>
   )
 }

@@ -50,6 +50,9 @@ type SimpleProps = {
 const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: 'Ctrl/Cmd + O', action: 'フォルダを開く' },
   { keys: 'Ctrl/Cmd + S', action: 'ファイルを保存' },
+  { keys: 'F5', action: '現在のファイルを実行' },
+  { keys: 'Shift + F5', action: '現在のファイルをデバッグ実行 (--inspect)' },
+  { keys: 'Ctrl/Cmd + Shift + X', action: '拡張機能パネル' },
   { keys: 'Tab', action: 'AI Tab 補完を確定（候補表示中）' },
   { keys: 'Ctrl/Cmd + ,', action: '設定を開く' },
   { keys: 'Ctrl/Cmd + P', action: 'ファイルを名前検索して開く' },

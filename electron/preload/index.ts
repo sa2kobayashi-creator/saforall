@@ -68,6 +68,12 @@ export type ChatStreamEvent =
       note?: string
     }
   | {
+      type: 'agent_checkpoint'
+      step: number
+      phase: string
+      summary: string
+    }
+  | {
       type: 'done'
       model: string
       engine?: string
@@ -108,6 +114,14 @@ const api = {
   },
   loadProjectRules: (cwd: string): Promise<string | null> =>
     ipcRenderer.invoke('fs:loadProjectRules', cwd),
+  loadExtensions: (cwd: string): Promise<
+    Array<{
+      id: string
+      name: string
+      description?: string
+      commands: Array<{ id: string; title: string; run: string }>
+    }>
+  > => ipcRenderer.invoke('fs:loadExtensions', cwd),
   stat: (filePath: string): Promise<{ isDirectory: boolean; size: number; mtimeMs: number }> =>
     ipcRenderer.invoke('fs:stat', filePath),
   health: (): Promise<HealthResult> => ipcRenderer.invoke('api:health'),
@@ -260,6 +274,10 @@ const api = {
         | 'git:refresh'
         | 'git:pull'
         | 'git:push'
+        | 'run:file'
+        | 'run:file-inspect'
+        | 'run:npm-start'
+        | 'view:extensions'
         | 'help:welcome'
         | 'help:docs'
         | 'help:shortcuts'
@@ -288,6 +306,10 @@ const api = {
         | 'git:refresh'
         | 'git:pull'
         | 'git:push'
+        | 'run:file'
+        | 'run:file-inspect'
+        | 'run:npm-start'
+        | 'view:extensions'
         | 'help:welcome'
         | 'help:docs'
         | 'help:shortcuts'
