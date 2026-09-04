@@ -141,7 +141,7 @@ export function EditorPane({
     const monaco = monacoRef.current
     if (!editor || !monaco || !activePath) return
 
-    const lines = breakpoints[activePath] ?? []
+    const lines = (breakpoints[activePath] ?? []).map((row) => row.line)
     const decorations: Array<{
       range: unknown
       options: Record<string, unknown>
@@ -197,6 +197,12 @@ export function EditorPane({
       monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
         noSemanticValidation: false,
         noSyntaxValidation: false
+      })
+      monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+        validate: true,
+        allowComments: true,
+        schemas: [],
+        enableSchemaRequest: false
       })
     } catch {
       // language service may be unavailable

@@ -6,11 +6,19 @@ export type DebugCallFrame = {
   url: string
   lineNumber: number
   columnNumber: number
+  callFrameId?: string
+}
+
+export type DebugVariable = {
+  name: string
+  value: string
+  type?: string
 }
 
 export type DebugBreakpoint = {
   path: string
   line: number // 1-based
+  condition?: string
 }
 
 type CdpMessage = {
@@ -23,7 +31,11 @@ type CdpMessage = {
 
 export type DebugSessionEvents = {
   ready: { port: number }
-  paused: { reason: string; callFrames: DebugCallFrame[] }
+  paused: {
+    reason: string
+    callFrames: DebugCallFrame[]
+    variables: DebugVariable[]
+  }
   resumed: Record<string, never>
   stdout: { text: string }
   stderr: { text: string }
@@ -55,6 +67,7 @@ export class DebugSession extends EventEmitter {
   private waiters = new Map<number, Waiter>()
   private port = 9229
   private started = false
+  private lastCallFrameId: string | null = null
 
   on<K extends keyof DebugSessionEvents>(
     event: K,
@@ -105,25 +118,33 @@ export class DebugSession extends EventEmitter {
     await this.send('Runtime.enable')
 
     for (const bp of params.breakpoints) {
-      await this.setBreakpoint(bp.path, bp.line)
+      await this.setBreakpoint(bp.path, bp.line, bp.condition)
     }
 
     await this.send('Runtime.runIfWaitingForDebugger')
     this.emit('ready', { port: this.port })
   }
 
-  async setBreakpoint(filePath: string, line1Based: number): Promise<void> {
+  async setBreakpoint(
+    filePath: string,
+    line1Based: number,
+    condition?: string
+  ): Promise<void> {
     if (!this.socket) return
     const url = toFileUrl(filePath)
-    await this.send('Debugger.setBreakpointByUrl', {
+    const params: Record<string, unknown> = {
       lineNumber: Math.max(0, line1Based - 1),
       url
-    })
-    // Also try regex for path variants (tsx / drive letter)
+    }
+    if (condition && condition.trim()) {
+      params.condition = condition.trim()
+    }
+    await this.send('Debugger.setBreakpointByUrl', params)
     const escaped = filePath.replace(/\\/g, '/').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     await this.send('Debugger.setBreakpointByUrl', {
       lineNumber: Math.max(0, line1Based - 1),
-      urlRegex: escaped
+      urlRegex: escaped,
+      ...(condition && condition.trim() ? { condition: condition.trim() } : {})
     })
   }
 
@@ -139,6 +160,27 @@ export class DebugSession extends EventEmitter {
     await this.send('Debugger.stepInto')
   }
 
+  async evaluate(expression: string, callFrameId?: string): Promise<string> {
+    const frameId = callFrameId || this.lastCallFrameId
+    if (frameId) {
+      const result = await this.send('Debugger.evaluateOnCallFrame', {
+        callFrameId: frameId,
+        expression,
+        returnByValue: true
+      })
+      return formatRemoteObject(
+        (result.result?.result as Record<string, unknown> | undefined) ?? {}
+      )
+    }
+    const result = await this.send('Runtime.evaluate', {
+      expression,
+      returnByValue: true
+    })
+    return formatRemoteObject(
+      (result.result?.result as Record<string, unknown> | undefined) ?? {}
+    )
+  }
+
   async stop(): Promise<void> {
     try {
       await this.send('Debugger.disable')
@@ -151,6 +193,7 @@ export class DebugSession extends EventEmitter {
     }
     this.child = null
     this.started = false
+    this.lastCallFrameId = null
   }
 
   private async cleanupSocket(): Promise<void> {
@@ -210,23 +253,10 @@ export class DebugSession extends EventEmitter {
             return
           }
           if (msg.method === 'Debugger.paused') {
-            const params = msg.params ?? {}
-            const frames = Array.isArray(params.callFrames) ? params.callFrames : []
-            const callFrames: DebugCallFrame[] = frames.map((frame: Record<string, unknown>) => {
-              const loc = (frame.location ?? {}) as Record<string, unknown>
-              return {
-                functionName: String(frame.functionName || '(anonymous)'),
-                url: String(frame.url || ''),
-                lineNumber: Number(loc.lineNumber ?? 0) + 1,
-                columnNumber: Number(loc.columnNumber ?? 0) + 1
-              }
-            })
-            this.emit('paused', {
-              reason: String(params.reason ?? 'pause'),
-              callFrames
-            })
+            void this.handlePaused(msg.params ?? {})
           }
           if (msg.method === 'Debugger.resumed') {
+            this.lastCallFrameId = null
             this.emit('resumed', {})
           }
         } catch {
@@ -234,6 +264,66 @@ export class DebugSession extends EventEmitter {
         }
       })
     })
+  }
+
+  private async handlePaused(params: Record<string, unknown>): Promise<void> {
+    const frames = Array.isArray(params.callFrames) ? params.callFrames : []
+    const callFrames: DebugCallFrame[] = frames.map((frame: Record<string, unknown>) => {
+      const loc = (frame.location ?? {}) as Record<string, unknown>
+      return {
+        functionName: String(frame.functionName || '(anonymous)'),
+        url: String(frame.url || ''),
+        lineNumber: Number(loc.lineNumber ?? 0) + 1,
+        columnNumber: Number(loc.columnNumber ?? 0) + 1,
+        callFrameId: typeof frame.callFrameId === 'string' ? frame.callFrameId : undefined
+      }
+    })
+    this.lastCallFrameId = callFrames[0]?.callFrameId ?? null
+
+    let variables: DebugVariable[] = []
+    try {
+      variables = await this.collectLocalVariables(frames[0] as Record<string, unknown> | undefined)
+    } catch {
+      variables = []
+    }
+
+    this.emit('paused', {
+      reason: String(params.reason ?? 'pause'),
+      callFrames,
+      variables
+    })
+  }
+
+  private async collectLocalVariables(
+    frame: Record<string, unknown> | undefined
+  ): Promise<DebugVariable[]> {
+    if (!frame) return []
+    const scopes = Array.isArray(frame.scopeChain) ? frame.scopeChain : []
+    const local = scopes.find((scope: Record<string, unknown>) => scope.type === 'local')
+      ?? scopes.find((scope: Record<string, unknown>) => scope.type === 'closure')
+      ?? scopes[0]
+    if (!local || typeof local !== 'object') return []
+    const objectId = (local as { object?: { objectId?: string } }).object?.objectId
+    if (!objectId) return []
+    const result = await this.send('Runtime.getProperties', {
+      objectId,
+      ownProperties: true,
+      accessorPropertiesOnly: false,
+      generatePreview: true
+    })
+    const props = Array.isArray(result.result?.result) ? result.result?.result : []
+    const out: DebugVariable[] = []
+    for (const prop of props as Array<Record<string, unknown>>) {
+      if (prop.name === 'this' || prop.name === 'arguments') continue
+      const value = (prop.value ?? {}) as Record<string, unknown>
+      out.push({
+        name: String(prop.name ?? '?'),
+        value: formatRemoteObject(value),
+        type: typeof value.type === 'string' ? value.type : undefined
+      })
+      if (out.length >= 40) break
+    }
+    return out
   }
 
   private send(method: string, params?: Record<string, unknown>): Promise<CdpMessage> {
@@ -253,6 +343,20 @@ export class DebugSession extends EventEmitter {
       }, 8000)
     })
   }
+}
+
+function formatRemoteObject(value: Record<string, unknown>): string {
+  if (value.unserializableValue) return String(value.unserializableValue)
+  if ('value' in value) {
+    try {
+      return JSON.stringify(value.value)
+    } catch {
+      return String(value.value)
+    }
+  }
+  if (value.description) return String(value.description)
+  if (value.type) return String(value.type)
+  return 'undefined'
 }
 
 let active: DebugSession | null = null

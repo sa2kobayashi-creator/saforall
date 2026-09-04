@@ -6,7 +6,7 @@ export type ApplyDiffProposal = {
   targetPath: string
   original: string
   modified: string
-  mode: 'create' | 'replace' | 'append'
+  mode: 'create' | 'replace' | 'append' | 'patch'
   language?: string
 }
 
@@ -25,6 +25,7 @@ type Props = {
 function modeLabel(mode: ApplyDiffProposal['mode']): string {
   if (mode === 'create') return '新規作成'
   if (mode === 'append') return '追記'
+  if (mode === 'patch') return '部分置換'
   return '置換'
 }
 
@@ -42,11 +43,19 @@ export function ApplyDiffDialog({
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onReject()
+      if (event.key === 'Escape') {
+        onReject()
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault()
+        if (event.shiftKey && onAcceptAll) onAcceptAll()
+        else onAccept()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onReject])
+  }, [open, onReject, onAccept, onAcceptAll])
 
   if (!open || !proposal) return null
 
@@ -114,6 +123,7 @@ export function ApplyDiffDialog({
             {acceptLabel}
           </button>
         </div>
+        <p className="apply-diff-hint">Ctrl/Cmd+Enter で適用 · Ctrl/Cmd+Shift+Enter ですべて適用 · Esc でスキップ</p>
       </div>
     </div>
   )

@@ -255,11 +255,25 @@ export function ChatPanel({
     const wantSelection = hasSpecialMention(tokens, 'selection')
     const wantProblems = hasSpecialMention(tokens, 'problems')
     const wantRules = hasSpecialMention(tokens, 'rules')
+    const wantCodebase = hasSpecialMention(tokens, 'codebase')
+
+    let indexSummary: string | null = null
+    if (wantCodebase && workspacePath && typeof window.saforall.ensureIndex === 'function') {
+      try {
+        const summary = await window.saforall.ensureIndex(workspacePath)
+        if (summary.ok) {
+          indexSummary = `codebase index: files=${summary.files ?? 0}, symbols=${summary.symbols ?? 0}`
+        }
+      } catch {
+        indexSummary = null
+      }
+    }
 
     const mentioned = new Set<string>()
     for (const token of tokens) {
       const lower = token.toLowerCase()
-      if (lower === 'selection' || lower === 'problems' || lower === 'rules') continue
+      if (lower === 'selection' || lower === 'problems' || lower === 'rules' || lower === 'codebase')
+        continue
       for (const open of openFiles) {
         const base = (open.path.split(/[/\\]/).pop() ?? open.path).toLowerCase()
         if (base === lower || open.path.toLowerCase().endsWith(lower)) {
@@ -361,8 +375,10 @@ export function ChatPanel({
       mention_flags: {
         selection: wantSelection,
         problems: wantProblems,
-        rules: wantRules
-      }
+        rules: wantRules,
+        codebase: wantCodebase
+      },
+      index_summary: indexSummary
     }
   }, [attachedPaths, file, input, openFiles, problems, selection, workspacePath])
 
@@ -382,6 +398,32 @@ export function ChatPanel({
         const name = (open.path.split(/[/\\]/).pop() ?? open.path).toLowerCase()
         if (!q || name.includes(q) || open.path.toLowerCase().includes(q)) {
           items.push(fileMentionSuggestion(open.path))
+        }
+      }
+
+      if (workspacePath && typeof window.saforall.searchSymbols === 'function' && q.length >= 1) {
+        try {
+          const symbols = await window.saforall.searchSymbols(workspacePath, active.query)
+          for (const sym of symbols.slice(0, 8)) {
+            items.push({
+              id: `symbol:${sym.path}:${sym.name}:${sym.line}`,
+              label: `@${sym.name}`,
+              insert: `@${sym.name}`,
+              detail: `${sym.kind} · ${sym.path}:${sym.line}`,
+              kind: 'file'
+            })
+            const abs =
+              sym.path.includes(':') || sym.path.startsWith('/') || sym.path.startsWith('\\')
+                ? sym.path
+                : `${workspacePath.replace(/[\\/]+$/, '')}${
+                    workspacePath.includes('\\') ? '\\' : '/'
+                  }${sym.path.replace(/^[\\/]+/, '')}`
+            if (!items.some((row) => row.id === `file:${abs}`)) {
+              items.push(fileMentionSuggestion(abs))
+            }
+          }
+        } catch {
+          // ignore
         }
       }
 

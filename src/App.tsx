@@ -21,6 +21,7 @@ import { QuickOpenDialog } from './components/QuickOpenDialog'
 import { ExtensionsPanel } from './components/ExtensionsPanel'
 import { buildNpmScriptCommand, buildRunFileCommand } from './lib/runCommands'
 import type { DebugBreakpointMap, DebugCallFrame } from './lib/debugTypes'
+import { loadWorkspaceKeybindings, matchKeybinding } from './lib/keybindings'
 import { loadExtensionGrants, saveExtensionGrants } from './lib/extensionPermissions'
 import type { ExtensionPermission, WorkspaceExtension } from './types/extensions'
 import { UsagePanel } from './components/UsagePanel'
@@ -113,6 +114,14 @@ export default function App() {
   const [debugPaused, setDebugPaused] = useState(false)
   const [debugPort, setDebugPort] = useState<number | null>(null)
   const [debugFrames, setDebugFrames] = useState<DebugCallFrame[]>([])
+  const [debugVariables, setDebugVariables] = useState<
+    Array<{ name: string; value: string; type?: string }>
+  >([])
+  const [debugWatches, setDebugWatches] = useState<
+    Array<{ expression: string; value?: string }>
+  >([])
+  const debugWatchesRef = useRef(debugWatches)
+  debugWatchesRef.current = debugWatches
   const [debugLogs, setDebugLogs] = useState<string[]>([])
   const [pausedLine, setPausedLine] = useState<{ path: string; line: number } | null>(null)
   const [inlineEditTrigger, setInlineEditTrigger] = useState(0)
@@ -219,6 +228,15 @@ export default function App() {
       setScmRefreshKey((key) => key + 1)
       pushRecentWorkspace(path)
       setStatus(`ワークスペース: ${path}`)
+      if (typeof window.saforall.ensureIndex === 'function') {
+        void window.saforall.ensureIndex(path).then((summary) => {
+          if (summary.ok) {
+            setStatus(
+              `ワークスペース: ${path} · index ${summary.files ?? 0} files / ${summary.symbols ?? 0} symbols`
+            )
+          }
+        })
+      }
 
       if (!backend.connected) return
 
@@ -712,17 +730,29 @@ export default function App() {
 
   const toggleBreakpoint = useCallback((path: string, line: number) => {
     setBreakpoints((current) => {
-      const lines = current[path] ?? []
-      const exists = lines.includes(line)
-      const nextLines = exists
-        ? lines.filter((row) => row !== line)
-        : [...lines, line].sort((a, b) => a - b)
-      if (nextLines.length === 0) {
+      const entries = current[path] ?? []
+      const exists = entries.some((row) => row.line === line)
+      const nextEntries = exists
+        ? entries.filter((row) => row.line !== line)
+        : [...entries, { line }].sort((a, b) => a.line - b.line)
+      if (nextEntries.length === 0) {
         const next = { ...current }
         delete next[path]
         return next
       }
-      return { ...current, [path]: nextLines }
+      return { ...current, [path]: nextEntries }
+    })
+  }, [])
+
+  const setBreakpointCondition = useCallback((path: string, line: number, condition: string) => {
+    setBreakpoints((current) => {
+      const entries = current[path] ?? []
+      const nextEntries = entries.map((row) =>
+        row.line === line
+          ? { ...row, condition: condition.trim() || undefined }
+          : row
+      )
+      return { ...current, [path]: nextEntries }
     })
   }, [])
 
@@ -762,14 +792,16 @@ export default function App() {
       return
     }
 
-    const bpList = Object.entries(breakpoints).flatMap(([path, lines]) =>
-      lines.map((line) => ({ path, line }))
+    const bpList = Object.entries(breakpoints).flatMap(([path, entries]) =>
+      entries.map((row) => ({ path, line: row.line, condition: row.condition }))
     )
 
     setTerminalOpen(true)
     setBottomTab('debug')
     setDebugLogs([])
     setDebugFrames([])
+    setDebugVariables([])
+    setDebugWatches((current) => current.map((row) => ({ ...row, value: undefined })))
     setDebugPaused(false)
     setPausedLine(null)
     setDebugRunning(true)
@@ -813,6 +845,7 @@ export default function App() {
     setDebugPaused(false)
     setDebugPort(null)
     setDebugFrames([])
+    setDebugVariables([])
     setPausedLine(null)
   }, [])
 
@@ -826,6 +859,27 @@ export default function App() {
       if (event.type === 'paused') {
         setDebugPaused(true)
         setDebugFrames(event.callFrames)
+        setDebugVariables(event.variables ?? [])
+        void (async () => {
+          const watches = debugWatchesRef.current
+          if (watches.length === 0) return
+          const next = []
+          for (const watch of watches) {
+            try {
+              const result = await window.saforall.evaluateDebug(watch.expression)
+              next.push({
+                expression: watch.expression,
+                value: result.ok ? result.value : result.error
+              })
+            } catch (error) {
+              next.push({
+                expression: watch.expression,
+                value: error instanceof Error ? error.message : String(error)
+              })
+            }
+          }
+          setDebugWatches(next)
+        })()
         const top = event.callFrames[0]
         if (top) {
           const path = fileUrlToPath(top.url)
@@ -962,6 +1016,37 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    let bindings: Awaited<ReturnType<typeof loadWorkspaceKeybindings>> = []
+    void loadWorkspaceKeybindings(workspacePath).then((rows) => {
+      if (!cancelled) bindings = rows
+    })
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (bindings.length === 0) return
+      const hit = matchKeybinding(event, bindings)
+      if (!hit) return
+      event.preventDefault()
+      if (hit.command === 'view:chat') setChatOpen((open) => !open)
+      if (hit.command === 'view:debug') {
+        setBottomTab('debug')
+        setTerminalOpen(true)
+      }
+      if (hit.command === 'view:terminal') setTerminalOpen((open) => !open)
+      if (hit.command === 'view:problems') {
+        setBottomTab('problems')
+        setTerminalOpen(true)
+      }
+      if (hit.command === 'edit:inline') setInlineEditTrigger((n) => n + 1)
+      if (hit.command === 'run:file-inspect') void startDebug()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      cancelled = true
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [workspacePath, startDebug])
 
   useEffect(() => {
     if (typeof window.saforall.onMenuCommand !== 'function') return
@@ -1216,6 +1301,7 @@ export default function App() {
                   <ComposerPanel
                     proposals={applyQueue}
                     activeIndex={Math.min(reviewIndex, Math.max(0, applyQueue.length - 1))}
+                    dirtyPaths={tabs.filter((tab) => tab.dirty).map((tab) => tab.path)}
                     onSelect={(index) => setReviewIndex(index)}
                     onAcceptOne={(index) => {
                       void acceptProposalAt(index)
@@ -1253,9 +1339,12 @@ export default function App() {
                     paused: debugPaused,
                     port: debugPort,
                     frames: debugFrames,
+                    variables: debugVariables,
+                    watches: debugWatches,
+                    breakpoints,
                     logs: debugLogs,
                     breakpointCount: Object.values(breakpoints).reduce(
-                      (sum, lines) => sum + lines.length,
+                      (sum, entries) => sum + entries.length,
                       0
                     ),
                     onContinue: () => {
@@ -1273,7 +1362,20 @@ export default function App() {
                     onOpenFrame: (frame) => {
                       const path = fileUrlToPath(frame.url)
                       if (path) void openFileAt(path, frame.lineNumber)
-                    }
+                    },
+                    onAddWatch: (expression) => {
+                      setDebugWatches((current) =>
+                        current.some((row) => row.expression === expression)
+                          ? current
+                          : [...current, { expression }]
+                      )
+                    },
+                    onRemoveWatch: (expression) => {
+                      setDebugWatches((current) =>
+                        current.filter((row) => row.expression !== expression)
+                      )
+                    },
+                    onSetBreakpointCondition: setBreakpointCondition
                   }}
                   onChangeTab={setBottomTab}
                   onCommandSent={() => setPendingCommand(null)}

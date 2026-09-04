@@ -6,6 +6,7 @@ import './ComposerPanel.css'
 type Props = {
   proposals: ApplyDiffProposal[]
   activeIndex: number
+  dirtyPaths?: string[]
   onSelect: (index: number) => void
   onAcceptOne: (index: number) => void
   onRejectOne: (index: number) => void
@@ -17,12 +18,14 @@ type Props = {
 function modeLabel(mode: ApplyDiffProposal['mode']): string {
   if (mode === 'create') return '新規'
   if (mode === 'append') return '追記'
+  if (mode === 'patch') return '部分'
   return '置換'
 }
 
 export function ComposerPanel({
   proposals,
   activeIndex,
+  dirtyPaths = [],
   onSelect,
   onAcceptOne,
   onRejectOne,
@@ -81,18 +84,30 @@ export function ComposerPanel({
         {proposals.map((row, index) => {
           const name = row.targetPath.split(/[/\\]/).pop() ?? row.targetPath
           const diff = stats[index]
+          const conflict = dirtyPaths.some(
+            (path) => path.toLowerCase() === row.targetPath.toLowerCase()
+          )
           return (
             <li key={`${row.targetPath}-${index}`}>
               <button
                 type="button"
-                className={`composer-item${index === activeIndex ? ' is-active' : ''}`}
+                className={`composer-item${index === activeIndex ? ' is-active' : ''}${
+                  conflict ? ' is-conflict' : ''
+                }`}
                 onClick={() => onSelect(index)}
-                title={row.targetPath}
+                title={
+                  conflict
+                    ? `${row.targetPath}（エディタで未保存の変更あり）`
+                    : row.targetPath
+                }
               >
                 <span className={`composer-mode composer-mode--${row.mode}`}>
                   {modeLabel(row.mode)}
                 </span>
-                <span className="composer-name">{name}</span>
+                <span className="composer-name">
+                  {conflict ? '! ' : ''}
+                  {name}
+                </span>
                 {diff && (
                   <span className="composer-stats">
                     <em className="plus">+{diff.added}</em>

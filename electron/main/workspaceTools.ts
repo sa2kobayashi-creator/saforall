@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'path'
+import { searchIndexedContent } from './workspaceIndex'
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -46,6 +47,13 @@ export async function toolSearch(workspaceRoot: string, query: string, globHint?
   const needle = query.trim()
   if (needle.length < 2) {
     return 'query は 2 文字以上にしてください'
+  }
+
+  try {
+    const indexed = await searchIndexedContent(workspaceRoot, needle, globHint, 40)
+    if (indexed.length > 0) return indexed.join('\n')
+  } catch {
+    // fall through to walk
   }
 
   const root = resolve(workspaceRoot)

@@ -119,6 +119,16 @@
   border-color: #4a7fd4;
 }
 
+.composer-mode--patch {
+  color: #e6c35c;
+  border-color: #8a6a2a;
+}
+
+.composer-item.is-conflict {
+  border-color: #8a6a2a;
+  background: #2a2418;
+}
+
 .composer-name {
   overflow: hidden;
   text-overflow: ellipsis;

@@ -32,6 +32,12 @@ import {
   type DebugSession
 } from './debugSession'
 import { buildDebugLaunch, DEBUG_INSPECT_PORT } from './lib/runCommands'
+import {
+  ensureWorkspaceIndex,
+  invalidateWorkspaceIndex,
+  searchIndexedSymbols
+} from './workspaceIndex'
+import { listWorkspaceMcpTools } from './mcpClient'
 
 let workspaceWatcher: FSWatcher | null = null
 let watchDebounce: ReturnType<typeof setTimeout> | null = null
@@ -126,6 +132,28 @@ ipcMain.handle('fs:searchFiles', async (_event, cwd: string, query: string) => {
   return searchFilesByName(cwd, query, 50)
 })
 
+ipcMain.handle('fs:searchSymbols', async (_event, cwd: string, query: string) => {
+  return searchIndexedSymbols(cwd, query, 40)
+})
+
+ipcMain.handle('fs:ensureIndex', async (_event, cwd: string) => {
+  try {
+    const index = await ensureWorkspaceIndex(cwd)
+    return {
+      ok: true as const,
+      files: index.files.length,
+      symbols: index.symbols.length
+    }
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+})
+
+ipcMain.handle('mcp:list', async (_event, cwd: string) => listWorkspaceMcpTools(cwd))
+
 ipcMain.handle('fs:loadProjectRules', async (_event, cwd: string) => {
   return loadProjectRules(cwd)
 })
@@ -144,6 +172,7 @@ ipcMain.handle('fs:watchWorkspace', async (event, cwd: string) => {
       if (!filename) return
       if (watchDebounce) clearTimeout(watchDebounce)
       watchDebounce = setTimeout(() => {
+        invalidateWorkspaceIndex(cwd)
         event.sender.send('fs:workspaceChanged', {
           path: join(cwd, filename.toString())
         })
@@ -321,3 +350,20 @@ ipcMain.handle('debug:stop', async () => {
   broadcastDebug('debug:event', { type: 'exited', code: null })
   return { ok: true as const }
 })
+
+ipcMain.handle(
+  'debug:evaluate',
+  async (_event, expression: string, callFrameId?: string) => {
+    const session = getActiveDebugSession()
+    if (!session) return { ok: false as const, error: 'no debug session' }
+    try {
+      const value = await session.evaluate(expression, callFrameId)
+      return { ok: true as const, value }
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
+)

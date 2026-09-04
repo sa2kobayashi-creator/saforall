@@ -1,11 +1,17 @@
+import { useState } from 'react'
 import './DebugPanel.css'
-import type { DebugCallFrame } from '../lib/debugTypes'
+import type { DebugCallFrame, DebugVariable, DebugBreakpointMap } from '../lib/debugTypes'
+
+type WatchRow = { expression: string; value?: string }
 
 type Props = {
   running: boolean
   paused: boolean
   port: number | null
   frames: DebugCallFrame[]
+  variables: DebugVariable[]
+  watches: WatchRow[]
+  breakpoints: DebugBreakpointMap
   logs: string[]
   breakpointCount: number
   onContinue: () => void
@@ -13,6 +19,9 @@ type Props = {
   onStop: () => void
   onStart: () => void
   onOpenFrame: (frame: DebugCallFrame) => void
+  onAddWatch: (expression: string) => void
+  onRemoveWatch: (expression: string) => void
+  onSetBreakpointCondition: (path: string, line: number, condition: string) => void
 }
 
 export function DebugPanel({
@@ -20,14 +29,26 @@ export function DebugPanel({
   paused,
   port,
   frames,
+  variables,
+  watches,
+  breakpoints,
   logs,
   breakpointCount,
   onContinue,
   onStepOver,
   onStop,
   onStart,
-  onOpenFrame
+  onOpenFrame,
+  onAddWatch,
+  onRemoveWatch,
+  onSetBreakpointCondition
 }: Props) {
+  const [watchInput, setWatchInput] = useState('')
+
+  const bpRows = Object.entries(breakpoints).flatMap(([path, entries]) =>
+    entries.map((row) => ({ path, ...row }))
+  )
+
   return (
     <div className="debug-panel" aria-label="デバッガ">
       <div className="debug-toolbar">
@@ -49,7 +70,7 @@ export function DebugPanel({
           {paused ? ' · PAUSED' : running ? ' · RUNNING' : ' · IDLE'}
         </span>
       </div>
-      <div className="debug-body">
+      <div className="debug-body debug-body-rich">
         <div className="debug-stack">
           <strong>Call Stack</strong>
           {frames.length === 0 ? (
@@ -69,13 +90,79 @@ export function DebugPanel({
             </ul>
           )}
         </div>
+        <div className="debug-vars">
+          <strong>Variables</strong>
+          {variables.length === 0 ? (
+            <p className="debug-empty">停止時にローカル変数を表示</p>
+          ) : (
+            <ul>
+              {variables.map((row) => (
+                <li key={row.name}>
+                  <code>{row.name}</code>
+                  <span>{row.value}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <strong className="debug-subhead">Watch</strong>
+          <form
+            className="debug-watch-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const expr = watchInput.trim()
+              if (!expr) return
+              onAddWatch(expr)
+              setWatchInput('')
+            }}
+          >
+            <input
+              value={watchInput}
+              onChange={(event) => setWatchInput(event.target.value)}
+              placeholder="expression"
+              disabled={!paused && !running}
+            />
+            <button type="submit">+</button>
+          </form>
+          <ul>
+            {watches.map((row) => (
+              <li key={row.expression}>
+                <button type="button" className="ghost" onClick={() => onRemoveWatch(row.expression)}>
+                  ×
+                </button>
+                <code>{row.expression}</code>
+                <span>{row.value ?? '—'}</span>
+              </li>
+            ))}
+          </ul>
+          <strong className="debug-subhead">Breakpoints</strong>
+          {bpRows.length === 0 ? (
+            <p className="debug-empty">余白クリックで BP 追加</p>
+          ) : (
+            <ul className="debug-bp-list">
+              {bpRows.map((row) => (
+                <li key={`${row.path}:${row.line}`}>
+                  <em>
+                    {row.path.split(/[/\\]/).pop()}:{row.line}
+                  </em>
+                  <input
+                    defaultValue={row.condition ?? ''}
+                    placeholder="condition (e.g. x > 0)"
+                    onBlur={(event) =>
+                      onSetBreakpointCondition(row.path, row.line, event.target.value)
+                    }
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <div className="debug-console">
           <strong>Debug Console</strong>
           <pre>{logs.length > 0 ? logs.join('') : 'デバッグ出力がここに表示されます'}</pre>
         </div>
       </div>
       <p className="debug-hint">
-        エディタ左余白をクリックしてブレークポイントを設定し、Debug 開始（Shift+F5）で停止できます。
+        条件 BP は一覧で設定。Watch は停止中に評価されます（js/ts · CDP）。
       </p>
     </div>
   )

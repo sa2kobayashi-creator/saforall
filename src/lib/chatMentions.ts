@@ -29,6 +29,13 @@ export const SPECIAL_MENTIONS: MentionSuggestion[] = [
     insert: '@rules',
     detail: 'プロジェクトルール',
     kind: 'special'
+  },
+  {
+    id: 'special:codebase',
+    label: '@codebase',
+    insert: '@codebase',
+    detail: 'ワークスペース索引サマリ',
+    kind: 'special'
   }
 ]
 

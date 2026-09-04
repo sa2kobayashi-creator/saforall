@@ -43,11 +43,16 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(180px, 34%) 1fr;
+  grid-template-columns: minmax(160px, 28%) minmax(200px, 34%) 1fr;
   gap: 8px;
 }
 
+.debug-body-rich {
+  grid-template-columns: minmax(150px, 26%) minmax(220px, 36%) 1fr;
+}
+
 .debug-stack,
+.debug-vars,
 .debug-console {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -55,6 +60,83 @@
   padding: 8px;
   min-height: 0;
   overflow: auto;
+}
+
+.debug-subhead {
+  display: block;
+  margin-top: 10px;
+}
+
+.debug-vars ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.debug-vars li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px;
+  align-items: start;
+  font-size: 11px;
+}
+
+.debug-vars li code {
+  color: #9cdcfe;
+  font-family: Consolas, monospace;
+}
+
+.debug-vars li span {
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.debug-watch-form {
+  display: flex;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.debug-watch-form input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elevated, #1e1e1e);
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.debug-watch-form button,
+.debug-vars button.ghost {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 2px 6px;
+}
+
+.debug-bp-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.debug-bp-list em {
+  font-style: normal;
+  color: var(--text);
+}
+
+.debug-bp-list input {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elevated, #1e1e1e);
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 11px;
 }
 
 .debug-stack strong,

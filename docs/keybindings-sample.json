@@ -1,0 +1,12 @@
+[
+  {
+    "key": "ctrl+shift+l",
+    "command": "view:chat",
+    "when": "workspace"
+  },
+  {
+    "key": "ctrl+shift+d",
+    "command": "view:debug",
+    "when": "workspace"
+  }
+]

@@ -68,8 +68,9 @@ const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: 'Ctrl + `', action: 'ターミナルの表示切替' },
   { keys: 'Ctrl + Shift + `', action: '新しいターミナル' },
   { keys: 'F1', action: 'キーボードショートカット一覧' },
-  { keys: '@ファイル名', action: 'チャットにファイルをコンテキスト追加（候補から選択可）' },
-  { keys: '@selection / @problems / @rules', action: '選択・Problems・ルールを明示的に添付' },
+  { keys: '@codebase / @symbol', action: '索引サマリ・シンボルをチャット文脈に追加' },
+  { keys: '.saforall/keybindings.json', action: 'ワークスペース独自キーバインド' },
+  { keys: '.saforall/mcp.json', action: 'MCP サーバー設定（tools/list）' },
   { keys: 'Enter', action: 'チャット送信（Shift+Enter で改行）' },
   { keys: 'Esc', action: '設定などのダイアログを閉じる' }
 ]

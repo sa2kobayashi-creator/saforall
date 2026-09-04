@@ -138,6 +138,34 @@ test('activeMentionQuery detects @token at cursor', () => {
   assert.equal(activeMentionQuery('hello', 5), null)
 })
 
+test('findReplaceableBlock patches unique function span', () => {
+  const existing = 'const a = 1\nfunction foo() {\n  return 1\n}\nconst b = 2\n'
+  const code = 'function foo() {\n  return 2\n}'
+  const block = findReplaceableBlock(existing, code)
+  assert.ok(block)
+  assert.equal(existing.slice(block.start, block.end), 'function foo() {\n  return 1\n}')
+})
+
 test('buildRunFileCommand supports node inspect', () => {
   assert.match(buildRunFileCommand('D:/app/index.js', true), /node --inspect-brk=9229/)
 })
+
+function findReplaceableBlock(existing, code) {
+  const snippet = code.replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '')
+  if (!snippet || snippet.length < 12) return null
+  const source = existing.replace(/\r\n/g, '\n')
+  if (source.includes(snippet)) return null
+  const lines = snippet.split('\n').filter((line) => line.trim() !== '')
+  if (lines.length < 2) return null
+  const first = lines[0]
+  const last = lines[lines.length - 1]
+  const start = source.indexOf(first)
+  if (start < 0) return null
+  if (source.indexOf(first, start + first.length) >= 0) return null
+  const endIdx = source.indexOf(last, start + first.length)
+  if (endIdx < 0) return null
+  const end = endIdx + last.length
+  const replacedLen = end - start
+  if (replacedLen < snippet.length * 0.4 || replacedLen > snippet.length * 4) return null
+  return { start, end }
+}

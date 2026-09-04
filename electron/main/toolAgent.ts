@@ -260,7 +260,8 @@ async function runTool(
   callId: string,
   phase: AgentPhase,
   editedPaths: Set<string>,
-  verifiedPaths: Set<string>
+  verifiedPaths: Set<string>,
+  readCache: Map<string, string>
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
   const repaired = repairToolArguments(argsJson)
   let args: Record<string, unknown> = {}
@@ -331,7 +332,12 @@ async function runTool(
 
     if (name === 'read_file') {
       const path = String(args.path ?? '')
-      const content = await toolReadFile(workspacePath, path)
+      const cacheKey = path.replace(/\\/g, '/').toLowerCase()
+      let content = readCache.get(cacheKey)
+      if (content === undefined) {
+        content = await toolReadFile(workspacePath, path)
+        readCache.set(cacheKey, content)
+      }
       if (Array.from(editedPaths).some((row) => pathKeyMatch(row, path))) {
         verifiedPaths.add(path)
       }
@@ -398,9 +404,12 @@ async function runTool(
       }
 
       editedPaths.add(path)
-      // Re-edit invalidates prior verification for this path
+      // Re-edit invalidates prior verification and read cache for this path
       for (const row of Array.from(verifiedPaths)) {
         if (pathKeyMatch(row, path)) verifiedPaths.delete(row)
+      }
+      for (const key of Array.from(readCache.keys())) {
+        if (pathKeyMatch(key, path)) readCache.delete(key)
       }
       onEvent({ type: 'edit_proposal', path, content })
       onEvent({
@@ -506,6 +515,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   const progressNotes: string[] = []
   const editedPaths = new Set<string>()
   const verifiedPaths = new Set<string>()
+  const readCache = new Map<string, string>()
   let exploreReads = 0
   let verifyNudgeCount = 0
   let finalizeBlockCount = 0
@@ -560,6 +570,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
       const canParallel = (name: string) =>
         name === 'read_file' || name === 'list_dir' || name === 'search_code'
+      // allow larger parallel explore batches for speed
+      const maxParallel = phase === 'explore' ? 6 : 4
 
       type OrderedRow = {
         call: ToolCall
@@ -585,7 +597,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           if (recentSignatures.length > 24) recentSignatures.shift()
           batch.push(toolCalls[i])
           i += 1
-          if (batch.length >= 4) break
+          if (batch.length >= maxParallel) break
         }
 
         if (batch.length > 0) {
@@ -599,7 +611,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
                 call.id,
                 phase,
                 editedPaths,
-                verifiedPaths
+                verifiedPaths,
+                readCache
               )
               return { call, result, skippedDup: false as const }
             })
@@ -628,7 +641,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           call.id,
           phase,
           editedPaths,
-          verifiedPaths
+          verifiedPaths,
+          readCache
         )
         orderedResults.push({ call, result, skippedDup: false })
       }

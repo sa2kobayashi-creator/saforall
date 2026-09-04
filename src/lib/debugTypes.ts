@@ -3,6 +3,19 @@ export type DebugCallFrame = {
   url: string
   lineNumber: number
   columnNumber: number
+  callFrameId?: string
 }
 
-export type DebugBreakpointMap = Record<string, number[]>
+export type DebugVariable = {
+  name: string
+  value: string
+  type?: string
+}
+
+export type DebugBreakpointEntry = {
+  line: number
+  condition?: string
+}
+
+/** path -> breakpoint entries */
+export type DebugBreakpointMap = Record<string, DebugBreakpointEntry[]>

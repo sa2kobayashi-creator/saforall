@@ -18,6 +18,9 @@ type Props = {
     paused: boolean
     port: number | null
     frames: DebugCallFrame[]
+    variables: import('../lib/debugTypes').DebugVariable[]
+    watches: Array<{ expression: string; value?: string }>
+    breakpoints: import('../lib/debugTypes').DebugBreakpointMap
     logs: string[]
     breakpointCount: number
     onContinue: () => void
@@ -25,6 +28,9 @@ type Props = {
     onStop: () => void
     onStart: () => void
     onOpenFrame: (frame: DebugCallFrame) => void
+    onAddWatch: (expression: string) => void
+    onRemoveWatch: (expression: string) => void
+    onSetBreakpointCondition: (path: string, line: number, condition: string) => void
   }
   onChangeTab: (tab: BottomPanelTab) => void
   onCommandSent: () => void

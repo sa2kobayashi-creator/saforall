@@ -135,7 +135,7 @@ const api = {
   startDebug: (params: {
     filePath: string
     cwd: string
-    breakpoints: Array<{ path: string; line: number }>
+    breakpoints: Array<{ path: string; line: number; condition?: string }>
     port?: number
   }): Promise<{ ok: boolean; error?: string; port?: number; display?: string }> =>
     ipcRenderer.invoke('debug:start', params),
@@ -144,6 +144,26 @@ const api = {
   stepOverDebug: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('debug:stepOver'),
   stopDebug: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('debug:stop'),
+  evaluateDebug: (
+    expression: string,
+    callFrameId?: string
+  ): Promise<{ ok: boolean; value?: string; error?: string }> =>
+    ipcRenderer.invoke('debug:evaluate', expression, callFrameId),
+  searchSymbols: (
+    cwd: string,
+    query: string
+  ): Promise<Array<{ name: string; kind: string; path: string; line: number }>> =>
+    ipcRenderer.invoke('fs:searchSymbols', cwd, query),
+  ensureIndex: (
+    cwd: string
+  ): Promise<{ ok: boolean; files?: number; symbols?: number; error?: string }> =>
+    ipcRenderer.invoke('fs:ensureIndex', cwd),
+  listMcp: (
+    cwd: string
+  ): Promise<{
+    servers: Array<{ id: string; command: string; args?: string[] }>
+    tools: Array<{ name: string; description?: string; serverId: string }>
+  }> => ipcRenderer.invoke('mcp:list', cwd),
   onDebugEvent: (
     callback: (
       event:
@@ -156,7 +176,9 @@ const api = {
               url: string
               lineNumber: number
               columnNumber: number
+              callFrameId?: string
             }>
+            variables?: Array<{ name: string; value: string; type?: string }>
           }
         | { type: 'resumed' }
         | { type: 'stdout'; text: string }
@@ -177,7 +199,9 @@ const api = {
               url: string
               lineNumber: number
               columnNumber: number
+              callFrameId?: string
             }>
+            variables?: Array<{ name: string; value: string; type?: string }>
           }
         | { type: 'resumed' }
         | { type: 'stdout'; text: string }

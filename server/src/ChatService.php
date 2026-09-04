@@ -253,9 +253,19 @@ final class ChatService
                 if (!empty($mentionFlags['rules'])) {
                     $hints[] = 'ユーザーは @rules を明示しました。プロジェクトルールに従ってください。';
                 }
+                if (!empty($mentionFlags['codebase'])) {
+                    $hints[] = 'ユーザーは @codebase を明示しました。ワークスペース全体の文脈を意識してください。';
+                }
                 if (count($hints) > 0) {
                     $systemParts[] = implode("\n", $hints);
                 }
+            }
+
+            $indexSummary = isset($context['index_summary']) && is_string($context['index_summary'])
+                ? $context['index_summary']
+                : null;
+            if (is_string($indexSummary) && $indexSummary !== '') {
+                $systemParts[] = "コードベース索引:\n{$indexSummary}";
             }
         }
 
