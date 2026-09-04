@@ -19,6 +19,24 @@ export type AiEngine = 'auto' | 'cursor' | 'openai' | 'gemini' | 'workers'
 export type ApplyCodeOptions = {
   /** true のとき確認ダイアログやパス入力を出さず自動適用 */
   auto?: boolean
+  /**
+   * true のとき書き込まず差分レビューキューへ入れる（Agent の複数ファイル向け）。
+   * auto と併用する。
+   */
+  review?: boolean
+}
+
+export type EditorSelection = {
+  path: string
+  text: string
+  startLine: number
+  endLine: number
+}
+
+export type ChatContextFile = {
+  path: string
+  content: string
+  language?: string
 }
 
 export type BackendStatus = {

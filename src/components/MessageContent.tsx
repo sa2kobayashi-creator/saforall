@@ -33,16 +33,17 @@ export function MessageContent({
 
         const shell = isShellLanguage(part.language)
         const actionLabel = shell ? '実行' : '適用'
-        const actionTitle =
-          mode === 'ask'
-            ? shell
-              ? '確認してからターミナルで実行'
-              : '確認してからファイルに適用'
-            : shell
-              ? 'ターミナルでコマンドを実行'
-              : part.pathHint
-                ? `${part.pathHint} に保存して適用`
-                : 'ファイルに保存して適用'
+        const actionTitle = shell
+          ? mode === 'agent'
+            ? '安全なコマンドのみ自動実行'
+            : '確認してからターミナルで実行'
+          : mode === 'agent'
+            ? part.pathHint
+              ? `${part.pathHint} を差分レビューへ`
+              : '差分レビューへ追加'
+            : part.pathHint
+              ? `${part.pathHint} の差分を確認して適用`
+              : '差分を確認してファイルに適用'
 
         return (
           <div key={`code-${index}`} className="code-block">
@@ -51,7 +52,7 @@ export function MessageContent({
                 {part.language}
                 {part.pathHint ? ` · ${part.pathHint}` : ''}
                 {shell ? ' · コマンド' : ''}
-                {autoApplied ? ' · 自動適用済み' : ''}
+                {autoApplied ? ' · レビュー候補追加済み' : ''}
               </span>
               {showApply && (
                 <button

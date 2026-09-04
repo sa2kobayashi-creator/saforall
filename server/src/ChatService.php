@@ -148,6 +148,63 @@ final class ChatService
                     . ($language ? " (language: {$language})" : '');
                 $systemParts[] = "```\n{$fileContent}\n```";
             }
+
+            $selection = $context['selection'] ?? null;
+            if (is_array($selection)) {
+                $selPath = isset($selection['path']) && is_string($selection['path'])
+                    ? $selection['path']
+                    : ($filePath ?? 'unknown');
+                $selText = isset($selection['text']) && is_string($selection['text'])
+                    ? $selection['text']
+                    : '';
+                $startLine = isset($selection['start_line']) ? (int) $selection['start_line'] : 0;
+                $endLine = isset($selection['end_line']) ? (int) $selection['end_line'] : $startLine;
+                if ($selText !== '') {
+                    $maxSel = 8000;
+                    if (mb_strlen($selText) > $maxSel) {
+                        $selText = mb_substr($selText, 0, $maxSel) . "\n\n... (truncated)";
+                    }
+                    $range = $startLine > 0
+                        ? ($endLine > $startLine ? "L{$startLine}-L{$endLine}" : "L{$startLine}")
+                        : '';
+                    $systemParts[] = "ユーザーがエディタで選択している範囲 ({$selPath}"
+                        . ($range !== '' ? " {$range}" : '')
+                        . ')。質問はこの選択を優先して解釈してください。';
+                    $systemParts[] = "```\n{$selText}\n```";
+                }
+            }
+
+            $extraFiles = $context['files'] ?? null;
+            if (is_array($extraFiles)) {
+                $budget = 20000;
+                $used = 0;
+                $index = 0;
+                foreach ($extraFiles as $extra) {
+                    if (!is_array($extra) || $used >= $budget) {
+                        break;
+                    }
+                    $extraPath = isset($extra['path']) && is_string($extra['path']) ? $extra['path'] : null;
+                    $extraContent = isset($extra['content']) && is_string($extra['content']) ? $extra['content'] : null;
+                    if ($extraPath === null || $extraContent === null || $extraContent === '') {
+                        continue;
+                    }
+                    if ($filePath !== null && $extraPath === $filePath) {
+                        continue;
+                    }
+                    $remain = $budget - $used;
+                    if (mb_strlen($extraContent) > $remain) {
+                        $extraContent = mb_substr($extraContent, 0, max(500, $remain)) . "\n\n... (truncated)";
+                    }
+                    $used += mb_strlen($extraContent);
+                    $index += 1;
+                    $extraLang = isset($extra['language']) && is_string($extra['language'])
+                        ? $extra['language']
+                        : null;
+                    $systemParts[] = "追加コンテキスト #{$index}: {$extraPath}"
+                        . ($extraLang ? " (language: {$extraLang})" : '');
+                    $systemParts[] = "```\n{$extraContent}\n```";
+                }
+            }
         }
 
         $messages = [

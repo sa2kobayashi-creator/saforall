@@ -1,0 +1,126 @@
+.apply-diff-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 35;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.apply-diff-dialog {
+  width: min(1100px, 100%);
+  height: min(780px, calc(100% - 16px));
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.apply-diff-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.apply-diff-header h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.apply-diff-header p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.apply-diff-header strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.apply-diff-path {
+  word-break: break-all;
+}
+
+.apply-diff-mode {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.apply-diff-mode--create {
+  border-color: #3d8b57;
+  color: #7dcea0;
+}
+
+.apply-diff-mode--append {
+  border-color: #c9a227;
+  color: #e6c35c;
+}
+
+.apply-diff-mode--replace {
+  border-color: #4a7fd4;
+  color: #8eb6f0;
+}
+
+.apply-diff-queue {
+  color: var(--text-muted);
+}
+
+.apply-diff-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.apply-diff-editor {
+  flex: 1;
+  min-height: 0;
+  padding: 0 1px;
+}
+
+.apply-diff-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.apply-diff-actions button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 7px 12px;
+  font-size: 12px;
+}
+
+.apply-diff-actions .secondary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.apply-diff-actions .primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}

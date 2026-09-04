@@ -1,6 +1,6 @@
-import Editor from '@monaco-editor/react'
+import Editor, { type OnMount } from '@monaco-editor/react'
 import { useRef } from 'react'
-import type { OpenFile } from '../types'
+import type { EditorSelection, OpenFile } from '../types'
 import './EditorPane.css'
 
 type Props = {
@@ -12,6 +12,7 @@ type Props = {
   onResizeTab: (path: string, width: number) => void
   onChange: (content: string) => void
   onSave: () => void
+  onSelectionChange?: (selection: EditorSelection | null) => void
 }
 
 const DEFAULT_TAB_WIDTH = 160
@@ -26,12 +27,40 @@ export function EditorPane({
   onCloseTab,
   onResizeTab,
   onChange,
-  onSave
+  onSave,
+  onSelectionChange
 }: Props) {
   const file = tabs.find((tab) => tab.path === activePath) ?? null
   const dragRef = useRef<{ path: string; startX: number; startWidth: number } | null>(
     null
   )
+  const selectionHandlerRef = useRef(onSelectionChange)
+  selectionHandlerRef.current = onSelectionChange
+  const activePathRef = useRef(activePath)
+  activePathRef.current = activePath
+
+  const handleMount: OnMount = (editor) => {
+    const emitSelection = () => {
+      const handler = selectionHandlerRef.current
+      if (!handler) return
+      const model = editor.getModel()
+      const sel = editor.getSelection()
+      const path = activePathRef.current
+      if (!model || !sel || sel.isEmpty() || !path) {
+        handler(null)
+        return
+      }
+      handler({
+        path,
+        text: model.getValueInRange(sel),
+        startLine: sel.startLineNumber,
+        endLine: sel.endLineNumber
+      })
+    }
+
+    editor.onDidChangeCursorSelection(emitSelection)
+    emitSelection()
+  }
 
   if (tabs.length === 0 || !file) {
     return (
@@ -139,6 +168,7 @@ export function EditorPane({
           language={file.language}
           value={file.content}
           theme="vs-dark"
+          onMount={handleMount}
           onChange={(value) => onChange(value ?? '')}
           options={{
             fontSize: 14,

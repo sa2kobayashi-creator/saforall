@@ -14,6 +14,7 @@ import {
 } from './components/BottomPanel'
 import type { ProblemItem } from './components/ProblemsPanel'
 import { ApplyPathDialog } from './components/ApplyPathDialog'
+import { ApplyDiffDialog, type ApplyDiffProposal } from './components/ApplyDiffDialog'
 import { UsagePanel } from './components/UsagePanel'
 import { WelcomeScreen } from './components/WelcomeScreen'
 import {
@@ -29,9 +30,9 @@ import {
   isAbsolutePath,
   isSafeAutoShellCommand,
   isShellLanguage,
-  joinPath,
-  shouldAppendToFile
+  joinPath
 } from './lib/codeBlocks'
+import { planAppliedContent } from './lib/applyContent'
 import { languageFromPath } from './lib/language'
 import { prefetchAllModelCatalogs } from './lib/modelCatalogCache'
 import {
@@ -45,6 +46,7 @@ import { pushRecentWorkspace, loadLastWorkspace, saveLastWorkspace } from './lib
 import type {
   ApplyCodeOptions,
   BackendStatus,
+  EditorSelection,
   OpenFile,
   WorkspaceRecord
 } from './types'
@@ -85,7 +87,10 @@ export default function App() {
     code: string
     language?: string
     defaultPath: string
+    review?: boolean
   } | null>(null)
+  const [applyQueue, setApplyQueue] = useState<ApplyDiffProposal[]>([])
+  const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
@@ -412,20 +417,8 @@ export default function App() {
     [showNotice]
   )
 
-  const writeCodeToFile = useCallback(
-    async (targetPath: string, code: string) => {
-      let existing = ''
-      try {
-        existing = await window.saforall.readFile(targetPath)
-      } catch {
-        existing = ''
-      }
-
-      const append = shouldAppendToFile(existing, code)
-      const content = append
-        ? `${existing.replace(/\s*$/, '')}\n\n${code}\n`
-        : code
-
+  const persistFileContent = useCallback(
+    async (targetPath: string, content: string, noticeText: string) => {
       await window.saforall.writeFile(targetPath, content)
       const next: OpenFile = {
         path: targetPath,
@@ -441,13 +434,63 @@ export default function App() {
         return [...current, next]
       })
       setActivePath(targetPath)
-      showNotice(
-        append
-          ? `追記して保存しました: ${targetPath}`
-          : `ファイルに保存しました: ${targetPath}`
-      )
+      showNotice(noticeText)
     },
     [showNotice]
+  )
+
+  const buildProposal = useCallback(
+    async (targetPath: string, code: string): Promise<ApplyDiffProposal> => {
+      let existing = ''
+      try {
+        const open = tabs.find((tab) => tab.path === targetPath)
+        existing = open?.content ?? (await window.saforall.readFile(targetPath))
+      } catch {
+        existing = ''
+      }
+      const plan = planAppliedContent(existing, code)
+      return {
+        targetPath,
+        original: plan.original,
+        modified: plan.modified,
+        mode: plan.mode,
+        language: languageFromPath(targetPath)
+      }
+    },
+    [tabs]
+  )
+
+  const enqueueOrShowProposal = useCallback(
+    (proposal: ApplyDiffProposal, review: boolean) => {
+      if (review) {
+        setApplyQueue((current) => [...current, proposal])
+        showNotice(`変更候補を追加: ${proposal.targetPath}`)
+        return
+      }
+      setApplyQueue([proposal])
+    },
+    [showNotice]
+  )
+
+  const commitProposal = useCallback(
+    async (proposal: ApplyDiffProposal) => {
+      const label =
+        proposal.mode === 'append'
+          ? `追記して保存しました: ${proposal.targetPath}`
+          : proposal.mode === 'create'
+            ? `ファイルを作成しました: ${proposal.targetPath}`
+            : `ファイルに保存しました: ${proposal.targetPath}`
+      await persistFileContent(proposal.targetPath, proposal.modified, label)
+    },
+    [persistFileContent]
+  )
+
+  const writeCodeToFile = useCallback(
+    async (targetPath: string, code: string) => {
+      const proposal = await buildProposal(targetPath, code)
+      await commitProposal(proposal)
+    },
+    [buildProposal, commitProposal]
   )
 
   const resolveDefaultRelativePath = useCallback(
@@ -463,10 +506,24 @@ export default function App() {
       options?: ApplyCodeOptions
     ) => {
       const auto = options?.auto === true
+      const review = options?.review === true
 
       if (isShellLanguage(language)) {
         runCommand(code, options)
         return
+      }
+
+      const resolveAndApply = async (targetPath: string) => {
+        try {
+          if (auto && !review) {
+            await writeCodeToFile(targetPath, code)
+            return
+          }
+          const proposal = await buildProposal(targetPath, code)
+          enqueueOrShowProposal(proposal, review)
+        } catch (error) {
+          showNotice(`適用失敗: ${String(error)}`)
+        }
       }
 
       if (pathHint) {
@@ -477,20 +534,12 @@ export default function App() {
         const targetPath = isAbsolutePath(pathHint)
           ? pathHint
           : joinPath(workspacePath!, pathHint)
-        try {
-          await writeCodeToFile(targetPath, code)
-        } catch (error) {
-          showNotice(`適用失敗: ${String(error)}`)
-        }
+        await resolveAndApply(targetPath)
         return
       }
 
       if (activePath) {
-        try {
-          await writeCodeToFile(activePath, code)
-        } catch (error) {
-          showNotice(`適用失敗: ${String(error)}`)
-        }
+        await resolveAndApply(activePath)
         return
       }
 
@@ -501,8 +550,7 @@ export default function App() {
 
       const suggested = resolveDefaultRelativePath(language)
 
-      // Agent モードはダイアログを出さず既定パスへ自動保存
-      if (auto) {
+      if (auto && !review) {
         try {
           await writeCodeToFile(joinPath(workspacePath, suggested), code)
         } catch (error) {
@@ -514,7 +562,8 @@ export default function App() {
       setApplyDialog({
         code,
         language,
-        defaultPath: suggested
+        defaultPath: suggested,
+        review
       })
     },
     [
@@ -522,10 +571,47 @@ export default function App() {
       workspacePath,
       runCommand,
       writeCodeToFile,
+      buildProposal,
+      enqueueOrShowProposal,
       showNotice,
       resolveDefaultRelativePath
     ]
   )
+
+  const currentProposal = applyQueue[0] ?? null
+
+  const acceptCurrentProposal = useCallback(async () => {
+    const proposal = applyQueue[0]
+    if (!proposal) return
+    try {
+      await commitProposal(proposal)
+      setApplyQueue((current) => current.slice(1))
+    } catch (error) {
+      showNotice(`適用失敗: ${String(error)}`)
+    }
+  }, [applyQueue, commitProposal, showNotice])
+
+  const rejectCurrentProposal = useCallback(() => {
+    setApplyQueue((current) => current.slice(1))
+  }, [])
+
+  const acceptAllProposals = useCallback(async () => {
+    const queue = [...applyQueue]
+    setApplyQueue([])
+    for (const proposal of queue) {
+      try {
+        await commitProposal(proposal)
+      } catch (error) {
+        showNotice(`適用失敗: ${String(error)}`)
+        return
+      }
+    }
+  }, [applyQueue, commitProposal, showNotice])
+
+  const rejectAllProposals = useCallback(() => {
+    setApplyQueue([])
+    showNotice('変更候補をすべて却下しました')
+  }, [showNotice])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -706,6 +792,7 @@ export default function App() {
                 }}
                 onChange={updateContent}
                 onSave={saveFile}
+                onSelectionChange={setEditorSelection}
               />
             </div>
             {terminalOpen && (
@@ -750,6 +837,8 @@ export default function App() {
               />
               <ChatPanel
                 file={activeFile}
+                openFiles={tabs}
+                selection={editorSelection}
                 backendConnected={backend.connected}
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
@@ -837,12 +926,30 @@ export default function App() {
           const targetPath = isAbsolutePath(relativePath)
             ? relativePath
             : joinPath(workspacePath, relativePath)
-          const { code } = applyDialog
+          const { code, review } = applyDialog
           setApplyDialog(null)
-          void writeCodeToFile(targetPath, code).catch((error) => {
-            showNotice(`適用失敗: ${String(error)}`)
-          })
+          void (async () => {
+            try {
+              const proposal = await buildProposal(targetPath, code)
+              enqueueOrShowProposal(proposal, review === true)
+            } catch (error) {
+              showNotice(`適用失敗: ${String(error)}`)
+            }
+          })()
         }}
+      />
+      <ApplyDiffDialog
+        open={currentProposal !== null}
+        proposal={currentProposal}
+        queueCount={applyQueue.length}
+        queueIndex={0}
+        acceptLabel={applyQueue.length > 1 ? 'この変更を適用' : '適用する'}
+        onAccept={() => {
+          void acceptCurrentProposal()
+        }}
+        onReject={rejectCurrentProposal}
+        onAcceptAll={applyQueue.length > 1 ? () => void acceptAllProposals() : undefined}
+        onRejectAll={applyQueue.length > 1 ? rejectAllProposals : undefined}
       />
       <CloneDialog
         open={cloneOpen}

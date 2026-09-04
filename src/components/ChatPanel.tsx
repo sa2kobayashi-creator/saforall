@@ -10,12 +10,15 @@ import type {
   ChatMessageRecord,
   ChatMode,
   ChatSessionRecord,
+  EditorSelection,
   OpenFile
 } from '../types'
 import './ChatPanel.css'
 
 type Props = {
   file: OpenFile | null
+  openFiles: OpenFile[]
+  selection: EditorSelection | null
   backendConnected: boolean
   workspaceId: number | null
   workspacePath: string | null
@@ -98,6 +101,8 @@ function formatSessionTime(value: string): string {
 
 export function ChatPanel({
   file,
+  openFiles,
+  selection,
   backendConnected,
   workspaceId,
   workspacePath,
@@ -122,11 +127,12 @@ export function ChatPanel({
   const [routeLabel, setRouteLabel] = useState<string | null>(null)
   const [usageText, setUsageText] = useState<string | null>(null)
   const [autoAppliedIds, setAutoAppliedIds] = useState<Record<string, boolean>>({})
+  const [attachedPaths, setAttachedPaths] = useState<string[]>([])
   const [pendingAction, setPendingAction] = useState<{
     code: string
     pathHint?: string
     language?: string
-    kind: 'run' | 'apply'
+    kind: 'run'
   } | null>(null)
   const [sessions, setSessions] = useState<ChatSessionRecord[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -204,9 +210,73 @@ export function ChatPanel({
   }
 
   const contextLabel = useMemo(() => {
-    if (!file) return 'コンテキストなし'
-    return file.path.split(/[/\\]/).pop() ?? file.path
-  }, [file])
+    const bits: string[] = []
+    if (selection?.text) {
+      const name = selection.path.split(/[/\\]/).pop() ?? selection.path
+      bits.push(
+        `選択 ${name}:${selection.startLine}${selection.endLine !== selection.startLine ? `-${selection.endLine}` : ''}`
+      )
+    } else if (file) {
+      bits.push(file.path.split(/[/\\]/).pop() ?? file.path)
+    }
+    if (attachedPaths.length > 0) {
+      bits.push(`+${attachedPaths.length} ファイル`)
+    }
+    return bits.length > 0 ? bits.join(' · ') : 'コンテキストなし'
+  }, [file, selection, attachedPaths])
+
+  const toggleAttached = useCallback((path: string) => {
+    setAttachedPaths((current) =>
+      current.includes(path) ? current.filter((row) => row !== path) : [...current, path]
+    )
+  }, [])
+
+  const buildContextPayload = useCallback(() => {
+    const mentioned = new Set<string>()
+    const atMatches = input.match(/@([^\s@]+)/g) ?? []
+    for (const token of atMatches) {
+      const needle = token.slice(1).toLowerCase()
+      for (const open of openFiles) {
+        const base = (open.path.split(/[/\\]/).pop() ?? open.path).toLowerCase()
+        if (base === needle || open.path.toLowerCase().endsWith(needle)) {
+          mentioned.add(open.path)
+        }
+      }
+    }
+
+    const filePaths = new Set<string>([...attachedPaths, ...Array.from(mentioned)])
+    if (file?.path) filePaths.delete(file.path)
+
+    const files = openFiles
+      .filter((open) => filePaths.has(open.path))
+      .map((open) => ({
+        path: open.path,
+        content: open.content,
+        language: open.language
+      }))
+
+    const selectionPayload =
+      selection && selection.text.trim() !== ''
+        ? {
+            path: selection.path,
+            text: selection.text,
+            start_line: selection.startLine,
+            end_line: selection.endLine
+          }
+        : null
+
+    if (!file && files.length === 0 && !selectionPayload) {
+      return null
+    }
+
+    return {
+      path: file?.path ?? null,
+      content: file?.content ?? null,
+      language: file?.language ?? null,
+      selection: selectionPayload,
+      files
+    }
+  }, [attachedPaths, file, input, openFiles, selection])
 
   const changeMode = (next: ChatMode) => {
     setMode(next)
@@ -222,7 +292,7 @@ export function ChatPanel({
 
       setBusy({
         phase: 'applying',
-        detail: `自動適用を開始（0/${parts.length}）`
+        detail: `変更候補を準備（0/${parts.length}）`
       })
 
       let count = 0
@@ -231,32 +301,51 @@ export function ChatPanel({
         const label = isShellLanguage(part.language)
           ? `コマンド実行中（${count}/${parts.length}）`
           : part.pathHint
-            ? `適用中（${count}/${parts.length}）: ${part.pathHint}`
-            : `適用中（${count}/${parts.length}）`
+            ? `候補追加（${count}/${parts.length}）: ${part.pathHint}`
+            : `候補追加（${count}/${parts.length}）`
         setBusy({ phase: 'applying', detail: label })
-        await onApplyCode(part.code, part.pathHint, part.language, { auto: true })
-        await new Promise((resolve) => window.setTimeout(resolve, 350))
+        if (isShellLanguage(part.language)) {
+          await onApplyCode(part.code, part.pathHint, part.language, { auto: true })
+        } else {
+          await onApplyCode(part.code, part.pathHint, part.language, {
+            auto: true,
+            review: true
+          })
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 200))
       }
 
       setAutoAppliedIds((current) => ({ ...current, [messageId]: true }))
-      setBusy({ phase: 'applying', detail: `自動適用完了（${parts.length}件）` })
+      setBusy({
+        phase: 'applying',
+        detail: `変更候補をキューに追加（${parts.length}件）。差分を確認して適用してください。`
+      })
     },
     [onApplyCode]
   )
 
   const requestApply = useCallback(
     (code: string, pathHint?: string, language?: string) => {
-      if (modeRef.current === 'agent') {
-        void onApplyCode(code, pathHint, language, { auto: true })
+      if (isShellLanguage(language)) {
+        if (modeRef.current === 'agent') {
+          void onApplyCode(code, pathHint, language, { auto: true })
+          return
+        }
+        setPendingAction({
+          code,
+          pathHint,
+          language,
+          kind: 'run'
+        })
         return
       }
 
-      setPendingAction({
-        code,
-        pathHint,
-        language,
-        kind: isShellLanguage(language) ? 'run' : 'apply'
-      })
+      // コード適用は差分ダイアログで確認（Ask / 手動適用）
+      if (modeRef.current === 'agent') {
+        void onApplyCode(code, pathHint, language, { auto: true, review: true })
+        return
+      }
+      void onApplyCode(code, pathHint, language)
     },
     [onApplyCode]
   )
@@ -516,13 +605,7 @@ export function ChatPanel({
             ? undefined
             : modelChoice,
         workspace_path: workspacePath,
-        context: file
-          ? {
-              path: file.path,
-              content: file.content,
-              language: file.language
-            }
-          : null
+        context: buildContextPayload()
       }
 
       if (typeof window.saforall.chatStream !== 'function') {
@@ -802,7 +885,7 @@ export function ChatPanel({
                     ? 'Workers AI 固定: 簡単な作業向けモデルをリスト選択'
                     : 'OpenAI 固定: モデルはリスト選択 / 自動可'}
             {routeLabel ? ` · 今回: ${routeLabel}` : ''}
-            {mode === 'ask' ? ' · Ask（適用前に確認）' : ' · Agent（自動適用）'}
+            {mode === 'ask' ? ' · Ask（差分確認）' : ' · Agent（複数変更をレビュー）'}
           </div>
           {usageText && <div className="usage-bar">今月 {usageText}</div>}
 
@@ -847,6 +930,42 @@ export function ChatPanel({
             </div>
           )}
 
+          <div className="chat-context-bar">
+            {selection?.text ? (
+              <span className="chat-context-chip is-selection" title={selection.path}>
+                選択 L{selection.startLine}
+                {selection.endLine !== selection.startLine ? `-${selection.endLine}` : ''}
+              </span>
+            ) : null}
+            {openFiles.map((open) => {
+              const name = open.path.split(/[/\\]/).pop() ?? open.path
+              const active = open.path === file?.path
+              const attached = attachedPaths.includes(open.path)
+              return (
+                <button
+                  key={open.path}
+                  type="button"
+                  className={`chat-context-chip${active ? ' is-active' : ''}${attached ? ' is-attached' : ''}`}
+                  title={
+                    active
+                      ? 'アクティブファイル（常に送信）'
+                      : attached
+                        ? 'コンテキストから外す'
+                        : '@ で追加（クリック）'
+                  }
+                  disabled={active}
+                  onClick={() => toggleAttached(open.path)}
+                >
+                  {active ? '● ' : attached ? '@ ' : '+ '}
+                  {name}
+                </button>
+              )
+            })}
+            {openFiles.length === 0 && (
+              <span className="chat-context-hint">開いているファイルを @ で追加できます</span>
+            )}
+          </div>
+
           <form className="chat-input" onSubmit={(event) => void onSubmit(event)}>
             <textarea
               value={input}
@@ -857,8 +976,8 @@ export function ChatPanel({
                   : loading
                     ? '履歴読み込み中…'
                     : mode === 'agent'
-                      ? 'Agent に依頼する…'
-                      : 'コードについて質問する…'
+                      ? 'Agent に依頼する…（例: @App.tsx を直して）'
+                      : 'コードについて質問する…（選択範囲や @ファイル名 も使えます）'
               }
               rows={3}
               disabled={busy !== null || loading}
@@ -931,15 +1050,13 @@ export function ChatPanel({
 
       <ConfirmDialog
         open={pendingAction !== null}
-        title={pendingAction?.kind === 'run' ? 'コマンドを実行しますか？' : 'コードを適用しますか？'}
+        title="コマンドを実行しますか？"
         message={
           pendingAction
-            ? pendingAction.kind === 'run'
-              ? `次のコマンドをターミナルで実行します。\n\n${pendingAction.code}`
-              : `次のコードをファイルに適用します。\n${pendingAction.pathHint ? `パス: ${pendingAction.pathHint}\n` : ''}\n${pendingAction.code.slice(0, 400)}${pendingAction.code.length > 400 ? '…' : ''}`
+            ? `次のコマンドをターミナルで実行します。\n\n${pendingAction.code}`
             : ''
         }
-        confirmLabel={pendingAction?.kind === 'run' ? '実行する' : '適用する'}
+        confirmLabel="実行する"
         onCancel={() => setPendingAction(null)}
         onConfirm={() => {
           if (!pendingAction) return
