@@ -119,9 +119,79 @@ const api = {
       id: string
       name: string
       description?: string
-      commands: Array<{ id: string; title: string; run: string }>
+      permissions?: Array<
+        'terminal.run' | 'terminal.run.dangerous' | 'fs.read' | 'fs.write' | 'network'
+      >
+      commands: Array<{
+        id: string
+        title: string
+        run: string
+        permissions?: Array<
+          'terminal.run' | 'terminal.run.dangerous' | 'fs.read' | 'fs.write' | 'network'
+        >
+      }>
     }>
   > => ipcRenderer.invoke('fs:loadExtensions', cwd),
+  startDebug: (params: {
+    filePath: string
+    cwd: string
+    breakpoints: Array<{ path: string; line: number }>
+    port?: number
+  }): Promise<{ ok: boolean; error?: string; port?: number; display?: string }> =>
+    ipcRenderer.invoke('debug:start', params),
+  continueDebug: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('debug:continue'),
+  stepOverDebug: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('debug:stepOver'),
+  stopDebug: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('debug:stop'),
+  onDebugEvent: (
+    callback: (
+      event:
+        | { type: 'ready'; port: number }
+        | {
+            type: 'paused'
+            reason: string
+            callFrames: Array<{
+              functionName: string
+              url: string
+              lineNumber: number
+              columnNumber: number
+            }>
+          }
+        | { type: 'resumed' }
+        | { type: 'stdout'; text: string }
+        | { type: 'stderr'; text: string }
+        | { type: 'exited'; code: number | null }
+        | { type: 'error'; message: string }
+    ) => void
+  ) => {
+    const listener = (
+      _event: unknown,
+      payload:
+        | { type: 'ready'; port: number }
+        | {
+            type: 'paused'
+            reason: string
+            callFrames: Array<{
+              functionName: string
+              url: string
+              lineNumber: number
+              columnNumber: number
+            }>
+          }
+        | { type: 'resumed' }
+        | { type: 'stdout'; text: string }
+        | { type: 'stderr'; text: string }
+        | { type: 'exited'; code: number | null }
+        | { type: 'error'; message: string }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('debug:event', listener)
+    return () => {
+      ipcRenderer.removeListener('debug:event', listener)
+    }
+  },
   stat: (filePath: string): Promise<{ isDirectory: boolean; size: number; mtimeMs: number }> =>
     ipcRenderer.invoke('fs:stat', filePath),
   health: (): Promise<HealthResult> => ipcRenderer.invoke('api:health'),
@@ -277,6 +347,10 @@ const api = {
         | 'run:file'
         | 'run:file-inspect'
         | 'run:npm-start'
+        | 'debug:continue'
+        | 'debug:stepOver'
+        | 'debug:stop'
+        | 'view:debug'
         | 'view:extensions'
         | 'help:welcome'
         | 'help:docs'
@@ -309,6 +383,10 @@ const api = {
         | 'run:file'
         | 'run:file-inspect'
         | 'run:npm-start'
+        | 'debug:continue'
+        | 'debug:stepOver'
+        | 'debug:stop'
+        | 'view:debug'
         | 'view:extensions'
         | 'help:welcome'
         | 'help:docs'

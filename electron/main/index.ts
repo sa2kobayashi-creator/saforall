@@ -24,6 +24,14 @@ import {
 } from './terminal'
 import { loadProjectRules, searchFilesByName } from './workspaceTools'
 import { loadWorkspaceExtensions } from './extensions'
+import {
+  getActiveDebugSession,
+  startDebugSession,
+  stopDebugSession,
+  type DebugBreakpoint,
+  type DebugSession
+} from './debugSession'
+import { buildDebugLaunch, DEBUG_INSPECT_PORT } from './lib/runCommands'
 
 let workspaceWatcher: FSWatcher | null = null
 let watchDebounce: ReturnType<typeof setTimeout> | null = null
@@ -63,11 +71,13 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   killAllTerminals()
+  void stopDebugSession()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
   killAllTerminals()
+  void stopDebugSession()
 })
 
 ipcMain.handle('dialog:openDirectory', async () => {
@@ -235,3 +245,79 @@ ipcMain.handle(
 )
 
 ipcMain.handle('terminal:kill', async (_event, id: string) => killTerminal(id))
+
+function broadcastDebug(
+  channel: string,
+  payload: unknown
+): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(channel, payload)
+  }
+}
+
+function attachDebugSessionListeners(session: DebugSession): void {
+  session.on('ready', (payload) => broadcastDebug('debug:event', { type: 'ready', ...payload }))
+  session.on('paused', (payload) => broadcastDebug('debug:event', { type: 'paused', ...payload }))
+  session.on('resumed', () => broadcastDebug('debug:event', { type: 'resumed' }))
+  session.on('stdout', (payload) => broadcastDebug('debug:event', { type: 'stdout', ...payload }))
+  session.on('stderr', (payload) => broadcastDebug('debug:event', { type: 'stderr', ...payload }))
+  session.on('exited', (payload) => broadcastDebug('debug:event', { type: 'exited', ...payload }))
+  session.on('error', (payload) => broadcastDebug('debug:event', { type: 'error', ...payload }))
+}
+
+ipcMain.handle(
+  'debug:start',
+  async (
+    _event,
+    params: {
+      filePath: string
+      cwd: string
+      breakpoints: DebugBreakpoint[]
+      port?: number
+    }
+  ) => {
+    const launch = buildDebugLaunch(params.filePath, params.port ?? DEBUG_INSPECT_PORT)
+    if (!launch) {
+      return {
+        ok: false as const,
+        error: 'デバッグ対応は .js / .ts / .mjs / .cjs / .tsx のみです'
+      }
+    }
+    try {
+      await startDebugSession({
+        command: launch.command,
+        args: launch.args,
+        cwd: params.cwd,
+        breakpoints: params.breakpoints,
+        port: launch.port,
+        onCreated: attachDebugSessionListeners
+      })
+      return { ok: true as const, port: launch.port, display: launch.display }
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
+)
+
+ipcMain.handle('debug:continue', async () => {
+  const session = getActiveDebugSession()
+  if (!session) return { ok: false as const, error: 'no debug session' }
+  await session.continue()
+  return { ok: true as const }
+})
+
+ipcMain.handle('debug:stepOver', async () => {
+  const session = getActiveDebugSession()
+  if (!session) return { ok: false as const, error: 'no debug session' }
+  await session.stepOver()
+  return { ok: true as const }
+})
+
+ipcMain.handle('debug:stop', async () => {
+  await stopDebugSession()
+  broadcastDebug('debug:event', { type: 'exited', code: null })
+  return { ok: true as const }
+})

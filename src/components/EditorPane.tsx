@@ -2,6 +2,7 @@ import Editor, { type OnMount } from '@monaco-editor/react'
 import { useEffect, useRef } from 'react'
 import type { EditorSelection, OpenFile } from '../types'
 import type { ProblemItem } from './ProblemsPanel'
+import type { DebugBreakpointMap } from '../lib/debugTypes'
 import { disposeTabCompletions, registerTabCompletions } from '../lib/tabCompletions'
 import './EditorPane.css'
 
@@ -17,6 +18,9 @@ type Props = {
   onSelectionChange?: (selection: EditorSelection | null) => void
   onDiagnostics?: (items: ProblemItem[]) => void
   revealLine?: number | null
+  breakpoints?: DebugBreakpointMap
+  onToggleBreakpoint?: (path: string, line: number) => void
+  pausedLine?: { path: string; line: number } | null
 }
 
 const DEFAULT_TAB_WIDTH = 160
@@ -34,7 +38,10 @@ export function EditorPane({
   onSave,
   onSelectionChange,
   onDiagnostics,
-  revealLine
+  revealLine,
+  breakpoints = {},
+  onToggleBreakpoint,
+  pausedLine = null
 }: Props) {
   const file = tabs.find((tab) => tab.path === activePath) ?? null
   const dragRef = useRef<{ path: string; startX: number; startWidth: number } | null>(
@@ -44,11 +51,19 @@ export function EditorPane({
   selectionHandlerRef.current = onSelectionChange
   const diagnosticsHandlerRef = useRef(onDiagnostics)
   diagnosticsHandlerRef.current = onDiagnostics
+  const toggleBpRef = useRef(onToggleBreakpoint)
+  toggleBpRef.current = onToggleBreakpoint
+  const breakpointsRef = useRef(breakpoints)
+  breakpointsRef.current = breakpoints
+  const pausedLineRef = useRef(pausedLine)
+  pausedLineRef.current = pausedLine
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
   const fileMetaRef = useRef<{ path: string; language: string } | null>(null)
   fileMetaRef.current = file ? { path: file.path, language: file.language } : null
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
+  const monacoRef = useRef<Parameters<OnMount>[1] | null>(null)
+  const decorationIdsRef = useRef<string[]>([])
 
   useEffect(() => {
     return () => {
@@ -64,8 +79,48 @@ export function EditorPane({
     editor.focus()
   }, [revealLine, activePath])
 
+  useEffect(() => {
+    const editor = editorRef.current
+    const monaco = monacoRef.current
+    if (!editor || !monaco || !activePath) return
+
+    const lines = breakpoints[activePath] ?? []
+    const decorations: Array<{
+      range: unknown
+      options: Record<string, unknown>
+    }> = lines.map((line) => ({
+      range: new monaco.Range(line, 1, line, 1),
+      options: {
+        isWholeLine: false,
+        glyphMarginClassName: 'saforall-breakpoint-glyph',
+        glyphMarginHoverMessage: { value: 'Breakpoint' }
+      }
+    }))
+
+    if (
+      pausedLine &&
+      pausedLine.path.toLowerCase() === activePath.toLowerCase() &&
+      pausedLine.line > 0
+    ) {
+      decorations.push({
+        range: new monaco.Range(pausedLine.line, 1, pausedLine.line, 1),
+        options: {
+          isWholeLine: true,
+          className: 'saforall-debug-paused-line',
+          glyphMarginClassName: 'saforall-debug-paused-glyph'
+        }
+      })
+    }
+
+    decorationIdsRef.current = editor.deltaDecorations(
+      decorationIdsRef.current,
+      decorations as never
+    )
+  }, [breakpoints, pausedLine, activePath, file?.content])
+
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
+    monacoRef.current = monaco
     registerTabCompletions(monaco, () => fileMetaRef.current)
 
     try {
@@ -100,26 +155,26 @@ export function EditorPane({
             },
             index: number
           ) => {
-          const severity =
-            marker.severity === 8
-              ? 'error'
-              : marker.severity === 4
-                ? 'warning'
-                : 'info'
-          const resource = marker.resource.path
-            ? decodeURIComponent(marker.resource.path.replace(/^\//, ''))
-            : activePathRef.current ?? 'unknown'
-          const path = resource.replace(/^([A-Za-z])%3A/i, '$1:')
-          return {
-            id: `monaco:${path}:${marker.startLineNumber}:${marker.startColumn}:${index}`,
-            severity,
-            source: marker.source || 'LSP',
-            message: marker.message,
-            path,
-            line: marker.startLineNumber,
-            column: marker.startColumn
+            const severity =
+              marker.severity === 8
+                ? 'error'
+                : marker.severity === 4
+                  ? 'warning'
+                  : 'info'
+            const resource = marker.resource.path
+              ? decodeURIComponent(marker.resource.path.replace(/^\//, ''))
+              : activePathRef.current ?? 'unknown'
+            const path = resource.replace(/^([A-Za-z])%3A/i, '$1:')
+            return {
+              id: `monaco:${path}:${marker.startLineNumber}:${marker.startColumn}:${index}`,
+              severity,
+              source: marker.source || 'LSP',
+              message: marker.message,
+              path,
+              line: marker.startLineNumber,
+              column: marker.startColumn
+            }
           }
-        }
         )
       handler(items)
     }
@@ -150,6 +205,14 @@ export function EditorPane({
     editor.onDidChangeCursorSelection(emitSelection)
     emitSelection()
 
+    editor.onMouseDown((event) => {
+      if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return
+      const line = event.target.position?.lineNumber
+      const path = activePathRef.current
+      if (!line || !path || !toggleBpRef.current) return
+      toggleBpRef.current(path, line)
+    })
+
     editor.onDidDispose(() => {
       sub.dispose()
     })
@@ -162,6 +225,7 @@ export function EditorPane({
         <p>左のツリーからファイルを開くと、タブで複数編集できます。</p>
         <p className="hint">保存: Ctrl / Cmd + S（フォーカス時）</p>
         <p className="hint">Tab 補完: 入力を止めると候補が出ます（Tab で確定）</p>
+        <p className="hint">左余白クリックでブレークポイント / Shift+F5 でデバッグ</p>
         <p className="hint">タブ右端をドラッグすると幅を変更できます</p>
       </div>
     )
@@ -272,6 +336,7 @@ export function EditorPane({
             scrollBeyondLastLine: false,
             wordWrap: 'on',
             tabSize: 2,
+            glyphMargin: true,
             inlineSuggest: { enabled: true }
           }}
         />

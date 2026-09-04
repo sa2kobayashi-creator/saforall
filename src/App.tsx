@@ -20,7 +20,9 @@ import { ComposerPanel } from './components/ComposerPanel'
 import { QuickOpenDialog } from './components/QuickOpenDialog'
 import { ExtensionsPanel } from './components/ExtensionsPanel'
 import { buildNpmScriptCommand, buildRunFileCommand } from './lib/runCommands'
-import type { WorkspaceExtension } from './types/extensions'
+import type { DebugBreakpointMap, DebugCallFrame } from './lib/debugTypes'
+import { loadExtensionGrants, saveExtensionGrants } from './lib/extensionPermissions'
+import type { ExtensionPermission, WorkspaceExtension } from './types/extensions'
 import { UsagePanel } from './components/UsagePanel'
 import { WelcomeScreen } from './components/WelcomeScreen'
 import {
@@ -103,6 +105,16 @@ export default function App() {
   const [monacoProblems, setMonacoProblems] = useState<ProblemItem[]>([])
   const [revealLine, setRevealLine] = useState<number | null>(null)
   const [extensions, setExtensions] = useState<WorkspaceExtension[]>([])
+  const [extensionGrants, setExtensionGrants] = useState<
+    Record<string, ExtensionPermission[]>
+  >({})
+  const [breakpoints, setBreakpoints] = useState<DebugBreakpointMap>({})
+  const [debugRunning, setDebugRunning] = useState(false)
+  const [debugPaused, setDebugPaused] = useState(false)
+  const [debugPort, setDebugPort] = useState<number | null>(null)
+  const [debugFrames, setDebugFrames] = useState<DebugCallFrame[]>([])
+  const [debugLogs, setDebugLogs] = useState<string[]>([])
+  const [pausedLine, setPausedLine] = useState<{ path: string; line: number } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
@@ -662,20 +674,215 @@ export default function App() {
     void refreshExtensions()
   }, [refreshExtensions])
 
+  useEffect(() => {
+    if (!workspacePath) {
+      setExtensionGrants({})
+      return
+    }
+    setExtensionGrants(loadExtensionGrants(workspacePath))
+  }, [workspacePath])
+
+  const grantExtensionPermissions = useCallback(
+    (extensionId: string, permissions: ExtensionPermission[]) => {
+      if (!workspacePath) return
+      setExtensionGrants((current) => {
+        const prev = current[extensionId] ?? []
+        const merged = Array.from(new Set([...prev, ...permissions]))
+        const next = { ...current, [extensionId]: merged }
+        saveExtensionGrants(workspacePath, next)
+        return next
+      })
+    },
+    [workspacePath]
+  )
+
+  const revokeExtensionPermissions = useCallback(
+    (extensionId: string) => {
+      if (!workspacePath) return
+      setExtensionGrants((current) => {
+        const next = { ...current }
+        delete next[extensionId]
+        saveExtensionGrants(workspacePath, next)
+        return next
+      })
+    },
+    [workspacePath]
+  )
+
+  const toggleBreakpoint = useCallback((path: string, line: number) => {
+    setBreakpoints((current) => {
+      const lines = current[path] ?? []
+      const exists = lines.includes(line)
+      const nextLines = exists
+        ? lines.filter((row) => row !== line)
+        : [...lines, line].sort((a, b) => a - b)
+      if (nextLines.length === 0) {
+        const next = { ...current }
+        delete next[path]
+        return next
+      }
+      return { ...current, [path]: nextLines }
+    })
+  }, [])
+
+  const fileUrlToPath = useCallback((url: string): string | null => {
+    if (!url) return null
+    try {
+      if (url.startsWith('file:')) {
+        let path = decodeURIComponent(url.replace(/^file:\/\//i, ''))
+        if (/^\/[A-Za-z]:/.test(path)) path = path.slice(1)
+        return path.replace(/\//g, '\\')
+      }
+    } catch {
+      return null
+    }
+    if (/^[A-Za-z]:[\\/]/.test(url) || url.startsWith('/')) return url
+    return null
+  }, [])
+
+  const startDebug = useCallback(async () => {
+    if (!activePath) {
+      showNotice('デバッグするファイルを開いてください')
+      return
+    }
+    if (!workspacePath) {
+      showNotice('先にフォルダを開いてください')
+      return
+    }
+    const lower = activePath.toLowerCase()
+    if (
+      !lower.endsWith('.js') &&
+      !lower.endsWith('.mjs') &&
+      !lower.endsWith('.cjs') &&
+      !lower.endsWith('.ts') &&
+      !lower.endsWith('.tsx')
+    ) {
+      showNotice('ブレークポイント付きデバッグは js/ts のみ対応です')
+      return
+    }
+
+    const bpList = Object.entries(breakpoints).flatMap(([path, lines]) =>
+      lines.map((line) => ({ path, line }))
+    )
+
+    setTerminalOpen(true)
+    setBottomTab('debug')
+    setDebugLogs([])
+    setDebugFrames([])
+    setDebugPaused(false)
+    setPausedLine(null)
+    setDebugRunning(true)
+    showNotice('デバッグセッションを開始しています…')
+
+    const result = await window.saforall.startDebug({
+      filePath: activePath,
+      cwd: workspacePath,
+      breakpoints: bpList
+    })
+
+    if (!result.ok) {
+      setDebugRunning(false)
+      setDebugPort(null)
+      showNotice(`デバッグ開始失敗: ${result.error ?? 'unknown'}`)
+      return
+    }
+
+    setDebugPort(result.port ?? null)
+    setDebugLogs((logs) => [
+      ...logs,
+      `> ${result.display ?? activePath}\n`,
+      `Inspector :${result.port ?? '?'}\n`
+    ])
+    showNotice('デバッグ実行中（停止したら Continue / Step Over）')
+  }, [activePath, breakpoints, showNotice, workspacePath])
+
+  const continueDebug = useCallback(async () => {
+    const result = await window.saforall.continueDebug()
+    if (!result.ok) showNotice(result.error ?? 'Continue に失敗しました')
+  }, [showNotice])
+
+  const stepOverDebug = useCallback(async () => {
+    const result = await window.saforall.stepOverDebug()
+    if (!result.ok) showNotice(result.error ?? 'Step Over に失敗しました')
+  }, [showNotice])
+
+  const stopDebug = useCallback(async () => {
+    await window.saforall.stopDebug()
+    setDebugRunning(false)
+    setDebugPaused(false)
+    setDebugPort(null)
+    setDebugFrames([])
+    setPausedLine(null)
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.saforall.onDebugEvent((event) => {
+      if (event.type === 'ready') {
+        setDebugPort(event.port)
+        setDebugRunning(true)
+        return
+      }
+      if (event.type === 'paused') {
+        setDebugPaused(true)
+        setDebugFrames(event.callFrames)
+        const top = event.callFrames[0]
+        if (top) {
+          const path = fileUrlToPath(top.url)
+          if (path) {
+            setPausedLine({ path, line: top.lineNumber })
+            void openFileAt(path, top.lineNumber)
+          }
+        }
+        setBottomTab('debug')
+        setTerminalOpen(true)
+        return
+      }
+      if (event.type === 'resumed') {
+        setDebugPaused(false)
+        setPausedLine(null)
+        return
+      }
+      if (event.type === 'stdout' || event.type === 'stderr') {
+        setDebugLogs((logs) => [...logs, event.text].slice(-400))
+        return
+      }
+      if (event.type === 'error') {
+        setDebugLogs((logs) => [...logs, `[error] ${event.message}\n`].slice(-400))
+        showNotice(`デバッグ: ${event.message}`)
+        return
+      }
+      if (event.type === 'exited') {
+        setDebugRunning(false)
+        setDebugPaused(false)
+        setDebugPort(null)
+        setPausedLine(null)
+        setDebugLogs((logs) => [
+          ...logs,
+          `\n[exit] code=${event.code ?? 'null'}\n`
+        ].slice(-400))
+      }
+    })
+    return unsubscribe
+  }, [fileUrlToPath, openFileAt, showNotice])
+
   const runActiveFile = useCallback(
     (inspect = false) => {
+      if (inspect) {
+        void startDebug()
+        return
+      }
       if (!activePath) {
         showNotice('実行するファイルを開いてください')
         return
       }
-      const command = buildRunFileCommand(activePath, inspect)
+      const command = buildRunFileCommand(activePath, false)
       if (!command) {
         showNotice('このファイル種別の Run は未対応です（js/ts/py/ps1）')
         return
       }
       runCommand(command)
     },
-    [activePath, runCommand, showNotice]
+    [activePath, runCommand, showNotice, startDebug]
   )
 
   const currentProposal =
@@ -822,6 +1029,19 @@ export default function App() {
         case 'run:file-inspect':
           runActiveFile(true)
           break
+        case 'debug:continue':
+          void continueDebug()
+          break
+        case 'debug:stepOver':
+          void stepOverDebug()
+          break
+        case 'debug:stop':
+          void stopDebug()
+          break
+        case 'view:debug':
+          setBottomTab('debug')
+          setTerminalOpen(true)
+          break
         case 'run:npm-start':
           runCommand(buildNpmScriptCommand('start'))
           break
@@ -852,7 +1072,20 @@ export default function App() {
     return () => {
       unsubscribe()
     }
-  }, [closeWorkspace, openWorkspace, refreshExtensions, runActiveFile, runCommand, saveFile, setUsageLayout, toggleUsage])
+  }, [
+    closeWorkspace,
+    continueDebug,
+    openWorkspace,
+    refreshExtensions,
+    runActiveFile,
+    runCommand,
+    saveFile,
+    setUsageLayout,
+    startDebug,
+    stepOverDebug,
+    stopDebug,
+    toggleUsage
+  ])
 
   return (
     <div className="app-shell">
@@ -918,6 +1151,9 @@ export default function App() {
               <ExtensionsPanel
                 extensions={extensions}
                 activeFilePath={activePath}
+                grants={extensionGrants}
+                onGrant={grantExtensionPermissions}
+                onRevoke={revokeExtensionPermissions}
                 onRefresh={() => void refreshExtensions()}
                 onRun={(command) => runCommand(command)}
               />
@@ -967,6 +1203,9 @@ export default function App() {
                   onSelectionChange={setEditorSelection}
                   onDiagnostics={setMonacoProblems}
                   revealLine={revealLine}
+                  breakpoints={breakpoints}
+                  onToggleBreakpoint={toggleBreakpoint}
+                  pausedLine={pausedLine}
                 />
                 {composerOpen && (
                   <ComposerPanel
@@ -1004,6 +1243,33 @@ export default function App() {
                   cwd={workspacePath}
                   pendingCommand={pendingCommand}
                   problems={problems}
+                  debug={{
+                    running: debugRunning,
+                    paused: debugPaused,
+                    port: debugPort,
+                    frames: debugFrames,
+                    logs: debugLogs,
+                    breakpointCount: Object.values(breakpoints).reduce(
+                      (sum, lines) => sum + lines.length,
+                      0
+                    ),
+                    onContinue: () => {
+                      void continueDebug()
+                    },
+                    onStepOver: () => {
+                      void stepOverDebug()
+                    },
+                    onStop: () => {
+                      void stopDebug()
+                    },
+                    onStart: () => {
+                      void startDebug()
+                    },
+                    onOpenFrame: (frame) => {
+                      const path = fileUrlToPath(frame.url)
+                      if (path) void openFileAt(path, frame.lineNumber)
+                    }
+                  }}
                   onChangeTab={setBottomTab}
                   onCommandSent={() => setPendingCommand(null)}
                   onClose={() => setTerminalOpen(false)}

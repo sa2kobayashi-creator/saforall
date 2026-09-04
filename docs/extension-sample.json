@@ -2,16 +2,19 @@
   "id": "saforall.sample",
   "name": "Sample Tools",
   "description": "ワークスペース用サンプル拡張。コピーして .saforall/extensions に置いてください。",
+  "permissions": ["terminal.run"],
   "commands": [
     {
       "id": "sample.list",
       "title": "List files",
-      "run": "Get-ChildItem -Name"
+      "run": "Get-ChildItem -Name",
+      "permissions": ["terminal.run"]
     },
     {
       "id": "sample.run-file",
       "title": "Echo active file",
-      "run": "Write-Output {file}"
+      "run": "Write-Output {file}",
+      "permissions": ["terminal.run"]
     }
   ]
 }

@@ -63,9 +63,13 @@ function computeDiffStats(original, modified) {
 function buildRunFileCommand(filePath, inspect = false) {
   const lower = filePath.toLowerCase()
   const quoted = `"${filePath.replace(/"/g, '\\"')}"`
-  if (lower.endsWith('.js')) return inspect ? `node --inspect ${quoted}` : `node ${quoted}`
+  if (lower.endsWith('.js')) {
+    return inspect ? `node --inspect-brk=9229 ${quoted}` : `node ${quoted}`
+  }
   if (lower.endsWith('.ts')) {
-    return inspect ? `npx --yes tsx --inspect ${quoted}` : `npx --yes tsx ${quoted}`
+    return inspect
+      ? `npx --yes tsx --inspect-brk=9229 ${quoted}`
+      : `npx --yes tsx ${quoted}`
   }
   return null
 }
@@ -100,5 +104,5 @@ test('computeDiffStats counts added/removed lines', () => {
 })
 
 test('buildRunFileCommand supports node inspect', () => {
-  assert.match(buildRunFileCommand('D:/app/index.js', true), /node --inspect/)
+  assert.match(buildRunFileCommand('D:/app/index.js', true), /node --inspect-brk=9229/)
 })

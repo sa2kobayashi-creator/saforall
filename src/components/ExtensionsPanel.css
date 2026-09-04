@@ -76,3 +76,70 @@
 .extensions-commands button:hover {
   border-color: var(--accent);
 }
+
+.extensions-perms {
+  margin: 0 0 8px !important;
+  color: var(--text-muted);
+  font-size: 10px !important;
+}
+
+.extensions-commands .danger {
+  border-color: #8a3a3a;
+  color: #f0a0a0;
+}
+
+.extensions-grant {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #1b2430;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.extensions-grant h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.extensions-grant p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.extensions-grant-perms {
+  color: #e6c35c !important;
+  font-family: Consolas, monospace;
+}
+
+.extensions-grant pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+
+.extensions-grant-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.extensions-grant-actions button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.extensions-grant-actions .primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}

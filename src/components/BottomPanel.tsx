@@ -1,8 +1,10 @@
 import { TerminalPanel } from './TerminalPanel'
 import { ProblemsPanel, type ProblemItem } from './ProblemsPanel'
+import { DebugPanel } from './DebugPanel'
+import type { DebugCallFrame } from '../lib/debugTypes'
 import './BottomPanel.css'
 
-export type BottomPanelTab = 'terminal' | 'problems'
+export type BottomPanelTab = 'terminal' | 'problems' | 'debug'
 
 type Props = {
   open: boolean
@@ -11,6 +13,19 @@ type Props = {
   cwd: string | null
   pendingCommand: string | null
   problems: ProblemItem[]
+  debug: {
+    running: boolean
+    paused: boolean
+    port: number | null
+    frames: DebugCallFrame[]
+    logs: string[]
+    breakpointCount: number
+    onContinue: () => void
+    onStepOver: () => void
+    onStop: () => void
+    onStart: () => void
+    onOpenFrame: (frame: DebugCallFrame) => void
+  }
   onChangeTab: (tab: BottomPanelTab) => void
   onCommandSent: () => void
   onClose: () => void
@@ -24,6 +39,7 @@ export function BottomPanel({
   cwd,
   pendingCommand,
   problems,
+  debug,
   onChangeTab,
   onCommandSent,
   onClose,
@@ -52,6 +68,15 @@ export function BottomPanel({
             onClick={() => onChangeTab('problems')}
           >
             PROBLEMS{problems.length > 0 ? ` (${problems.length})` : ''}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'debug'}
+            className={activeTab === 'debug' ? 'active' : ''}
+            onClick={() => onChangeTab('debug')}
+          >
+            DEBUG{debug.paused ? ' ●' : debug.running ? ' ▸' : ''}
           </button>
         </div>
         <div className="bottom-panel-actions">
@@ -85,6 +110,13 @@ export function BottomPanel({
           style={{ display: activeTab === 'problems' ? 'flex' : 'none' }}
         >
           <ProblemsPanel problems={problems} onOpenFile={onOpenFile} />
+        </div>
+        <div
+          className="bottom-panel-page"
+          hidden={activeTab !== 'debug'}
+          style={{ display: activeTab === 'debug' ? 'flex' : 'none' }}
+        >
+          <DebugPanel {...debug} />
         </div>
       </div>
     </section>

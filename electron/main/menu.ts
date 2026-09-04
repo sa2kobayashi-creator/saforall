@@ -21,6 +21,10 @@ export type MenuCommand =
   | 'run:file'
   | 'run:file-inspect'
   | 'run:npm-start'
+  | 'debug:continue'
+  | 'debug:stepOver'
+  | 'debug:stop'
+  | 'view:debug'
   | 'view:extensions'
   | 'help:welcome'
   | 'help:docs'
@@ -160,9 +164,28 @@ export function setupApplicationMenu(): void {
           click: () => send('run:file')
         },
         {
-          label: 'Debug Current File (inspect)',
+          label: 'Start Debugging',
           accelerator: 'Shift+F5',
           click: () => send('run:file-inspect')
+        },
+        {
+          label: 'Continue',
+          accelerator: 'F8',
+          click: () => send('debug:continue')
+        },
+        {
+          label: 'Step Over',
+          accelerator: 'F10',
+          click: () => send('debug:stepOver')
+        },
+        {
+          label: 'Stop Debugging',
+          accelerator: 'Shift+F8',
+          click: () => send('debug:stop')
+        },
+        {
+          label: 'Show Debug Panel',
+          click: () => send('view:debug')
         },
         { type: 'separator' },
         {

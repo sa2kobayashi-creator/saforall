@@ -126,3 +126,32 @@
   flex: 1;
   min-height: 0;
 }
+
+/* Monaco glyph margin decorations (injected into editor DOM) */
+:global(.saforall-breakpoint-glyph),
+.saforall-breakpoint-glyph {
+  background: #e51400 !important;
+  width: 10px !important;
+  height: 10px !important;
+  margin-left: 3px !important;
+  margin-top: 4px !important;
+  border-radius: 50% !important;
+}
+
+:global(.saforall-debug-paused-line),
+.saforall-debug-paused-line {
+  background: rgba(255, 196, 0, 0.18) !important;
+}
+
+:global(.saforall-debug-paused-glyph),
+.saforall-debug-paused-glyph {
+  background: #ffc400 !important;
+  width: 0 !important;
+  height: 0 !important;
+  margin-left: 2px !important;
+  margin-top: 3px !important;
+  border-left: 6px solid transparent !important;
+  border-right: 6px solid transparent !important;
+  border-top: 10px solid #ffc400 !important;
+  border-radius: 0 !important;
+}
