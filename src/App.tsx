@@ -17,6 +17,13 @@ import { ApplyPathDialog } from './components/ApplyPathDialog'
 import { UsagePanel } from './components/UsagePanel'
 import { WelcomeScreen } from './components/WelcomeScreen'
 import {
+  AboutDialog,
+  DocumentationDialog,
+  KeyboardShortcutsDialog,
+  LicenseDialog,
+  ReportIssueDialog
+} from './components/HelpDialogs'
+import {
   defaultFileName,
   formatCommandForTerminal,
   isAbsolutePath,
@@ -67,6 +74,11 @@ export default function App() {
   const [bottomTab, setBottomTab] = useState<BottomPanelTab>('terminal')
   const [scmSyncCommand, setScmSyncCommand] = useState<'pull' | 'push' | null>(null)
   const [cloneOpen, setCloneOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [docsOpen, setDocsOpen] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
+  const [licenseOpen, setLicenseOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [scmRefreshKey, setScmRefreshKey] = useState(0)
   const [pendingCommand, setPendingCommand] = useState<string | null>(null)
   const [applyDialog, setApplyDialog] = useState<{
@@ -588,6 +600,24 @@ export default function App() {
           setSidebarView('scm')
           setScmSyncCommand('push')
           break
+        case 'help:welcome':
+          closeWorkspace()
+          break
+        case 'help:docs':
+          setDocsOpen(true)
+          break
+        case 'help:shortcuts':
+          setShortcutsOpen(true)
+          break
+        case 'help:report':
+          setReportOpen(true)
+          break
+        case 'help:license':
+          setLicenseOpen(true)
+          break
+        case 'help:about':
+          setAboutOpen(true)
+          break
       }
     })
     return () => {
@@ -778,6 +808,11 @@ export default function App() {
           setUsageLayout(preferredUsageMode)
         }}
       />
+      <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <DocumentationDialog open={docsOpen} onClose={() => setDocsOpen(false)} />
+      <ReportIssueDialog open={reportOpen} onClose={() => setReportOpen(false)} />
+      <LicenseDialog open={licenseOpen} onClose={() => setLicenseOpen(false)} />
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
       {usageOverlay && (
         <UsagePanel
           open

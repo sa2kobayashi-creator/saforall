@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, shell } from 'electron'
+import { BrowserWindow, Menu } from 'electron'
 
 export type MenuCommand =
   | 'workspace:open'
@@ -18,6 +18,12 @@ export type MenuCommand =
   | 'git:refresh'
   | 'git:pull'
   | 'git:push'
+  | 'help:welcome'
+  | 'help:docs'
+  | 'help:shortcuts'
+  | 'help:report'
+  | 'help:license'
+  | 'help:about'
 
 function send(command: MenuCommand): void {
   const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
@@ -176,12 +182,31 @@ export function setupApplicationMenu(): void {
       label: 'Help',
       submenu: [
         {
+          label: 'Welcome',
+          click: () => send('help:welcome')
+        },
+        {
           label: 'Documentation',
-          click: () => {
-            void shell.openExternal(
-              'https://github.com/sa2kobayashi-creator/saforall'
-            )
-          }
+          click: () => send('help:docs')
+        },
+        {
+          label: 'Keyboard Shortcuts Reference',
+          accelerator: 'CmdOrCtrl+K CmdOrCtrl+S',
+          click: () => send('help:shortcuts')
+        },
+        { type: 'separator' },
+        {
+          label: 'Report Issue…',
+          click: () => send('help:report')
+        },
+        {
+          label: 'View License',
+          click: () => send('help:license')
+        },
+        { type: 'separator' },
+        {
+          label: 'About saforall',
+          click: () => send('help:about')
         }
       ]
     }

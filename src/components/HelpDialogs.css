@@ -1,0 +1,179 @@
+.help-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.help-dialog {
+  width: min(440px, 100%);
+  max-height: calc(100% - 32px);
+  overflow: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.help-dialog--wide {
+  width: min(560px, 100%);
+}
+
+.help-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.help-dialog-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.help-dialog-header button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.help-dialog-lead {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.help-prose {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.help-prose p,
+.help-prose ol,
+.help-prose ul {
+  margin: 0;
+}
+
+.help-prose ol,
+.help-prose ul {
+  padding-left: 18px;
+}
+
+.help-prose li + li {
+  margin-top: 6px;
+}
+
+.help-license {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-family: Consolas, 'Cascadia Code', monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  max-height: min(50vh, 420px);
+  overflow: auto;
+}
+
+.help-shortcuts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.help-shortcuts-table th,
+.help-shortcuts-table td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.help-shortcuts-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.help-shortcuts-table kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-family: Consolas, 'Cascadia Code', monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.help-about-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.help-about-brand {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.help-about-version {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.help-about-license {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.help-about-meta {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.help-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.help-dialog-actions button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.help-dialog-actions button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}

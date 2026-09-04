@@ -189,6 +189,17 @@ const api = {
     ipcRenderer.invoke('git:push', cwd),
   gitPull: (cwd: string): Promise<{ ok: boolean; stdout?: string; error?: string }> =>
     ipcRenderer.invoke('git:pull', cwd),
+  getRuntimeInfo: (): {
+    appVersion: string
+    electron?: string
+    chrome?: string
+    node?: string
+  } => ({
+    appVersion: '0.1.0',
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node
+  }),
   onMenuCommand: (
     callback: (
       command:
@@ -209,6 +220,12 @@ const api = {
         | 'git:refresh'
         | 'git:pull'
         | 'git:push'
+        | 'help:welcome'
+        | 'help:docs'
+        | 'help:shortcuts'
+        | 'help:report'
+        | 'help:license'
+        | 'help:about'
     ) => void
   ) => {
     const listener = (
@@ -231,6 +248,12 @@ const api = {
         | 'git:refresh'
         | 'git:pull'
         | 'git:push'
+        | 'help:welcome'
+        | 'help:docs'
+        | 'help:shortcuts'
+        | 'help:report'
+        | 'help:license'
+        | 'help:about'
     ): void => {
       callback(command)
     }
