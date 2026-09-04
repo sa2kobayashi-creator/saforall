@@ -98,7 +98,7 @@ export function resolveMcpCommand(command: string): { command: string; shell: bo
   if (!trimmed) return { command: trimmed, shell: false }
 
   // Absolute / relative path already provided
-  if (/[\\/]/.test(trimmed) || trimmed.includes(':')) {
+  if (/[\\/]/.test(trimmed) || /^[A-Za-z]:/.test(trimmed)) {
     const shell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(trimmed)
     return { command: trimmed, shell }
   }
@@ -111,7 +111,6 @@ export function resolveMcpCommand(command: string): { command: string; shell: bo
   for (const dir of windowsNodeDirs()) {
     candidates.push(join(dir, `${trimmed}.cmd`), join(dir, `${trimmed}.exe`), join(dir, trimmed))
   }
-  // Common Node install
   candidates.push(
     join('C:\\Program Files\\nodejs', `${trimmed}.cmd`),
     join('C:\\Program Files\\nodejs', `${trimmed}.exe`),
@@ -124,8 +123,63 @@ export function resolveMcpCommand(command: string): { command: string; shell: bo
     }
   }
 
-  // Fall back to shell so cmd.exe can resolve via PATH
   return { command: trimmed, shell: true }
+}
+
+type SpawnSpec = { command: string; args: string[]; shell: boolean }
+
+/**
+ * Build a spawn-safe command. Avoid `shell:true` with paths that contain spaces
+ * (breaks on Windows: C:\\Program Files\\...). Prefer node + npx-cli.js for npx.
+ */
+export function resolveMcpSpawn(command: string, args: string[] = []): SpawnSpec {
+  const trimmed = command.trim()
+  const lower = trimmed.toLowerCase()
+
+  if (lower === 'npx' || lower.endsWith('\\npx') || lower.endsWith('\\npx.cmd') || lower === 'npx.cmd') {
+    const nodeDirs = [
+      ...windowsNodeDirs(),
+      'C:\\Program Files\\nodejs',
+      'C:\\Program Files (x86)\\nodejs'
+    ]
+    for (const dir of nodeDirs) {
+      const nodeExe = join(dir, 'node.exe')
+      const npxCli = join(dir, 'node_modules', 'npm', 'bin', 'npx-cli.js')
+      if (existsSync(nodeExe) && existsSync(npxCli)) {
+        return { command: nodeExe, args: [npxCli, ...args], shell: false }
+      }
+    }
+  }
+
+  if (lower === 'npm' || lower.endsWith('\\npm') || lower.endsWith('\\npm.cmd') || lower === 'npm.cmd') {
+    const nodeDirs = [
+      ...windowsNodeDirs(),
+      'C:\\Program Files\\nodejs',
+      'C:\\Program Files (x86)\\nodejs'
+    ]
+    for (const dir of nodeDirs) {
+      const nodeExe = join(dir, 'node.exe')
+      const npmCli = join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js')
+      if (existsSync(nodeExe) && existsSync(npmCli)) {
+        return { command: nodeExe, args: [npmCli, ...args], shell: false }
+      }
+    }
+  }
+
+  const resolved = resolveMcpCommand(trimmed)
+  // If shell would be needed for .cmd with spaces in path, wrap via cmd /c with quotes
+  if (resolved.shell && /\s/.test(resolved.command)) {
+    const comspec = process.env.ComSpec || 'cmd.exe'
+    const quotedCmd = `"${resolved.command}"`
+    const quotedArgs = args.map((arg) => `"${arg.replace(/"/g, '\\"')}"`).join(' ')
+    return {
+      command: comspec,
+      args: ['/d', '/s', '/c', `${quotedCmd} ${quotedArgs}`.trim()],
+      shell: false
+    }
+  }
+
+  return { command: resolved.command, args, shell: resolved.shell }
 }
 
 /** Persistent stdio MCP session (initialize → tools/list → tools/call). */
@@ -137,6 +191,7 @@ export class McpSession {
   private waiters = new Map<number, Waiter>()
   private tools: McpToolInfo[] = []
   private ready = false
+  private stderrTail = ''
 
   constructor(server: McpServerConfig) {
     this.server = server
@@ -152,16 +207,17 @@ export class McpSession {
 
   async start(cwd: string, timeoutMs = 45_000): Promise<void> {
     await this.dispose()
-    const resolved = resolveMcpCommand(this.server.command)
+    this.stderrTail = ''
+    const spec = resolveMcpSpawn(this.server.command, this.server.args ?? [])
     const env = enrichPath({ ...process.env, ...(this.server.env ?? {}) })
 
     await new Promise<void>((resolve, reject) => {
       let settled = false
-      this.child = spawn(resolved.command, this.server.args ?? [], {
+      this.child = spawn(spec.command, spec.args, {
         cwd,
         env,
         windowsHide: true,
-        shell: resolved.shell
+        shell: spec.shell
       }) as ChildProcessWithoutNullStreams
 
       const fail = (error: Error): void => {
@@ -178,11 +234,10 @@ export class McpSession {
       this.child.once('error', (error) => {
         const message =
           (error as NodeJS.ErrnoException).code === 'ENOENT'
-            ? `コマンドが見つかりません: ${resolved.command}（Node.js / npx の PATH を確認してください）`
+            ? `コマンドが見つかりません: ${spec.command}（Node.js / npx の PATH を確認してください）`
             : error.message
         fail(new Error(message))
       })
-      // Some platforms may not emit 'spawn'; continue after a tick if no error
       setTimeout(() => {
         if (!settled && this.child && !this.child.killed) {
           settled = true
@@ -194,14 +249,18 @@ export class McpSession {
     if (!this.child) throw new Error('MCP spawn failed')
 
     this.child.stdout.on('data', (chunk: Buffer) => this.onData(chunk.toString('utf-8')))
-    this.child.stderr.on('data', () => {
-      // keep process alive; stderr often has logs
+    this.child.stderr.on('data', (chunk: Buffer) => {
+      this.stderrTail = (this.stderrTail + chunk.toString('utf-8')).slice(-4000)
     })
-    this.child.on('exit', () => {
+    this.child.on('exit', (code) => {
       this.ready = false
       this.child = null
+      const detail = this.stderrTail.trim()
+      const message = detail
+        ? `MCP server exited (${code ?? '?'}): ${detail.slice(0, 500)}`
+        : `MCP server exited (${code ?? '?'})`
       for (const waiter of Array.from(this.waiters.values())) {
-        waiter.reject(new Error('MCP server exited'))
+        waiter.reject(new Error(message))
       }
       this.waiters.clear()
     })

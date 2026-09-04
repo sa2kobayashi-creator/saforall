@@ -278,6 +278,24 @@ test('resolveMcpCommand keeps absolute cmd paths', () => {
   assert.equal(resolved.shell, true)
 })
 
+function resolveMcpSpawn(command, args = []) {
+  const lower = String(command || '').toLowerCase()
+  if (lower === 'npx' || lower.endsWith('\\npx.cmd') || lower === 'npx.cmd') {
+    const nodeExe = 'C:\\Program Files\\nodejs\\node.exe'
+    const npxCli = 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js'
+    return { command: nodeExe, args: [npxCli, ...args], shell: false }
+  }
+  return { command, args, shell: false }
+}
+
+test('resolveMcpSpawn routes npx through node without shell', () => {
+  const spec = resolveMcpSpawn('npx', ['-y', 'pkg'])
+  assert.match(spec.command, /node\.exe$/i)
+  assert.equal(spec.shell, false)
+  assert.equal(spec.args[0].includes('npx-cli.js'), true)
+  assert.deepEqual(spec.args.slice(1), ['-y', 'pkg'])
+})
+
 function findReplaceableBlock(existing, code) {
   const snippet = code.replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '')
   if (!snippet || snippet.length < 12) return null
