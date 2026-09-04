@@ -1,6 +1,7 @@
 import Editor, { type OnMount } from '@monaco-editor/react'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import type { EditorSelection, OpenFile } from '../types'
+import { disposeTabCompletions, registerTabCompletions } from '../lib/tabCompletions'
 import './EditorPane.css'
 
 type Props = {
@@ -38,8 +39,18 @@ export function EditorPane({
   selectionHandlerRef.current = onSelectionChange
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
+  const fileMetaRef = useRef<{ path: string; language: string } | null>(null)
+  fileMetaRef.current = file ? { path: file.path, language: file.language } : null
 
-  const handleMount: OnMount = (editor) => {
+  useEffect(() => {
+    return () => {
+      disposeTabCompletions()
+    }
+  }, [])
+
+  const handleMount: OnMount = (editor, monaco) => {
+    registerTabCompletions(monaco, () => fileMetaRef.current)
+
     const emitSelection = () => {
       const handler = selectionHandlerRef.current
       if (!handler) return
@@ -68,6 +79,7 @@ export function EditorPane({
         <h1>saforall</h1>
         <p>左のツリーからファイルを開くと、タブで複数編集できます。</p>
         <p className="hint">保存: Ctrl / Cmd + S（フォーカス時）</p>
+        <p className="hint">Tab 補完: 入力を止めると候補が出ます（Tab で確定）</p>
         <p className="hint">タブ右端をドラッグすると幅を変更できます</p>
       </div>
     )
@@ -177,7 +189,8 @@ export function EditorPane({
             automaticLayout: true,
             scrollBeyondLastLine: false,
             wordWrap: 'on',
-            tabSize: 2
+            tabSize: 2,
+            inlineSuggest: { enabled: true }
           }}
         />
       </div>

@@ -117,6 +117,44 @@ function parseExtraHeaders(headers: string[]): Record<string, string> {
   return out
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Best-effort repair for truncated tool argument JSON */
+export function repairToolArguments(raw: string): string {
+  const trimmed = (raw || '').trim()
+  if (!trimmed) return '{}'
+  try {
+    JSON.parse(trimmed)
+    return trimmed
+  } catch {
+    // continue
+  }
+
+  let candidate = trimmed
+  // Close open strings / braces roughly
+  const quoteCount = (candidate.match(/"/g) ?? []).length
+  if (quoteCount % 2 === 1) candidate += '"'
+  const openCurly = (candidate.match(/\{/g) ?? []).length
+  const closeCurly = (candidate.match(/\}/g) ?? []).length
+  if (openCurly > closeCurly) candidate += '}'.repeat(openCurly - closeCurly)
+  const openSquare = (candidate.match(/\[/g) ?? []).length
+  const closeSquare = (candidate.match(/\]/g) ?? []).length
+  if (openSquare > closeSquare) candidate += ']'.repeat(openSquare - closeSquare)
+
+  try {
+    JSON.parse(candidate)
+    return candidate
+  } catch {
+    return '{}'
+  }
+}
+
+function toolSignature(name: string, argsJson: string): string {
+  return `${name}:${argsJson}`
+}
+
 async function callChatCompletions(params: {
   apiKey: string
   baseUrl: string
@@ -125,27 +163,40 @@ async function callChatCompletions(params: {
   messages: ProviderMessage[]
 }): Promise<ChatCompletionResponse> {
   const url = `${params.baseUrl.replace(/\/$/, '')}/chat/completions`
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${params.apiKey}`,
-      ...parseExtraHeaders(params.extraHeaders)
-    },
-    body: JSON.stringify({
-      model: params.model,
-      messages: params.messages,
-      tools: TOOLS,
-      tool_choice: 'auto',
-      temperature: 0.2
-    })
-  })
+  let lastError: Error | null = null
 
-  const json = (await response.json()) as ChatCompletionResponse
-  if (!response.ok) {
-    throw new Error(json.error?.message ?? `LLM HTTP ${response.status}`)
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${params.apiKey}`,
+          ...parseExtraHeaders(params.extraHeaders)
+        },
+        body: JSON.stringify({
+          model: params.model,
+          messages: params.messages,
+          tools: TOOLS,
+          tool_choice: 'auto',
+          temperature: 0.2
+        })
+      })
+
+      const json = (await response.json()) as ChatCompletionResponse
+      if (!response.ok) {
+        throw new Error(json.error?.message ?? `LLM HTTP ${response.status}`)
+      }
+      return json
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      if (attempt < 2) {
+        await sleep(400 * (attempt + 1))
+      }
+    }
   }
-  return json
+
+  throw lastError ?? new Error('LLM request failed')
 }
 
 async function runTool(
@@ -154,12 +205,22 @@ async function runTool(
   argsJson: string,
   onEvent: (event: ChatStreamEvent) => void,
   callId: string
-): Promise<string> {
+): Promise<{ content: string; ok: boolean }> {
+  const repaired = repairToolArguments(argsJson)
   let args: Record<string, unknown> = {}
   try {
-    args = JSON.parse(argsJson || '{}') as Record<string, unknown>
+    args = JSON.parse(repaired || '{}') as Record<string, unknown>
   } catch {
-    return JSON.stringify({ ok: false, error: 'invalid JSON arguments' })
+    const content = JSON.stringify({ ok: false, error: 'invalid JSON arguments' })
+    onEvent({ type: 'tool_call', id: callId, name, args: {} })
+    onEvent({
+      type: 'tool_result',
+      id: callId,
+      name,
+      ok: false,
+      summary: 'invalid JSON arguments'
+    })
+    return { content, ok: false }
   }
 
   onEvent({ type: 'tool_call', id: callId, name, args })
@@ -175,7 +236,7 @@ async function runTool(
         ok: true,
         summary: `read ${path} (${content.length} chars)`
       })
-      return content
+      return { content, ok: true }
     }
     if (name === 'list_dir') {
       const path = String(args.path ?? '.')
@@ -187,7 +248,7 @@ async function runTool(
         ok: true,
         summary: `list ${path}`
       })
-      return listing
+      return { content: listing, ok: true }
     }
     if (name === 'search_code') {
       const query = String(args.query ?? '')
@@ -200,7 +261,7 @@ async function runTool(
         ok: true,
         summary: `search ${query}`
       })
-      return result
+      return { content: result, ok: true }
     }
     if (name === 'edit_file') {
       const path = String(args.path ?? '')
@@ -213,8 +274,24 @@ async function runTool(
           ok: false,
           summary: 'path/content required'
         })
-        return JSON.stringify({ ok: false, error: 'path and content required' })
+        return {
+          content: JSON.stringify({ ok: false, error: 'path and content required' }),
+          ok: false
+        }
       }
+
+      // Self-check: warn if replacement is suspiciously tiny vs existing file
+      let warning: string | null = null
+      try {
+        const existing = await toolReadFile(workspacePath, path)
+        if (existing.length > 400 && content.length < existing.length * 0.35) {
+          warning =
+            'Proposed content is much shorter than the current file. Re-read and prefer a complete file unless intentional deletion.'
+        }
+      } catch {
+        // new file ok
+      }
+
       onEvent({
         type: 'edit_proposal',
         path,
@@ -225,14 +302,20 @@ async function runTool(
         id: callId,
         name,
         ok: true,
-        summary: `queued edit ${path}`
+        summary: warning ? `queued edit ${path} (warning)` : `queued edit ${path}`
       })
-      return JSON.stringify({
-        ok: true,
-        queued: true,
-        path,
-        note: 'Change queued for user diff review. Continue if more edits are needed.'
-      })
+      return {
+        content: JSON.stringify({
+          ok: true,
+          queued: true,
+          path,
+          warning,
+          note: warning
+            ? warning
+            : 'Change queued for user diff review. Continue if more edits are needed.'
+        }),
+        ok: true
+      }
     }
 
     onEvent({
@@ -242,7 +325,10 @@ async function runTool(
       ok: false,
       summary: `unknown tool ${name}`
     })
-    return JSON.stringify({ ok: false, error: `unknown tool: ${name}` })
+    return {
+      content: JSON.stringify({ ok: false, error: `unknown tool: ${name}` }),
+      ok: false
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     onEvent({
@@ -252,7 +338,7 @@ async function runTool(
       ok: false,
       summary: message
     })
-    return JSON.stringify({ ok: false, error: message })
+    return { content: JSON.stringify({ ok: false, error: message }), ok: false }
   }
 }
 
@@ -284,6 +370,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     'あなたは saforall のコーディング Agent です。',
     '必要なら read_file / list_dir / search_code で調査し、編集は edit_file で提案してください。',
     'edit_file は即時保存されず、ユーザーが差分レビューします。',
+    'ツールが失敗したら、別のパス・クエリ・手順で自己修正して続行してください。',
+    '同じツール呼び出しを無意味に繰り返さないでください。',
     '回答は簡潔な日本語。最終まとめも日本語で。',
     `ワークスペース: ${workspacePath}`
   ]
@@ -302,16 +390,56 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   ]
 
   let finalText = ''
-  const maxSteps = 12
+  const maxSteps = 16
+  let consecutiveToolFailures = 0
+  const recentSignatures: string[] = []
+  const progressNotes: string[] = []
 
   for (let step = 0; step < maxSteps; step += 1) {
-    const completion = await callChatCompletions({
-      apiKey,
-      baseUrl,
-      model,
-      extraHeaders,
-      messages
-    })
+    let completion: ChatCompletionResponse
+    try {
+      completion = await callChatCompletions({
+        apiKey,
+        baseUrl,
+        model,
+        extraHeaders,
+        messages
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // Self-correct: ask model to continue without tools if API keeps failing mid-run
+      if (step > 0) {
+        messages.push({
+          role: 'user',
+          content:
+            `システム: LLM 呼び出しが失敗しました（${message}）。ツールなしで、これまでに分かったことと次の手を日本語で短くまとめてください。`
+        })
+        try {
+          const fallback = await callChatCompletions({
+            apiKey,
+            baseUrl,
+            model,
+            extraHeaders,
+            messages: messages.map((row, index) =>
+              index === 0 && row.role === 'system'
+                ? {
+                    ...row,
+                    content:
+                      String(row.content ?? '') +
+                      '\nこのターンは tools を使わず最終回答のみ出してください。'
+                  }
+                : row
+            )
+          })
+          // Force no-tools by stripping - actually tools still sent. Just take content.
+          finalText = (fallback.choices?.[0]?.message?.content ?? '').trim()
+          if (finalText) break
+        } catch {
+          // fall through
+        }
+      }
+      throw error
+    }
 
     const message = completion.choices?.[0]?.message
     if (!message) {
@@ -327,18 +455,67 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       })
 
       for (const call of toolCalls) {
+        const argsRaw = call.function.arguments
+        const signature = toolSignature(call.function.name, repairToolArguments(argsRaw))
+        if (recentSignatures.includes(signature)) {
+          const dup = JSON.stringify({
+            ok: false,
+            error: 'duplicate tool call skipped — try a different path/query or finish with a summary'
+          })
+          onEvent({
+            type: 'tool_call',
+            id: call.id,
+            name: call.function.name,
+            args: { duplicate: true }
+          })
+          onEvent({
+            type: 'tool_result',
+            id: call.id,
+            name: call.function.name,
+            ok: false,
+            summary: 'duplicate skipped'
+          })
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: dup
+          })
+          consecutiveToolFailures += 1
+          continue
+        }
+        recentSignatures.push(signature)
+        if (recentSignatures.length > 12) recentSignatures.shift()
+
         const result = await runTool(
           workspacePath,
           call.function.name,
-          call.function.arguments,
+          argsRaw,
           onEvent,
           call.id
         )
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: result
+          content: result.content
         })
+        progressNotes.push(
+          `${call.function.name}: ${result.ok ? 'ok' : 'fail'}`
+        )
+
+        if (result.ok) {
+          consecutiveToolFailures = 0
+        } else {
+          consecutiveToolFailures += 1
+        }
+      }
+
+      if (consecutiveToolFailures >= 3) {
+        messages.push({
+          role: 'user',
+          content:
+            'システム: ツール失敗が続いています。別の調査方法に切り替えるか、現状の知見で日本語の最終回答を出してください。同じ呼び出しを繰り返さないでください。'
+        })
+        consecutiveToolFailures = 0
       }
       continue
     }
@@ -348,10 +525,14 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   }
 
   if (!finalText) {
-    finalText = 'ツール実行を完了しました。差分レビューから変更を確認してください。'
+    const notes =
+      progressNotes.length > 0
+        ? `\n実施した操作: ${progressNotes.slice(-8).join(', ')}`
+        : ''
+    finalText =
+      'ツール実行を完了しました。差分レビューから変更を確認してください。' + notes
   }
 
-  // stream final text as deltas for UI
   const chunkSize = 80
   for (let i = 0; i < finalText.length; i += chunkSize) {
     onEvent({ type: 'delta', text: finalText.slice(i, i + chunkSize) })

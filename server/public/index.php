@@ -29,6 +29,7 @@ if ($path === '/' || $path === '/api') {
             'GET /api/ai/usage',
             'GET /api/ai/models?engine=',
             'POST /api/ai/test',
+            'POST /api/ai/inline',
         ],
     ]);
 }
@@ -77,6 +78,10 @@ if ($path === '/api/ai/models') {
 
 if ($path === '/api/ai/test') {
     require dirname(__DIR__) . '/api/ai_test.php';
+}
+
+if ($path === '/api/ai/inline') {
+    require dirname(__DIR__) . '/api/ai_inline.php';
 }
 
 if ($path === '/api/ai/chat/stream') {
