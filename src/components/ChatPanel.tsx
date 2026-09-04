@@ -15,6 +15,14 @@ import type {
   OpenFile
 } from '../types'
 import type { ProblemItem } from './ProblemsPanel'
+import {
+  activeMentionQuery,
+  fileMentionSuggestion,
+  filterSpecialMentions,
+  hasSpecialMention,
+  parseMentionTokens,
+  type MentionSuggestion
+} from '../lib/chatMentions'
 import './ChatPanel.css'
 
 type Props = {
@@ -132,6 +140,13 @@ export function ChatPanel({
   const [usageText, setUsageText] = useState<string | null>(null)
   const [autoAppliedIds, setAutoAppliedIds] = useState<Record<string, boolean>>({})
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
+  const [mentionOpen, setMentionOpen] = useState(false)
+  const [mentionItems, setMentionItems] = useState<MentionSuggestion[]>([])
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const [mentionRange, setMentionRange] = useState<{ start: number; end: number } | null>(
+    null
+  )
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [pendingAction, setPendingAction] = useState<{
     code: string
     pathHint?: string
@@ -236,23 +251,31 @@ export function ChatPanel({
   }, [])
 
   const buildContextPayload = useCallback(async () => {
+    const tokens = parseMentionTokens(input)
+    const wantSelection = hasSpecialMention(tokens, 'selection')
+    const wantProblems = hasSpecialMention(tokens, 'problems')
+    const wantRules = hasSpecialMention(tokens, 'rules')
+
     const mentioned = new Set<string>()
-    const atMatches = input.match(/@([^\s@]+)/g) ?? []
-    for (const token of atMatches) {
-      const needle = token.slice(1).toLowerCase()
+    for (const token of tokens) {
+      const lower = token.toLowerCase()
+      if (lower === 'selection' || lower === 'problems' || lower === 'rules') continue
       for (const open of openFiles) {
         const base = (open.path.split(/[/\\]/).pop() ?? open.path).toLowerCase()
-        if (base === needle || open.path.toLowerCase().endsWith(needle)) {
+        if (base === lower || open.path.toLowerCase().endsWith(lower)) {
           mentioned.add(open.path)
         }
       }
       if (workspacePath && typeof window.saforall.searchFiles === 'function') {
         try {
-          const found = await window.saforall.searchFiles(workspacePath, needle)
-          for (const rel of found.slice(0, 3)) {
-            const abs = rel.includes(':') || rel.startsWith('/') || rel.startsWith('\\')
-              ? rel
-              : `${workspacePath.replace(/[\\/]+$/, '')}${workspacePath.includes('\\') ? '\\' : '/'}${rel.replace(/^[\\/]+/, '')}`
+          const found = await window.saforall.searchFiles(workspacePath, token)
+          for (const rel of found.slice(0, 5)) {
+            const abs =
+              rel.includes(':') || rel.startsWith('/') || rel.startsWith('\\')
+                ? rel
+                : `${workspacePath.replace(/[\\/]+$/, '')}${
+                    workspacePath.includes('\\') ? '\\' : '/'
+                  }${rel.replace(/^[\\/]+/, '')}`
             mentioned.add(abs)
           }
         } catch {
@@ -306,14 +329,24 @@ export function ChatPanel({
       }
     }
 
-    const problemLines = problems.slice(0, 20).map((row) => {
+    const problemLimit = wantProblems ? 40 : 20
+    const problemLines = problems.slice(0, problemLimit).map((row) => {
       const loc = row.path
         ? `${row.path}${row.line ? `:${row.line}` : ''}`
         : 'unknown'
       return `${row.severity}: ${loc} ${row.message}`
     })
 
-    if (!file && files.length === 0 && !selectionPayload && !rules && problemLines.length === 0) {
+    if (
+      !file &&
+      files.length === 0 &&
+      !selectionPayload &&
+      !rules &&
+      problemLines.length === 0 &&
+      !wantSelection &&
+      !wantProblems &&
+      !wantRules
+    ) {
       return null
     }
 
@@ -324,9 +357,89 @@ export function ChatPanel({
       selection: selectionPayload,
       files,
       rules,
-      problems: problemLines
+      problems: problemLines,
+      mention_flags: {
+        selection: wantSelection,
+        problems: wantProblems,
+        rules: wantRules
+      }
     }
   }, [attachedPaths, file, input, openFiles, problems, selection, workspacePath])
+
+  const refreshMentionSuggestions = useCallback(
+    async (value: string, cursor: number) => {
+      const active = activeMentionQuery(value, cursor)
+      if (!active) {
+        setMentionOpen(false)
+        setMentionItems([])
+        setMentionRange(null)
+        return
+      }
+
+      const items: MentionSuggestion[] = [...filterSpecialMentions(active.query)]
+      const q = active.query.toLowerCase()
+      for (const open of openFiles) {
+        const name = (open.path.split(/[/\\]/).pop() ?? open.path).toLowerCase()
+        if (!q || name.includes(q) || open.path.toLowerCase().includes(q)) {
+          items.push(fileMentionSuggestion(open.path))
+        }
+      }
+
+      if (workspacePath && typeof window.saforall.searchFiles === 'function' && q.length >= 1) {
+        try {
+          const found = await window.saforall.searchFiles(workspacePath, active.query)
+          for (const rel of found.slice(0, 8)) {
+            const abs =
+              rel.includes(':') || rel.startsWith('/') || rel.startsWith('\\')
+                ? rel
+                : `${workspacePath.replace(/[\\/]+$/, '')}${
+                    workspacePath.includes('\\') ? '\\' : '/'
+                  }${rel.replace(/^[\\/]+/, '')}`
+            if (!items.some((row) => row.id === `file:${abs}`)) {
+              items.push(fileMentionSuggestion(abs))
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const unique = items.slice(0, 12)
+      setMentionItems(unique)
+      setMentionIndex(0)
+      setMentionRange({ start: active.start, end: cursor })
+      setMentionOpen(unique.length > 0)
+    },
+    [openFiles, workspacePath]
+  )
+
+  const applyMention = useCallback(
+    (item: MentionSuggestion) => {
+      const el = textareaRef.current
+      if (!el || !mentionRange) {
+        setMentionOpen(false)
+        return
+      }
+      const before = input.slice(0, mentionRange.start)
+      const after = input.slice(mentionRange.end)
+      const next = `${before}${item.insert} ${after}`
+      setInput(next)
+      if (item.kind === 'file' && item.detail) {
+        setAttachedPaths((current) =>
+          current.includes(item.detail!) ? current : [...current, item.detail!]
+        )
+      }
+      setMentionOpen(false)
+      setMentionItems([])
+      setMentionRange(null)
+      window.setTimeout(() => {
+        const pos = before.length + item.insert.length + 1
+        el.focus()
+        el.setSelectionRange(pos, pos)
+      }, 0)
+    },
+    [input, mentionRange]
+  )
 
   const changeMode = (next: ChatMode) => {
     setMode(next)
@@ -1118,37 +1231,91 @@ export function ChatPanel({
               )
             })}
             {openFiles.length === 0 && (
-              <span className="chat-context-hint">開いているファイルを @ で追加できます</span>
+              <span className="chat-context-hint">
+                @ でファイル / @selection / @problems / @rules
+              </span>
+            )}
+            {openFiles.length > 0 && (
+              <span className="chat-context-hint">@ で追加</span>
             )}
           </div>
-
           <form className="chat-input" onSubmit={(event) => void onSubmit(event)}>
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={
-                busy
-                  ? busyLabel ?? '実行中…'
-                  : loading
-                    ? '履歴読み込み中…'
-                    : mode === 'agent'
-                      ? 'Agent に依頼する…（例: @App.tsx を直して）'
-                      : 'コードについて質問する…（選択範囲や @ファイル名 も使えます）'
-              }
-              rows={3}
-              disabled={busy !== null || loading}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  event.currentTarget.form?.requestSubmit()
+            <div className="chat-input-wrap">
+              {mentionOpen && mentionItems.length > 0 && (
+                <ul className="chat-mention-list" role="listbox" aria-label="@ 候補">
+                  {mentionItems.map((item, index) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className={index === mentionIndex ? 'is-active' : ''}
+                        onMouseDown={(event) => {
+                          event.preventDefault()
+                          applyMention(item)
+                        }}
+                      >
+                        <strong>{item.label}</strong>
+                        {item.detail && <span>{item.detail}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(event) => {
+                  const value = event.target.value
+                  const cursor = event.target.selectionStart ?? value.length
+                  setInput(value)
+                  void refreshMentionSuggestions(value, cursor)
+                }}
+                placeholder={
+                  busy
+                    ? busyLabel ?? '実行中…'
+                    : loading
+                      ? '履歴読み込み中…'
+                      : mode === 'agent'
+                        ? 'Agent に依頼…（@ でファイル / @selection @problems @rules）'
+                        : '質問する…（@ でコンテキスト追加）'
                 }
-              }}
-            />
+                rows={3}
+                disabled={busy !== null || loading}
+                onKeyDown={(event) => {
+                  if (mentionOpen && mentionItems.length > 0) {
+                    if (event.key === 'ArrowDown') {
+                      event.preventDefault()
+                      setMentionIndex((i) => (i + 1) % mentionItems.length)
+                      return
+                    }
+                    if (event.key === 'ArrowUp') {
+                      event.preventDefault()
+                      setMentionIndex(
+                        (i) => (i - 1 + mentionItems.length) % mentionItems.length
+                      )
+                      return
+                    }
+                    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+                      event.preventDefault()
+                      applyMention(mentionItems[mentionIndex] ?? mentionItems[0])
+                      return
+                    }
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      setMentionOpen(false)
+                      return
+                    }
+                  }
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    event.currentTarget.form?.requestSubmit()
+                  }
+                }}
+              />
+            </div>
             <button type="submit" disabled={busy !== null || loading || input.trim() === ''}>
               {busy ? '実行中…' : '送信'}
             </button>
-          </form>
-        </div>
+          </form>        </div>
 
         <div className={`chat-history${historyOpen ? ' is-open' : ''}`} aria-label="チャット履歴">
           <div className="chat-history-head">

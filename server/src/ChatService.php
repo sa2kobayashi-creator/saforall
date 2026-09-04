@@ -222,18 +222,39 @@ final class ChatService
             }
 
             $problemRows = $context['problems'] ?? null;
+            $mentionFlags = $context['mention_flags'] ?? null;
+            $problemCap = 20;
+            if (is_array($mentionFlags) && !empty($mentionFlags['problems'])) {
+                $problemCap = 40;
+            }
             if (is_array($problemRows) && count($problemRows) > 0) {
                 $lines = [];
                 foreach ($problemRows as $row) {
                     if (is_string($row) && $row !== '') {
                         $lines[] = $row;
                     }
-                    if (count($lines) >= 20) {
+                    if (count($lines) >= $problemCap) {
                         break;
                     }
                 }
                 if (count($lines) > 0) {
                     $systemParts[] = "Problems パネルの内容:\n" . implode("\n", $lines);
+                }
+            }
+
+            if (is_array($mentionFlags)) {
+                $hints = [];
+                if (!empty($mentionFlags['selection'])) {
+                    $hints[] = 'ユーザーは @selection を明示しました。選択範囲を優先してください。';
+                }
+                if (!empty($mentionFlags['problems'])) {
+                    $hints[] = 'ユーザーは @problems を明示しました。診断の修正を優先してください。';
+                }
+                if (!empty($mentionFlags['rules'])) {
+                    $hints[] = 'ユーザーは @rules を明示しました。プロジェクトルールに従ってください。';
+                }
+                if (count($hints) > 0) {
+                    $systemParts[] = implode("\n", $hints);
                 }
             }
         }

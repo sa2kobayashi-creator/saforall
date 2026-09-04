@@ -1,9 +1,10 @@
 import Editor, { type OnMount } from '@monaco-editor/react'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EditorSelection, OpenFile } from '../types'
 import type { ProblemItem } from './ProblemsPanel'
 import type { DebugBreakpointMap } from '../lib/debugTypes'
 import { disposeTabCompletions, registerTabCompletions } from '../lib/tabCompletions'
+import { InlineEditBar, type InlineEditTarget } from './InlineEditBar'
 import './EditorPane.css'
 
 type Props = {
@@ -21,6 +22,8 @@ type Props = {
   breakpoints?: DebugBreakpointMap
   onToggleBreakpoint?: (path: string, line: number) => void
   pausedLine?: { path: string; line: number } | null
+  /** Increment to open Ctrl+K from outside (menu) */
+  inlineEditTrigger?: number
 }
 
 const DEFAULT_TAB_WIDTH = 160
@@ -41,7 +44,8 @@ export function EditorPane({
   revealLine,
   breakpoints = {},
   onToggleBreakpoint,
-  pausedLine = null
+  pausedLine = null,
+  inlineEditTrigger = 0
 }: Props) {
   const file = tabs.find((tab) => tab.path === activePath) ?? null
   const dragRef = useRef<{ path: string; startX: number; startWidth: number } | null>(
@@ -64,6 +68,59 @@ export function EditorPane({
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null)
   const decorationIdsRef = useRef<string[]>([])
+  const [inlineTarget, setInlineTarget] = useState<InlineEditTarget | null>(null)
+  const openInlineEditRef = useRef<() => void>(() => undefined)
+
+  const openInlineEdit = useCallback(() => {
+    const editor = editorRef.current
+    const meta = fileMetaRef.current
+    if (!editor || !meta) return
+    const model = editor.getModel()
+    if (!model) return
+
+    let sel = editor.getSelection()
+    if (!sel) return
+    if (sel.isEmpty()) {
+      const line = sel.startLineNumber
+      editor.setSelection({
+        startLineNumber: line,
+        startColumn: 1,
+        endLineNumber: line,
+        endColumn: model.getLineMaxColumn(line)
+      })
+      sel = editor.getSelection()
+      if (!sel || sel.isEmpty()) return
+    }
+
+    const selected = model.getValueInRange(sel)
+    if (!selected.trim()) return
+
+    const startOffset = model.getOffsetAt({
+      lineNumber: sel.startLineNumber,
+      column: sel.startColumn
+    })
+    const endOffset = model.getOffsetAt({
+      lineNumber: sel.endLineNumber,
+      column: sel.endColumn
+    })
+    const full = model.getValue()
+    setInlineTarget({
+      path: meta.path,
+      language: meta.language,
+      selection: selected,
+      prefix: full.slice(Math.max(0, startOffset - 2500), startOffset),
+      suffix: full.slice(endOffset, Math.min(full.length, endOffset + 1500)),
+      startLine: sel.startLineNumber,
+      endLine: sel.endLineNumber,
+      startColumn: sel.startColumn,
+      endColumn: sel.endColumn
+    })
+  }, [])
+  openInlineEditRef.current = openInlineEdit
+
+  useEffect(() => {
+    if (inlineEditTrigger > 0) openInlineEdit()
+  }, [inlineEditTrigger, openInlineEdit])
 
   useEffect(() => {
     return () => {
@@ -122,6 +179,15 @@ export function EditorPane({
     editorRef.current = editor
     monacoRef.current = monaco
     registerTabCompletions(monaco, () => fileMetaRef.current)
+
+    editor.addAction({
+      id: 'saforall.inlineEdit',
+      label: 'Inline Edit (Ctrl+K)',
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+      run: () => {
+        openInlineEditRef.current()
+      }
+    })
 
     try {
       monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
@@ -225,6 +291,7 @@ export function EditorPane({
         <p>左のツリーからファイルを開くと、タブで複数編集できます。</p>
         <p className="hint">保存: Ctrl / Cmd + S（フォーカス時）</p>
         <p className="hint">Tab 補完: 入力を止めると候補が出ます（Tab で確定）</p>
+        <p className="hint">Ctrl/Cmd + K: 選択範囲を AI インライン編集</p>
         <p className="hint">左余白クリックでブレークポイント / Shift+F5 でデバッグ</p>
         <p className="hint">タブ右端をドラッグすると幅を変更できます</p>
       </div>
@@ -320,6 +387,37 @@ export function EditorPane({
           保存
         </button>
       </div>
+      <InlineEditBar
+        target={inlineTarget}
+        onClose={() => setInlineTarget(null)}
+        onApplied={(edited) => {
+          const editor = editorRef.current
+          const target = inlineTarget
+          if (!editor || !target) {
+            setInlineTarget(null)
+            return
+          }
+          const range = {
+            startLineNumber: target.startLine,
+            startColumn: target.startColumn,
+            endLineNumber: target.endLine,
+            endColumn: target.endColumn
+          }
+          editor.executeEdits('saforall-inline-edit', [
+            {
+              range,
+              text: edited,
+              forceMoveMarkers: true
+            }
+          ])
+          const model = editor.getModel()
+          if (model) {
+            onChange(model.getValue())
+          }
+          setInlineTarget(null)
+          editor.focus()
+        }}
+      />
       <div className="editor-host">
         <Editor
           path={file.path}

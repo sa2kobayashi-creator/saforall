@@ -59,6 +59,7 @@ const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: 'Tab', action: 'AI Tab 補完を確定（候補表示中）' },
   { keys: 'Ctrl/Cmd + ,', action: '設定を開く' },
   { keys: 'Ctrl/Cmd + P', action: 'ファイルを名前検索して開く' },
+  { keys: 'Ctrl/Cmd + K', action: '選択範囲を AI インライン編集' },
   { keys: 'Ctrl/Cmd + L', action: 'AI チャットの表示切替' },
   { keys: 'Ctrl/Cmd + Shift + E', action: 'Explorer を表示' },
   { keys: 'Ctrl/Cmd + Shift + G', action: 'Source Control を表示' },
@@ -66,7 +67,9 @@ const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: 'Ctrl/Cmd + Shift + U', action: 'AI 使用量を表示' },
   { keys: 'Ctrl + `', action: 'ターミナルの表示切替' },
   { keys: 'Ctrl + Shift + `', action: '新しいターミナル' },
-  { keys: 'Ctrl/Cmd + K, Ctrl/Cmd + S', action: 'キーボードショートカット一覧' },
+  { keys: 'F1', action: 'キーボードショートカット一覧' },
+  { keys: '@ファイル名', action: 'チャットにファイルをコンテキスト追加（候補から選択可）' },
+  { keys: '@selection / @problems / @rules', action: '選択・Problems・ルールを明示的に添付' },
   { keys: 'Enter', action: 'チャット送信（Shift+Enter で改行）' },
   { keys: 'Esc', action: '設定などのダイアログを閉じる' }
 ]
@@ -114,6 +117,10 @@ export function DocumentationDialog({ open, onClose }: SimpleProps) {
           </li>
           <li>
             <strong>AI チャット</strong> — Ctrl/Cmd + L で右側のチャットを開き、Ask / Agent モードで質問や編集を依頼します。
+            <code>@</code> でファイルや <code>@selection</code> / <code>@problems</code> / <code>@rules</code> を添付できます。
+          </li>
+          <li>
+            <strong>インライン編集</strong> — コードを選択して Ctrl/Cmd + K で指示付きのその場編集ができます。
           </li>
           <li>
             <strong>ターミナル / Git</strong> — Ctrl + ` でターミナル、Activity Bar の Source Control で Git 操作ができます。

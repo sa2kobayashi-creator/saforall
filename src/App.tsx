@@ -115,6 +115,7 @@ export default function App() {
   const [debugFrames, setDebugFrames] = useState<DebugCallFrame[]>([])
   const [debugLogs, setDebugLogs] = useState<string[]>([])
   const [pausedLine, setPausedLine] = useState<{ path: string; line: number } | null>(null)
+  const [inlineEditTrigger, setInlineEditTrigger] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
@@ -1049,6 +1050,9 @@ export default function App() {
           setSidebarView('extensions')
           void refreshExtensions()
           break
+        case 'edit:inline':
+          setInlineEditTrigger((n) => n + 1)
+          break
         case 'help:welcome':
           closeWorkspace()
           break
@@ -1206,6 +1210,7 @@ export default function App() {
                   breakpoints={breakpoints}
                   onToggleBreakpoint={toggleBreakpoint}
                   pausedLine={pausedLine}
+                  inlineEditTrigger={inlineEditTrigger}
                 />
                 {composerOpen && (
                   <ComposerPanel

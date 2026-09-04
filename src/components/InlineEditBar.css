@@ -1,0 +1,57 @@
+.inline-edit-bar {
+  border-bottom: 1px solid var(--border);
+  background: #1b2430;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inline-edit-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-edit-label {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: Consolas, 'Cascadia Code', monospace;
+}
+
+.inline-edit-form input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.inline-edit-form button {
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.inline-edit-form button:disabled {
+  opacity: 0.5;
+}
+
+.inline-edit-form button.ghost {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.inline-edit-error {
+  margin: 0;
+  color: #f0a0a0;
+  font-size: 12px;
+}

@@ -146,6 +146,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+export function normalizeAgentPath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
+}
+
+export function pathKeyMatch(a: string, b: string): boolean {
+  const na = normalizeAgentPath(a)
+  const nb = normalizeAgentPath(b)
+  if (na === nb) return true
+  if (na.endsWith('/' + nb) || nb.endsWith('/' + na)) return true
+  const ba = na.split('/').pop() ?? na
+  const bb = nb.split('/').pop() ?? nb
+  return ba.length > 0 && ba === bb
+}
+
+export function unverifiedEditPaths(
+  edited: Iterable<string>,
+  verified: Set<string>
+): string[] {
+  const verifiedList = Array.from(verified)
+  return Array.from(edited).filter(
+    (path) => !verifiedList.some((row) => pathKeyMatch(path, row))
+  )
+}
+
 export function repairToolArguments(raw: string): string {
   const trimmed = (raw || '').trim()
   if (!trimmed) return '{}'
@@ -235,7 +259,8 @@ async function runTool(
   onEvent: (event: ChatStreamEvent) => void,
   callId: string,
   phase: AgentPhase,
-  editedPaths: Set<string>
+  editedPaths: Set<string>,
+  verifiedPaths: Set<string>
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
   const repaired = repairToolArguments(argsJson)
   let args: Record<string, unknown> = {}
@@ -307,6 +332,9 @@ async function runTool(
     if (name === 'read_file') {
       const path = String(args.path ?? '')
       const content = await toolReadFile(workspacePath, path)
+      if (Array.from(editedPaths).some((row) => pathKeyMatch(row, path))) {
+        verifiedPaths.add(path)
+      }
       onEvent({
         type: 'tool_result',
         id: callId,
@@ -370,6 +398,10 @@ async function runTool(
       }
 
       editedPaths.add(path)
+      // Re-edit invalidates prior verification for this path
+      for (const row of Array.from(verifiedPaths)) {
+        if (pathKeyMatch(row, path)) verifiedPaths.delete(row)
+      }
       onEvent({ type: 'edit_proposal', path, content })
       onEvent({
         type: 'tool_result',
@@ -445,7 +477,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     'plan: 変更方針を短く立てる（必要なら軽く list/search）。',
     'explore: read_file / search_code で深く調査（関連ファイルを複数読む）。',
     'edit: edit_file で複数ファイルを提案（Composer レビュー用。即時保存されない）。',
-    'verify: 編集したファイルを再読込・検索し、抜けや不整合がないか自己確認する。verify では edit_file 不可。',
+    'verify: 編集した各ファイルを必ず read_file で再確認し、不整合があれば explore/edit に戻る。verify 未確認のまま最終回答してはいけない。verify では edit_file 不可。',
     'ツール失敗時は別パス/クエリで自己修正。同じ呼び出しを繰り返さない。',
     '最終回答は日本語で、変更ファイル一覧と注意点を短くまとめる。',
     `ワークスペース: ${workspacePath}`
@@ -473,7 +505,10 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   const recentSignatures: string[] = []
   const progressNotes: string[] = []
   const editedPaths = new Set<string>()
+  const verifiedPaths = new Set<string>()
   let exploreReads = 0
+  let verifyNudgeCount = 0
+  let finalizeBlockCount = 0
 
   for (let step = 0; step < maxSteps; step += 1) {
     let completion: ChatCompletionResponse
@@ -563,7 +598,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
                 onEvent,
                 call.id,
                 phase,
-                editedPaths
+                editedPaths,
+                verifiedPaths
               )
               return { call, result, skippedDup: false as const }
             })
@@ -591,7 +627,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           onEvent,
           call.id,
           phase,
-          editedPaths
+          editedPaths,
+          verifiedPaths
         )
         orderedResults.push({ call, result, skippedDup: false })
       }
@@ -663,21 +700,31 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         exploreReads = 0
       }
 
-      if (phase === 'edit' && editedPaths.size >= 1 && step > 10) {
+      if (phase === 'edit' && editedPaths.size >= 1 && step > 8) {
         messages.push({
           role: 'user',
           content:
-            'システム: 編集提案があります。追加編集がなければ set_phase verify で自己確認へ進んでください。'
+            'システム: 編集提案があります。追加編集がなければ set_phase verify へ進み、編集した各ファイルを read_file で確認してください。'
         })
       }
 
-      if (phase === 'verify' && editedPaths.size > 0) {
-        const list = Array.from(editedPaths).slice(0, 12).join(', ')
-        messages.push({
-          role: 'user',
-          content: `システム: verify 中です。次の編集候補を read_file / search_code で確認してください: ${list}`
-        })
-        editedPaths.clear()
+      if (phase === 'verify') {
+        const pending = unverifiedEditPaths(editedPaths, verifiedPaths)
+        if (pending.length > 0 && verifyNudgeCount < 3) {
+          verifyNudgeCount += 1
+          const list = pending.slice(0, 12).join(', ')
+          messages.push({
+            role: 'user',
+            content: `システム: verify 未完了です。次の編集ファイルを必ず read_file してください（確認後に最終回答可）: ${list}`
+          })
+        } else if (pending.length === 0 && editedPaths.size > 0 && verifyNudgeCount < 4) {
+          verifyNudgeCount = 4
+          messages.push({
+            role: 'user',
+            content:
+              'システム: 編集ファイルの再読込は完了しています。不整合がなければ最終回答を日本語でまとめ、問題があれば set_phase edit に戻ってください。'
+          })
+        }
       }
 
       if (consecutiveToolFailures >= 3) {
@@ -689,6 +736,37 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         consecutiveToolFailures = 0
       }
       continue
+    }
+
+    // Model attempted to finalize without tools
+    if (editedPaths.size > 0 && phase !== 'verify' && finalizeBlockCount < 2) {
+      finalizeBlockCount += 1
+      messages.push({
+        role: 'assistant',
+        content: message.content ?? null
+      })
+      messages.push({
+        role: 'user',
+        content:
+          'システム: 編集提案後の最終回答は verify 完了後のみです。set_phase verify を呼び、編集ファイルを read_file で確認してからまとめてください。'
+      })
+      continue
+    }
+
+    if (editedPaths.size > 0 && phase === 'verify') {
+      const pending = unverifiedEditPaths(editedPaths, verifiedPaths)
+      if (pending.length > 0 && finalizeBlockCount < 4) {
+        finalizeBlockCount += 1
+        messages.push({
+          role: 'assistant',
+          content: message.content ?? null
+        })
+        messages.push({
+          role: 'user',
+          content: `システム: まだ未確認の編集があります。先に read_file してください: ${pending.slice(0, 12).join(', ')}`
+        })
+        continue
+      }
     }
 
     finalText = (message.content ?? '').trim()

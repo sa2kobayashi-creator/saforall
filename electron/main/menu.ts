@@ -26,6 +26,7 @@ export type MenuCommand =
   | 'debug:stop'
   | 'view:debug'
   | 'view:extensions'
+  | 'edit:inline'
   | 'help:welcome'
   | 'help:docs'
   | 'help:shortcuts'
@@ -84,6 +85,13 @@ export function setupApplicationMenu(): void {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
+        { type: 'separator' },
+        {
+          label: 'Inline Edit Selection',
+          accelerator: 'CmdOrCtrl+K',
+          click: () => send('edit:inline')
+        },
+        { type: 'separator' },
         { role: 'selectAll' }
       ]
     },
@@ -243,7 +251,7 @@ export function setupApplicationMenu(): void {
         },
         {
           label: 'Keyboard Shortcuts Reference',
-          accelerator: 'CmdOrCtrl+K CmdOrCtrl+S',
+          accelerator: 'F1',
           click: () => send('help:shortcuts')
         },
         { type: 'separator' },

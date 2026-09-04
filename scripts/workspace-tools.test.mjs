@@ -103,6 +103,41 @@ test('computeDiffStats counts added/removed lines', () => {
   assert.equal(stats.removed, 1)
 })
 
+function unverifiedEditPaths(edited, verified) {
+  const verifiedList = Array.from(verified)
+  const pathKeyMatch = (a, b) => {
+    const na = a.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
+    const nb = b.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
+    if (na === nb) return true
+    const ba = na.split('/').pop() ?? na
+    const bb = nb.split('/').pop() ?? nb
+    return ba.length > 0 && ba === bb
+  }
+  return Array.from(edited).filter(
+    (path) => !verifiedList.some((row) => pathKeyMatch(path, row))
+  )
+}
+
+function activeMentionQuery(value, cursor) {
+  const before = value.slice(0, cursor)
+  const match = before.match(/(^|[\s([{])@([^\s@]*)$/)
+  if (!match) return null
+  const atIndex = before.lastIndexOf('@')
+  if (atIndex < 0) return null
+  return { start: atIndex, query: match[2] ?? '' }
+}
+
+test('unverifiedEditPaths requires read of edited files', () => {
+  const pending = unverifiedEditPaths(['src/App.tsx', 'lib/x.ts'], new Set(['src/App.tsx']))
+  assert.deepEqual(pending, ['lib/x.ts'])
+})
+
+test('activeMentionQuery detects @token at cursor', () => {
+  const hit = activeMentionQuery('fix @App', 8)
+  assert.equal(hit?.query, 'App')
+  assert.equal(activeMentionQuery('hello', 5), null)
+})
+
 test('buildRunFileCommand supports node inspect', () => {
   assert.match(buildRunFileCommand('D:/app/index.js', true), /node --inspect-brk=9229/)
 })
