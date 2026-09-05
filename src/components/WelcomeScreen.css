@@ -82,6 +82,49 @@
   color: #f0d48a;
 }
 
+.welcome-xampp {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #5a4a1e;
+  border-radius: 10px;
+  background: #2a2414;
+  color: #f0d48a;
+  text-align: left;
+  max-width: 520px;
+}
+
+.welcome-xampp strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.welcome-xampp ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.welcome-xampp code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.welcome-xampp-note {
+  margin: 0 0 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0.9;
+}
+
+.welcome-xampp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .welcome-recents {
   border-left: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.22);

@@ -102,7 +102,13 @@ export function registerLspProviders(
 ): void {
   disposeLspProviders()
 
-  const languages = ['typescript', 'javascript', 'python']
+  const languages = [
+    'typescript',
+    'typescriptreact',
+    'javascript',
+    'javascriptreact',
+    'python'
+  ]
 
   for (const language of languages) {
     disposables.push(

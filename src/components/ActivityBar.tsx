@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n'
 import './ActivityBar.css'
 
 export type SidebarView = 'explorer' | 'scm' | 'extensions'
@@ -31,12 +32,14 @@ export function ActivityBar({
   onToggleTerminal,
   onRunFile
 }: Props) {
+  const { t } = useI18n()
+
   return (
-    <aside className="activity-bar" aria-label="アクティビティバー">
+    <aside className="activity-bar" aria-label={t('activity.aria')}>
       <button
         type="button"
         className={`activity-btn ${activeView === 'explorer' ? 'active' : ''}`}
-        title="Explorer"
+        title={t('activity.explorer')}
         onClick={() => onChangeView('explorer')}
       >
         📁
@@ -44,7 +47,7 @@ export function ActivityBar({
       <button
         type="button"
         className={`activity-btn ${activeView === 'scm' ? 'active' : ''}`}
-        title="Source Control"
+        title={t('activity.scm')}
         onClick={() => onChangeView('scm')}
       >
         ⎇
@@ -52,7 +55,7 @@ export function ActivityBar({
       <button
         type="button"
         className={`activity-btn ${activeView === 'extensions' ? 'active' : ''}`}
-        title="Extensions"
+        title={t('activity.extensions')}
         onClick={() => onChangeView('extensions')}
       >
         ▤
@@ -61,20 +64,25 @@ export function ActivityBar({
       <button
         type="button"
         className="activity-btn"
-        title="フォルダを開く"
+        title={t('activity.openFolder')}
         onClick={onOpenWorkspace}
       >
         📂
       </button>
       {onRunFile && (
-        <button type="button" className="activity-btn" title="Run Current File (F5)" onClick={onRunFile}>
+        <button
+          type="button"
+          className="activity-btn"
+          title={t('activity.runFile')}
+          onClick={onRunFile}
+        >
           ▶
         </button>
       )}
       <button
         type="button"
         className={`activity-btn ${chatOpen ? 'active' : ''}`}
-        title="AI チャット"
+        title={t('activity.chat')}
         onClick={onToggleChat}
       >
         ✨
@@ -82,7 +90,7 @@ export function ActivityBar({
       <button
         type="button"
         className={`activity-btn ${usageOpen ? 'active' : ''}`}
-        title="AI 使用量"
+        title={t('activity.usage')}
         onClick={onOpenUsage}
       >
         $
@@ -90,7 +98,7 @@ export function ActivityBar({
       <button
         type="button"
         className={`activity-btn ${terminalOpen ? 'active' : ''}`}
-        title="ターミナル"
+        title={t('activity.terminal')}
         onClick={onToggleTerminal}
       >
         ⌨
@@ -98,7 +106,7 @@ export function ActivityBar({
       <button
         type="button"
         className={`activity-btn ${settingsOpen ? 'active' : ''}`}
-        title="設定"
+        title={t('activity.settings')}
         onClick={onOpenSettings}
       >
         ⚙

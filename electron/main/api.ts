@@ -79,12 +79,20 @@ export async function checkHealth(): Promise<HealthResult> {
   const baseUrl = getApiBaseUrl()
 
   try {
-    const result = await fetchJson<HealthData>('GET', '/health')
+    const result = await fetchJson<HealthData & { hint?: string; detail?: string }>(
+      'GET',
+      '/health'
+    )
     if (!result.ok || !result.data) {
+      const raw = result.error?.message ?? 'バックエンド未接続'
+      const looksDb =
+        /DB_|database|mysql|SQLSTATE/i.test(raw) || result.error?.code === 'DB_CONNECTION_FAILED'
       return {
         connected: false,
         baseUrl,
-        message: result.error?.message ?? 'バックエンド未接続'
+        message: looksDb
+          ? `MySQL 未接続 — XAMPP で MySQL を Start（${baseUrl}）`
+          : `API 応答エラー — Apache / パスを確認（${baseUrl}）: ${raw}`
       }
     }
 
@@ -92,19 +100,19 @@ export async function checkHealth(): Promise<HealthResult> {
     return {
       connected: dbOk,
       baseUrl,
-      message: dbOk ? 'バックエンド接続済み' : 'DB 未接続',
+      message: dbOk
+        ? 'バックエンド接続済み'
+        : `MySQL 未接続 — XAMPP で MySQL を Start（${baseUrl}）`,
       data: result.data
     }
   } catch (error) {
-    const message =
-      error instanceof Error && error.name === 'AbortError'
-        ? 'バックエンド応答タイムアウト'
-        : 'バックエンド未接続'
-
+    const timedOut = error instanceof Error && error.name === 'AbortError'
     return {
       connected: false,
       baseUrl,
-      message
+      message: timedOut
+        ? `Apache 応答なし — XAMPP で Apache を Start（${baseUrl}）`
+        : `Apache 未接続 — XAMPP で Apache を Start（${baseUrl}）`
     }
   }
 }

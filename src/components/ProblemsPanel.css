@@ -11,6 +11,38 @@
   font-size: 12px;
 }
 
+.problems-groups {
+  display: flex;
+  flex-direction: column;
+}
+
+.problems-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #141414;
+  border-bottom: 1px solid #1f1f1f;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.problems-group-path {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.problems-group-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .problems-list {
   list-style: none;
   margin: 0;

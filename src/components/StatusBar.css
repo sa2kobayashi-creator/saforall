@@ -31,6 +31,28 @@
   flex-shrink: 0;
 }
 
+.status-locale {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.status-locale-label {
+  opacity: 0.85;
+}
+
+.status-locale select {
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.15);
+  color: inherit;
+  font-size: 11px;
+  padding: 0 4px;
+}
+
 .backend-status {
   border: 1px solid rgba(255, 255, 255, 0.35);
   background: rgba(0, 0, 0, 0.15);

@@ -2,6 +2,7 @@ import { TerminalPanel } from './TerminalPanel'
 import { ProblemsPanel, type ProblemItem } from './ProblemsPanel'
 import { DebugPanel } from './DebugPanel'
 import type { DebugCallFrame } from '../lib/debugTypes'
+import { useI18n } from '../i18n'
 import './BottomPanel.css'
 
 export type BottomPanelTab = 'terminal' | 'problems' | 'debug'
@@ -51,10 +52,11 @@ export function BottomPanel({
   onClose,
   onOpenFile
 }: Props) {
+  const { t } = useI18n()
   if (!open) return null
 
   return (
-    <section className="bottom-panel" style={{ height }} aria-label="下部パネル">
+    <section className="bottom-panel" style={{ height }} aria-label={t('bottom.aria')}>
       <div className="bottom-panel-header">
         <div className="bottom-panel-tabs" role="tablist">
           <button
@@ -64,7 +66,7 @@ export function BottomPanel({
             className={activeTab === 'terminal' ? 'active' : ''}
             onClick={() => onChangeTab('terminal')}
           >
-            TERMINAL
+            {t('bottom.terminal')}
           </button>
           <button
             type="button"
@@ -73,7 +75,8 @@ export function BottomPanel({
             className={activeTab === 'problems' ? 'active' : ''}
             onClick={() => onChangeTab('problems')}
           >
-            PROBLEMS{problems.length > 0 ? ` (${problems.length})` : ''}
+            {t('bottom.problems')}
+            {problems.length > 0 ? ` (${problems.length})` : ''}
           </button>
           <button
             type="button"
@@ -82,14 +85,15 @@ export function BottomPanel({
             className={activeTab === 'debug' ? 'active' : ''}
             onClick={() => onChangeTab('debug')}
           >
-            DEBUG{debug.paused ? ' ●' : debug.running ? ' ▸' : ''}
+            {t('bottom.debug')}
+            {debug.paused ? ' ●' : debug.running ? ' ▸' : ''}
           </button>
         </div>
         <div className="bottom-panel-actions">
           {activeTab === 'terminal' && (
-            <span className="bottom-panel-hint">{cwd ?? 'カレントディレクトリ'}</span>
+            <span className="bottom-panel-hint">{cwd ?? t('bottom.cwd')}</span>
           )}
-          <button type="button" title="閉じる" onClick={onClose}>
+          <button type="button" title={t('common.close')} onClick={onClose}>
             ×
           </button>
         </div>

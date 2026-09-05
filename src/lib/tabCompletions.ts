@@ -19,8 +19,8 @@ export function disposeTabCompletions(): void {
   providerDisposable = null
 }
 
-function cacheKey(path: string, prefix: string, suffix: string): string {
-  return `${path}::${prefix.slice(-120)}::${suffix.slice(0, 40)}`
+function cacheKey(path: string, prefix: string, suffix: string, offset: number): string {
+  return `${path}::${offset}::${prefix.slice(-120)}::${suffix.slice(0, 40)}`
 }
 
 function extractNearbyContext(full: string, offset: number): string {
@@ -40,7 +40,10 @@ function extractNearbyContext(full: string, offset: number): string {
 
 export function registerTabCompletions(
   monaco: Monaco,
-  getMeta: () => { path: string; language: string } | null
+  getMeta: () => { path: string; language: string } | null,
+  options?: {
+    isBackendConnected?: () => boolean
+  }
 ): void {
   disposeTabCompletions()
 
@@ -61,10 +64,13 @@ export function registerTabCompletions(
       ) => {
         const meta = getMeta()
         if (!meta) return { items: [] }
+        if (options?.isBackendConnected && !options.isBackendConnected()) {
+          return { items: [] }
+        }
 
         const requestId = ++seq
         // Adaptive debounce: faster when continuing to type in the same line.
-        const waitMs = context?.triggerKind === 1 ? 220 : 320
+        const waitMs = context?.triggerKind === 1 ? 180 : 280
         await delay(waitMs)
         if (token.isCancellationRequested || requestId !== seq) {
           return { items: [] }
@@ -85,8 +91,8 @@ export function registerTabCompletions(
         const suffix = full.slice(offset, Math.min(full.length, offset + 1600))
         if (prefix.trim().length < 6) return { items: [] }
 
-        const key = cacheKey(meta.path, prefix, suffix)
-        if (key === lastKey && lastCompletion && Date.now() - lastAt < 12_000) {
+        const key = cacheKey(meta.path, prefix, suffix, offset)
+        if (key === lastKey && lastCompletion && Date.now() - lastAt < 8_000) {
           return {
             items: [
               {
@@ -133,6 +139,10 @@ export function registerTabCompletions(
           const typed = before.match(/[A-Za-z0-9_$]+$/)?.[0] ?? ''
           if (typed && insertText.startsWith(typed)) {
             insertText = insertText.slice(typed.length)
+          }
+          // Prefer single-line continuations when the model dumps a huge block
+          if (insertText.split('\n').length > 16) {
+            insertText = insertText.split('\n').slice(0, 12).join('\n')
           }
           if (!insertText.trim()) return { items: [] }
 

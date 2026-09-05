@@ -1,4 +1,5 @@
 import type { BackendStatus } from '../types'
+import { parseLocale, useI18n } from '../i18n'
 import './StatusBar.css'
 
 type Props = {
@@ -9,25 +10,40 @@ type Props = {
 }
 
 export function StatusBar({ message, dirty, backend, onRecheckBackend }: Props) {
+  const { t, locale, setLocale, locales, localeLabels } = useI18n()
   const backendLabel = backend.checking
-    ? '確認中…'
+    ? t('status.checking')
     : backend.connected
-      ? 'API 接続済み'
-      : 'API 未接続'
+      ? t('status.connected')
+      : t('status.disconnectedHint')
 
   return (
     <footer className={`status-bar ${backend.connected ? 'online' : 'offline'}`}>
       <span className="status-message">{message}</span>
       <div className="status-meta">
+        <label className="status-locale" title={t('status.locale')}>
+          <span className="status-locale-label">{t('status.locale')}</span>
+          <select
+            value={locale}
+            aria-label={t('status.locale')}
+            onChange={(event) => setLocale(parseLocale(event.target.value))}
+          >
+            {locales.map((code) => (
+              <option key={code} value={code}>
+                {localeLabels[code]}
+              </option>
+            ))}
+          </select>
+        </label>
         <button
           type="button"
           className={`backend-status ${backend.connected ? 'ok' : 'ng'}`}
-          title={`${backend.message}\n${backend.baseUrl}\nクリックで再確認`}
+          title={`${backend.message}\n${backend.baseUrl}\n${t('status.recheck')}`}
           onClick={onRecheckBackend}
         >
           {backendLabel}
         </button>
-        <span>{dirty ? '未保存' : '保存済み'}</span>
+        <span>{dirty ? t('status.dirty') : t('status.clean')}</span>
       </div>
     </footer>
   )

@@ -72,12 +72,17 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  setupApplicationMenu()
+  setupApplicationMenu('ja')
   createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+ipcMain.handle('app:setLocale', (_event, locale: unknown) => {
+  setupApplicationMenu(locale === 'en' ? 'en' : 'ja')
+  return true
 })
 
 app.on('window-all-closed', () => {
@@ -371,6 +376,16 @@ ipcMain.handle(
     return true
   }
 )
+
+ipcMain.handle('lsp:close', async (_event, params: { path: string }) => {
+  await lspManager.closeDocument(params.path)
+  return true
+})
+
+ipcMain.handle('lsp:reset', async () => {
+  await lspManager.dispose()
+  return true
+})
 
 ipcMain.handle(
   'lsp:completion',

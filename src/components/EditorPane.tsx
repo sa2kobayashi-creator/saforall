@@ -16,6 +16,7 @@ type Props = {
   tabs: OpenFile[]
   activePath: string | null
   tabWidths: Record<string, number>
+  backendConnected?: boolean
   onSelectTab: (path: string) => void
   onCloseTab: (path: string) => void
   onResizeTab: (path: string, width: number) => void
@@ -50,6 +51,7 @@ export function EditorPane({
   tabs,
   activePath,
   tabWidths,
+  backendConnected = false,
   onSelectTab,
   onCloseTab,
   onResizeTab,
@@ -69,6 +71,8 @@ export function EditorPane({
   const dragRef = useRef<{ path: string; startX: number; startWidth: number } | null>(
     null
   )
+  const backendConnectedRef = useRef(backendConnected)
+  backendConnectedRef.current = backendConnected
   const selectionHandlerRef = useRef(onSelectionChange)
   selectionHandlerRef.current = onSelectionChange
   const diagnosticsHandlerRef = useRef(onDiagnostics)
@@ -208,7 +212,9 @@ export function EditorPane({
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
-    registerTabCompletions(monaco, () => fileMetaRef.current)
+    registerTabCompletions(monaco, () => fileMetaRef.current, {
+      isBackendConnected: () => backendConnectedRef.current
+    })
     registerLspProviders(
       monaco,
       () => fileMetaRef.current,
@@ -254,17 +260,14 @@ export function EditorPane({
         .filter((marker: { severity: number }) => marker.severity > 0)
         .slice(0, 200)
         .map(
-          (
-            marker: {
-              severity: number
-              resource: { path?: string }
-              startLineNumber: number
-              startColumn: number
-              message: string
-              source?: string
-            },
-            index: number
-          ) => {
+          (marker: {
+            severity: number
+            resource: { path?: string }
+            startLineNumber: number
+            startColumn: number
+            message: string
+            source?: string
+          }) => {
             const severity =
               marker.severity === 8
                 ? 'error'
@@ -276,9 +279,9 @@ export function EditorPane({
               : activePathRef.current ?? 'unknown'
             const path = resource.replace(/^([A-Za-z])%3A/i, '$1:')
             return {
-              id: `monaco:${path}:${marker.startLineNumber}:${marker.startColumn}:${index}`,
+              id: `monaco:${path}:${marker.startLineNumber}:${marker.startColumn}:${marker.message}`,
               severity,
-              source: marker.source || 'LSP',
+              source: marker.source || 'monaco',
               message: marker.message,
               path,
               line: marker.startLineNumber,

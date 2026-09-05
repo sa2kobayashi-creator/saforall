@@ -1,4 +1,5 @@
 import { BrowserWindow, Menu } from 'electron'
+import { menuLabels, type MenuLocale } from './menuI18n'
 
 export type MenuCommand =
   | 'workspace:open'
@@ -36,12 +37,16 @@ export type MenuCommand =
   | 'help:license'
   | 'help:about'
 
+let currentLocale: MenuLocale = 'ja'
+
 function send(command: MenuCommand): void {
   const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
   win?.webContents.send('menu:command', command)
 }
 
-export function setupApplicationMenu(): void {
+export function setupApplicationMenu(locale: MenuLocale = currentLocale): void {
+  currentLocale = locale === 'en' ? 'en' : 'ja'
+  const L = menuLabels(currentLocale)
   const isMac = process.platform === 'darwin'
 
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -58,19 +63,19 @@ export function setupApplicationMenu(): void {
         ]
       : []),
     {
-      label: 'File',
+      label: L.file,
       submenu: [
         {
-          label: 'Open Folder…',
+          label: L.openFolder,
           accelerator: 'CmdOrCtrl+O',
           click: () => send('workspace:open')
         },
         {
-          label: 'Close Folder',
+          label: L.closeFolder,
           click: () => send('workspace:close')
         },
         {
-          label: 'Save',
+          label: L.save,
           accelerator: 'CmdOrCtrl+S',
           click: () => send('file:save')
         },
@@ -79,7 +84,7 @@ export function setupApplicationMenu(): void {
       ]
     },
     {
-      label: 'Edit',
+      label: L.edit,
       submenu: [
         { role: 'undo' },
         { role: 'redo' },
@@ -89,17 +94,17 @@ export function setupApplicationMenu(): void {
         { role: 'paste' },
         { type: 'separator' },
         {
-          label: 'Inline Edit Selection',
+          label: L.inlineEdit,
           accelerator: 'CmdOrCtrl+K',
           click: () => send('edit:inline')
         },
         { type: 'separator' },
         {
-          label: 'Run Bugbot on Diff',
+          label: L.bugbot,
           click: () => send('agent:bugbot')
         },
         {
-          label: 'Background Agent…',
+          label: L.backgroundAgent,
           click: () => send('agent:background')
         },
         { type: 'separator' },
@@ -107,63 +112,63 @@ export function setupApplicationMenu(): void {
       ]
     },
     {
-      label: 'View',
+      label: L.view,
       submenu: [
         {
-          label: 'Explorer',
+          label: L.explorer,
           accelerator: 'CmdOrCtrl+Shift+E',
           click: () => send('view:explorer')
         },
         {
-          label: 'Source Control',
+          label: L.scm,
           accelerator: 'CmdOrCtrl+Shift+G',
           click: () => send('view:scm')
         },
         { type: 'separator' },
         {
-          label: 'Toggle Terminal',
+          label: L.toggleTerminal,
           accelerator: 'Ctrl+`',
           click: () => send('view:terminal')
         },
         {
-          label: 'Problems',
+          label: L.problems,
           accelerator: 'CmdOrCtrl+Shift+M',
           click: () => send('view:problems')
         },
         {
-          label: 'Toggle AI Chat',
+          label: L.toggleChat,
           accelerator: 'CmdOrCtrl+L',
           click: () => send('view:chat')
         },
         {
-          label: 'AI Usage',
+          label: L.aiUsage,
           accelerator: 'CmdOrCtrl+Shift+U',
           click: () => send('view:usage')
         },
         {
-          label: 'Usage Layout',
+          label: L.usageLayout,
           submenu: [
             {
-              label: 'Dock Right',
+              label: L.dockRight,
               click: () => send('view:usage-right')
             },
             {
-              label: 'Overlay',
+              label: L.overlay,
               click: () => send('view:usage-overlay')
             },
             {
-              label: 'Hide',
+              label: L.hide,
               click: () => send('view:usage-hidden')
             }
           ]
         },
         {
-          label: 'Settings',
+          label: L.settings,
           accelerator: 'CmdOrCtrl+,',
           click: () => send('view:settings')
         },
         {
-          label: 'Extensions',
+          label: L.extensions,
           accelerator: 'CmdOrCtrl+Shift+X',
           click: () => send('view:extensions')
         },
@@ -175,35 +180,35 @@ export function setupApplicationMenu(): void {
       ]
     },
     {
-      label: 'Run',
+      label: L.run,
       submenu: [
         {
-          label: 'Run Current File',
+          label: L.runFile,
           accelerator: 'F5',
           click: () => send('run:file')
         },
         {
-          label: 'Start Debugging',
+          label: L.startDebug,
           accelerator: 'Shift+F5',
           click: () => send('run:file-inspect')
         },
         {
-          label: 'Continue',
+          label: L.continue,
           accelerator: 'F8',
           click: () => send('debug:continue')
         },
         {
-          label: 'Step Over',
+          label: L.stepOver,
           accelerator: 'F10',
           click: () => send('debug:stepOver')
         },
         {
-          label: 'Stop Debugging',
+          label: L.stopDebug,
           accelerator: 'Shift+F8',
           click: () => send('debug:stop')
         },
         {
-          label: 'Show Debug Panel',
+          label: L.showDebug,
           click: () => send('view:debug')
         },
         { type: 'separator' },
@@ -214,73 +219,73 @@ export function setupApplicationMenu(): void {
       ]
     },
     {
-      label: 'Terminal',
+      label: L.terminal,
       submenu: [
         {
-          label: 'New Terminal',
+          label: L.newTerminal,
           accelerator: 'Ctrl+Shift+`',
           click: () => send('view:terminal')
         }
       ]
     },
     {
-      label: 'Git',
+      label: L.git,
       submenu: [
         {
-          label: 'Clone Repository…',
+          label: L.clone,
           click: () => send('git:clone')
         },
         {
-          label: 'Refresh Status',
+          label: L.refreshGit,
           click: () => send('git:refresh')
         },
         { type: 'separator' },
         {
-          label: 'Pull',
+          label: L.pull,
           click: () => send('git:pull')
         },
         {
-          label: 'Push',
+          label: L.push,
           click: () => send('git:push')
         },
         {
-          label: 'Show Source Control',
+          label: L.showScm,
           click: () => send('view:scm')
         }
       ]
     },
     {
-      label: 'Help',
+      label: L.help,
       submenu: [
         {
-          label: 'Welcome',
+          label: L.welcome,
           click: () => send('help:welcome')
         },
         {
-          label: 'Documentation',
+          label: L.docs,
           click: () => send('help:docs')
         },
         {
-          label: 'Keyboard Shortcuts Reference',
+          label: L.shortcuts,
           accelerator: 'F1',
           click: () => send('help:shortcuts')
         },
         { type: 'separator' },
         {
-          label: 'Extensions Folder Tips',
+          label: L.extensionsTips,
           click: () => send('view:extensions')
         },
         {
-          label: 'Report Issue…',
+          label: L.report,
           click: () => send('help:report')
         },
         {
-          label: 'View License',
+          label: L.license,
           click: () => send('help:license')
         },
         { type: 'separator' },
         {
-          label: 'About saforall',
+          label: L.about,
           click: () => send('help:about')
         }
       ]

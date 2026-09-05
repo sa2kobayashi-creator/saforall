@@ -15,5 +15,13 @@ try {
         'time' => date('c'),
     ]);
 } catch (Throwable $e) {
-    Response::error('DB_CONNECTION_FAILED', $e->getMessage(), 503);
+    // Apache/PHP is reachable; MySQL (or DB config) is the problem.
+    Response::ok([
+        'service' => 'saforall-api',
+        'status' => 'degraded',
+        'database' => 'disconnected',
+        'time' => date('c'),
+        'hint' => 'XAMPP Control Panel で MySQL を Start してください',
+        'detail' => $e->getMessage(),
+    ]);
 }

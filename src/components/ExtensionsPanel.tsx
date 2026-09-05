@@ -6,6 +6,7 @@ import {
   normalizePermissions,
   permissionsLabel
 } from '../lib/extensionPermissions'
+import { localizeMcpTool, useI18n } from '../i18n'
 import './ExtensionsPanel.css'
 
 type Props = {
@@ -29,6 +30,7 @@ export function ExtensionsPanel({
   onRun,
   onRefresh
 }: Props) {
+  const { t, locale } = useI18n()
   const [pending, setPending] = useState<{
     extension: WorkspaceExtension
     command: ExtensionCommand
@@ -62,20 +64,30 @@ export function ExtensionsPanel({
       setMcpServers(result.servers.map((row) => ({ id: row.id, command: row.command })))
       setMcpTools(result.tools)
       setMcpStatuses(result.statuses ?? [])
+      const fails = (result.statuses ?? []).filter((row) => !row.ok).length
+      const oks = (result.statuses ?? []).filter((row) => row.ok).length
       const summary =
-        result.summary ??
-        `読込完了: サーバー ${result.servers.length} / ツール ${result.tools.length} 件`
+        fails > 0
+          ? t('ext.mcp.summaryPartial', {
+              ok: oks,
+              fail: fails,
+              tools: result.tools.length
+            })
+          : t('ext.mcp.summary', {
+              servers: result.servers.length,
+              tools: result.tools.length
+            })
       setMcpSummary(summary)
       if (result.servers.length === 0) {
-        setMcpError('mcp.json にサーバーがありません')
+        setMcpError(t('ext.mcp.noServers'))
       } else if (result.tools.length === 0) {
-        const fails = (result.statuses ?? [])
+        const failLines = (result.statuses ?? [])
           .filter((row) => !row.ok)
           .map((row) => `${row.serverId}: ${row.error ?? '起動失敗'}`)
         setMcpError(
-          fails.length > 0
-            ? `サーバーは見つかったがツールを取得できませんでした。\n${fails.join('\n')}`
-            : 'サーバーはありますが、公開ツールが 0 件です'
+          failLines.length > 0
+            ? `${t('ext.mcp.foundNoTools')}\n${failLines.join('\n')}`
+            : t('ext.mcp.zeroTools')
         )
       }
     } catch (error) {
@@ -112,27 +124,22 @@ export function ExtensionsPanel({
   )
 
   return (
-    <div className="extensions-panel" aria-label="拡張機能">
+    <div className="extensions-panel" aria-label={t('ext.title')}>
       <div className="extensions-head">
-        <strong>Extensions</strong>
-        <button type="button" onClick={onRefresh} title="再読込">
-          更新
+        <strong>{t('ext.title')}</strong>
+        <button type="button" onClick={onRefresh} title={t('ext.refresh')}>
+          {t('ext.refresh')}
         </button>
       </div>
-      <p className="extensions-lead">
-        `.saforall/extensions/*.json` を読み込みます。実行には権限承認が必要です（`{'{file}'}` =
-        アクティブファイル）。
-      </p>
+      <p className="extensions-lead">{t('ext.lead')}</p>
 
       <div className="extensions-market">
-        <strong>MCP</strong>
-        <p>
-          `.saforall/mcp.json`（例: `.saforall/mcp.json.example`）。Agent から `call_mcp_tool` でも利用できます。
-        </p>
+        <strong>{t('ext.mcp.title')}</strong>
+        <p>{t('ext.mcp.lead')}</p>
         <button type="button" disabled={!workspacePath || mcpBusy} onClick={() => void refreshMcp()}>
-          {mcpBusy ? '読込中…' : 'MCP ツールを読み込む'}
+          {mcpBusy ? t('ext.mcp.loading') : t('ext.mcp.load')}
         </button>
-        {mcpBusy && <p className="extensions-perms">MCP サーバーに接続しています…</p>}
+        {mcpBusy && <p className="extensions-perms">{t('ext.mcp.connecting')}</p>}
         {mcpSummary && !mcpBusy && (
           <p className={`extensions-status ${mcpTools.length > 0 ? 'ok' : 'warn'}`}>{mcpSummary}</p>
         )}
@@ -142,8 +149,11 @@ export function ExtensionsPanel({
             {mcpStatuses.map((row) => (
               <li key={row.serverId} className={row.ok ? 'ok' : 'fail'}>
                 {row.ok
-                  ? `✓ ${row.serverId} · ツール ${row.toolCount} 件`
-                  : `✗ ${row.serverId} · ${row.error ?? '失敗'}`}
+                  ? t('ext.mcp.serverOk', { id: row.serverId, count: row.toolCount })
+                  : t('ext.mcp.serverFail', {
+                      id: row.serverId,
+                      error: row.error ?? '失敗'
+                    })}
               </li>
             ))}
           </ul>
@@ -155,24 +165,28 @@ export function ExtensionsPanel({
         )}
         {mcpTools.length > 0 && (
           <ul className="extensions-list">
-            {mcpTools.slice(0, 40).map((tool) => (
-              <li key={`${tool.serverId}:${tool.name}`} className="extensions-card">
-                <div className="extensions-card-title">
-                  {tool.name} <span className="extensions-perms">@{tool.serverId}</span>
-                </div>
-                {tool.description && <p>{tool.description}</p>}
-              </li>
-            ))}
+            {mcpTools.slice(0, 40).map((tool) => {
+              const localized = localizeMcpTool(locale, tool.name, tool.description)
+              return (
+                <li key={`${tool.serverId}:${tool.name}`} className="extensions-card">
+                  <div className="extensions-card-title">
+                    {localized.title}{' '}
+                    <span className="extensions-perms">@{tool.serverId}</span>
+                  </div>
+                  {localized.description && <p>{localized.description}</p>}
+                </li>
+              )
+            })}
           </ul>
         )}
         {!mcpBusy && mcpSummary && mcpTools.length === 0 && !mcpError && (
-          <p className="extensions-empty">ツール一覧は空です</p>
+          <p className="extensions-empty">{t('ext.mcp.emptyTools')}</p>
         )}
       </div>
 
       <div className="extensions-market">
-        <strong>Marketplace (Open VSX)</strong>
-        <p>検索のみ（VSIX 実行ランタイムは未対応）。</p>
+        <strong>{t('ext.market.title')}</strong>
+        <p>{t('ext.market.lead')}</p>
         <form
           onSubmit={(event) => {
             event.preventDefault()
@@ -198,10 +212,10 @@ export function ExtensionsPanel({
           <input
             value={marketQuery}
             onChange={(event) => setMarketQuery(event.target.value)}
-            placeholder="例: python, prettier"
+            placeholder={t('ext.market.placeholder')}
           />
           <button type="submit" disabled={marketBusy || !marketQuery.trim()}>
-            {marketBusy ? '…' : '検索'}
+            {marketBusy ? '…' : t('ext.market.search')}
           </button>
         </form>
         {marketError && <p className="extensions-empty">{marketError}</p>}
@@ -211,7 +225,7 @@ export function ExtensionsPanel({
               <div className="extensions-card-title">{item.name}</div>
               <p>{item.description || item.id}</p>
               <a href={item.url} target="_blank" rel="noreferrer">
-                Open VSX で見る
+                {t('ext.market.open')}
               </a>
             </li>
           ))}
@@ -219,7 +233,7 @@ export function ExtensionsPanel({
       </div>
 
       {extensions.length === 0 ? (
-        <p className="extensions-empty">拡張はまだありません</p>
+        <p className="extensions-empty">{t('ext.empty')}</p>
       ) : (
         <ul className="extensions-list">
           {extensions.map((ext) => {
@@ -229,8 +243,10 @@ export function ExtensionsPanel({
                 <div className="extensions-card-title">{ext.name}</div>
                 {ext.description && <p>{ext.description}</p>}
                 <p className="extensions-perms">
-                  権限: {(ext.permissions ?? ['terminal.run']).join(', ')}
-                  {granted.length > 0 ? ` · 承認済み: ${granted.join(', ')}` : ' · 未承認'}
+                  {t('ext.perms')}: {(ext.permissions ?? ['terminal.run']).join(', ')}
+                  {granted.length > 0
+                    ? ` · ${t('ext.granted')}: ${granted.join(', ')}`
+                    : ` · ${t('ext.ungranted')}`}
                 </p>
                 <div className="extensions-commands">
                   {ext.commands.map((cmd) => (
@@ -248,9 +264,9 @@ export function ExtensionsPanel({
                       type="button"
                       className="danger"
                       onClick={() => onRevoke(ext.id)}
-                      title="権限を取り消す"
+                      title={t('ext.revoke')}
                     >
-                      権限を取り消す
+                      {t('ext.revoke')}
                     </button>
                   )}
                 </div>
@@ -261,16 +277,19 @@ export function ExtensionsPanel({
       )}
 
       {pending && (
-        <div className="extensions-grant" role="dialog" aria-label="拡張の権限確認">
-          <h3>権限の承認</h3>
+        <div className="extensions-grant" role="dialog" aria-label={t('ext.grantTitle')}>
+          <h3>{t('ext.grantTitle')}</h3>
           <p>
-            <strong>{pending.extension.name}</strong> の「{pending.command.title}」を実行するには次の権限が必要です。
+            {t('ext.grantBody', {
+              name: pending.extension.name,
+              command: pending.command.title
+            })}
           </p>
           <p className="extensions-grant-perms">{pendingLabel}</p>
           <pre>{pending.run}</pre>
           <div className="extensions-grant-actions">
             <button type="button" onClick={() => setPending(null)}>
-              キャンセル
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -281,7 +300,7 @@ export function ExtensionsPanel({
                 setPending(null)
               }}
             >
-              承認して実行
+              {t('ext.grantConfirm')}
             </button>
           </div>
         </div>

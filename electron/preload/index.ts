@@ -90,6 +90,8 @@ export type ChatStreamHandlers = {
 }
 
 const api = {
+  setLocale: (locale: 'ja' | 'en'): Promise<boolean> =>
+    ipcRenderer.invoke('app:setLocale', locale),
   openDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke('dialog:openDirectory'),
   readFile: (filePath: string): Promise<string> =>
@@ -154,6 +156,9 @@ const api = {
     path: string
     content: string
   }): Promise<boolean> => ipcRenderer.invoke('lsp:sync', params),
+  closeLsp: (params: { path: string }): Promise<boolean> =>
+    ipcRenderer.invoke('lsp:close', params),
+  resetLsp: (): Promise<boolean> => ipcRenderer.invoke('lsp:reset'),
   lspCompletion: (params: {
     path: string
     line: number

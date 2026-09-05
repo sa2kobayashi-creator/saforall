@@ -44,6 +44,8 @@ import {
 import { planAppliedContent } from './lib/applyContent'
 import { languageFromPath } from './lib/language'
 import { prefetchAllModelCatalogs } from './lib/modelCatalogCache'
+import { parseLocale, useI18n } from './i18n'
+import { mergeProblems } from './lib/problems'
 import {
   chatWidthMax,
   CHAT_WIDTH_MIN,
@@ -69,6 +71,7 @@ const initialBackend: BackendStatus = {
 }
 
 export default function App() {
+  const { setLocale } = useI18n()
   const initialLayout = loadLayoutPrefs()
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [workspaceId, setWorkspaceId] = useState<number | null>(null)
@@ -150,24 +153,15 @@ export default function App() {
         id: 'backend-offline',
         severity: 'error',
         source: 'Backend',
-        message: backend.message || 'バックエンドに接続できません'
+        message:
+          backend.message ||
+          'バックエンドに接続できません。XAMPP で Apache と MySQL を Start してください。'
       })
-    }
-    for (const tab of tabs) {
-      if (tab.dirty) {
-        items.push({
-          id: `dirty:${tab.path}`,
-          severity: 'warning',
-          source: 'Editor',
-          message: '未保存の変更があります',
-          path: tab.path
-        })
-      }
     }
     items.push(...monacoProblems)
     items.push(...lspProblems)
-    return items
-  }, [backend, tabs, monacoProblems, lspProblems])
+    return mergeProblems(items)
+  }, [backend, monacoProblems, lspProblems])
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
 
@@ -214,14 +208,29 @@ export default function App() {
       if (!cancelled) {
         window.dispatchEvent(new CustomEvent('saforall-model-catalog-updated', { detail: {} }))
       }
+      try {
+        const result = await window.saforall.request<{
+          settings: Record<string, string | boolean>
+        }>('GET', '/settings')
+        if (cancelled || !result.ok || !result.data?.settings) return
+        const value = result.data.settings['app.locale']
+        if (typeof value === 'string') setLocale(parseLocale(value))
+      } catch {
+        /* ignore */
+      }
     })()
     return () => {
       cancelled = true
     }
-  }, [backend.connected])
+  }, [backend.connected, setLocale])
 
   const openWorkspaceAt = useCallback(
     async (path: string) => {
+      if (typeof window.saforall.resetLsp === 'function') {
+        void window.saforall.resetLsp()
+      }
+      setLspProblems([])
+      setMonacoProblems([])
       setWorkspacePath(path)
       setWorkspaceId(null)
       setTabs([])
@@ -260,6 +269,11 @@ export default function App() {
     if (typeof window.saforall.unwatchWorkspace === 'function') {
       void window.saforall.unwatchWorkspace()
     }
+    if (typeof window.saforall.resetLsp === 'function') {
+      void window.saforall.resetLsp()
+    }
+    setLspProblems([])
+    setMonacoProblems([])
     setWorkspacePath(null)
     setWorkspaceId(null)
     setTabs([])
@@ -431,6 +445,11 @@ export default function App() {
         delete next[path]
         return next
       })
+      if (typeof window.saforall.closeLsp === 'function') {
+        void window.saforall.closeLsp({ path })
+      }
+      setLspProblems((current) => current.filter((row) => row.path !== path))
+      setMonacoProblems((current) => current.filter((row) => row.path !== path))
     },
     [tabs, activePath]
   )
@@ -1077,10 +1096,10 @@ export default function App() {
     if (typeof window.saforall.onLspDiagnostics !== 'function') return
     const unsubscribe = window.saforall.onLspDiagnostics((payload) => {
       setLspProblems(
-        (payload.items ?? []).map((row, index) => ({
-          id: `lsp:${row.path}:${row.line}:${row.column}:${index}`,
+        (payload.items ?? []).map((row) => ({
+          id: `lsp:${row.path}:${row.line}:${row.column}:${row.message}`,
           severity: row.severity,
-          source: row.source || 'LSP',
+          source: row.source || 'tsserver',
           message: row.message,
           path: row.path,
           line: row.line,
@@ -1300,10 +1319,12 @@ export default function App() {
           <WelcomeScreen
             backendConnected={backend.connected}
             backendMessage={backend.message}
+            backendBaseUrl={backend.baseUrl}
             onOpenFolder={() => void openWorkspace()}
             onOpenRecent={(path) => void openWorkspaceAt(path)}
             onClone={() => setCloneOpen(true)}
             onOpenSettings={() => setSettingsOpen(true)}
+            onRecheckBackend={() => void checkBackend()}
           />
         </div>
       ) : (
@@ -1353,7 +1374,17 @@ export default function App() {
               }}
             />
           ) : (
-            <div style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+            <div
+              style={{
+                width: sidebarWidth,
+                minWidth: sidebarWidth,
+                height: '100%',
+                minHeight: 0,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column'
+              }}
+            >
               <ExtensionsPanel
                 extensions={extensions}
                 activeFilePath={activePath}
@@ -1396,6 +1427,7 @@ export default function App() {
                   tabs={tabs}
                   activePath={activePath}
                   tabWidths={tabWidths}
+                  backendConnected={backend.connected}
                   onSelectTab={(path) => {
                     setActivePath(path)
                     setStatus(path)

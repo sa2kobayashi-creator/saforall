@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useI18n } from '../i18n'
 import './Sidebar.css'
 
 type DirEntry = {
@@ -132,20 +133,22 @@ export function Sidebar({
     ? workspacePath.split(/[/\\]/).filter(Boolean).pop()
     : null
 
+  const { t } = useI18n()
+
   return (
     <aside className="sidebar" style={{ width }}>
       <div className="sidebar-header">
-        <span>{workspaceName ?? 'EXPLORER'}</span>
-        <button type="button" onClick={onOpenWorkspace} title="フォルダを開く">
+        <span>{workspaceName ?? t('sidebar.explorer')}</span>
+        <button type="button" onClick={onOpenWorkspace} title={t('sidebar.openFolder')}>
           ＋
         </button>
       </div>
 
       {!workspacePath && (
         <div className="sidebar-empty">
-          <p>ワークスペースが未選択です</p>
+          <p>{t('sidebar.noWorkspace')}</p>
           <button type="button" className="primary" onClick={onOpenWorkspace}>
-            フォルダを開く
+            {t('sidebar.openFolder')}
           </button>
         </div>
       )}

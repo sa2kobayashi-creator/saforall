@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useI18n } from '../i18n'
 import './SourceControlPanel.css'
 
 type GitFile = {
@@ -137,21 +138,23 @@ export function SourceControlPanel({
     onOpenFile(`${workspacePath}${sep}${relative}`)
   }
 
+  const { t } = useI18n()
+
   return (
-    <aside className="scm-panel" style={{ width }} aria-label="Source Control">
+    <aside className="scm-panel" style={{ width }} aria-label={t('scm.aria')}>
       <div className="scm-header">
-        <strong>SOURCE CONTROL</strong>
+        <strong>{t('scm.title')}</strong>
         <div className="scm-actions">
-          <button type="button" title="更新" disabled={busy} onClick={() => void refresh()}>
+          <button type="button" title={t('scm.refresh')} disabled={busy} onClick={() => void refresh()}>
             ↻
           </button>
-          <button type="button" title="Pull" disabled={busy || !isRepo} onClick={() => void runOp('Pull', () => window.saforall.gitPull(workspacePath!))}>
+          <button type="button" title={t('scm.pull')} disabled={busy || !isRepo} onClick={() => void runOp('Pull', () => window.saforall.gitPull(workspacePath!))}>
             ⇓
           </button>
-          <button type="button" title="Push" disabled={busy || !isRepo} onClick={() => void runOp('Push', () => window.saforall.gitPush(workspacePath!))}>
+          <button type="button" title={t('scm.push')} disabled={busy || !isRepo} onClick={() => void runOp('Push', () => window.saforall.gitPush(workspacePath!))}>
             ⇑
           </button>
-          <button type="button" title="Clone" onClick={onClone}>
+          <button type="button" title={t('scm.clone')} onClick={onClone}>
             ↓
           </button>
         </div>
@@ -159,12 +162,12 @@ export function SourceControlPanel({
 
       {!workspacePath && (
         <div className="scm-empty">
-          <p>フォルダを開くか、リポジトリをクローンしてください。</p>
+          <p>{t('scm.empty')}</p>
           <button type="button" onClick={onOpenWorkspace}>
-            フォルダを開く
+            {t('common.openFolder')}
           </button>
           <button type="button" onClick={onClone}>
-            Clone…
+            {t('scm.clone')}
           </button>
         </div>
       )}

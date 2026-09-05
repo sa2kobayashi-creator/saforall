@@ -35,17 +35,30 @@ if (mb_strlen($suffix) > $maxSuffix) {
 
 $settings = AppSettings::load($pdo);
 $provider = ChatService::providerConfig($settings, 'openai', 'explain', null);
+$nearby = isset($body['nearby']) && is_string($body['nearby']) ? trim($body['nearby']) : '';
+if (mb_strlen($nearby) > 600) {
+    $nearby = mb_substr($nearby, 0, 600);
+}
 
 $system = implode("\n", [
     'You are a code completion engine like Cursor Tab.',
     'Return ONLY the text that should be inserted at the cursor.',
     'Do not repeat the prefix. Do not wrap in markdown fences.',
     'Prefer a short continuation (1-12 lines). Stop early when a statement/block completes.',
+    'Match indentation and style of the surrounding code.',
     'Language: ' . $language,
     $path !== '' ? 'File: ' . $path : '',
 ]);
 
-$user = "PREFIX:\n{$prefix}\n\nSUFFIX:\n{$suffix}\n\nInsert completion now:";
+$userParts = [
+    "PREFIX:\n{$prefix}",
+    "SUFFIX:\n{$suffix}",
+];
+if ($nearby !== '') {
+    $userParts[] = "NEARBY SYMBOLS:\n{$nearby}";
+}
+$userParts[] = 'Insert completion now:';
+$user = implode("\n\n", $userParts);
 
 try {
     $completion = LlmClient::chat(

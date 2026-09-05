@@ -21,6 +21,7 @@ import {
   type RouterAutoPolicy,
   type RouterProfile
 } from '../lib/llmModels'
+import { parseLocale, useI18n } from '../i18n'
 import './SettingsPanel.css'
 
 type Props = {
@@ -33,6 +34,7 @@ type Props = {
 type SettingsMap = Record<string, string | boolean>
 
 export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: Props) {
+  const { t, locale, setLocale, locales, localeLabels } = useI18n()
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState('https://api.openai.com/v1')
   const [openaiKey, setOpenaiKey] = useState('')
   const [openaiKeySet, setOpenaiKeySet] = useState(false)
@@ -151,6 +153,9 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
           setLimitWorkers(settings['cost.workers.monthly_usd'])
         }
         setRouterEngines(parseEngineList(settings['router.enabled_engines'], DEFAULT_ROUTER_ENGINES))
+        if (typeof settings['app.locale'] === 'string') {
+          setLocale(parseLocale(settings['app.locale']))
+        }
         const profile = parseRouterProfile(settings['router.profile'])
         setRouterProfile(profile)
         setRouterPolicy(parseRouterAutoPolicy(settings['router.auto_policy'], profile))
@@ -278,7 +283,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
     if (!backendConnected) {
-      setStatus('バックエンド未接続のため保存できません')
+      setStatus(t('settings.offlineSave'))
       return
     }
 
@@ -291,6 +296,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
     setStatus(null)
 
     const settings: Record<string, string> = {
+      'app.locale': locale,
       'router.enabled_engines': JSON.stringify(routerEngines),
       'router.profile': routerProfile,
       'router.auto_policy': JSON.stringify(routerPolicy),
@@ -334,7 +340,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
     setSaving(false)
 
     if (!result.ok) {
-      setStatus(result.error?.message ?? '保存に失敗しました')
+      setStatus(result.error?.message ?? t('settings.saveFailed'))
       return
     }
 
@@ -354,23 +360,37 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
       setWorkersTokenSet(true)
       setWorkersToken('')
     }
-    setStatus('設定を保存しました')
+    setStatus(t('settings.saved'))
   }
 
   return (
-    <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="設定">
+    <div className="settings-overlay" role="dialog" aria-modal="true" aria-label={t('settings.aria')}>
       <div className="settings-panel">
         <div className="settings-header">
-          <h2>設定</h2>
+          <h2>{t('settings.title')}</h2>
         </div>
 
         {!backendConnected && (
-          <p className="settings-warning">
-            バックエンド未接続です。XAMPP の Apache / MySQL を起動してください。
-          </p>
+          <p className="settings-warning">{t('settings.backendWarning')}</p>
         )}
 
         <form className="settings-form" onSubmit={(event) => void onSubmit(event)}>
+          <h3 className="settings-section-title">{t('settings.localeSection')}</h3>
+          <p className="settings-hint">{t('settings.localeHint')}</p>
+          <label>
+            {t('settings.localeSection')}
+            <select
+              value={locale}
+              onChange={(event) => setLocale(parseLocale(event.target.value))}
+            >
+              {locales.map((code) => (
+                <option key={code} value={code}>
+                  {localeLabels[code]}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <h3 className="settings-section-title">Auto パイプライン</h3>
           <p className="settings-hint">
             チャットで「自動」を選んだときの振り分け方針です。標準は「バランス（おすすめ）」＝安価分散の改善版です。
@@ -686,7 +706,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
               閉じる
             </button>
             <button type="submit" className="settings-save" disabled={saving || !backendConnected}>
-              {saving ? '保存中…' : '保存'}
+              {saving ? t('common.saving') : t('common.save')}
             </button>
           </div>
         </form>

@@ -156,7 +156,9 @@ function languageIdForPath(filePath: string, fallback: string): string {
   if (lower.endsWith('.tsx')) return 'typescriptreact'
   if (lower.endsWith('.ts')) return 'typescript'
   if (lower.endsWith('.jsx')) return 'javascriptreact'
-  if (lower.endsWith('.js')) return 'javascript'
+  if (lower.endsWith('.mjs') || lower.endsWith('.cjs') || lower.endsWith('.js')) {
+    return 'javascript'
+  }
   if (lower.endsWith('.py')) return 'python'
   return fallback
 }
@@ -187,6 +189,14 @@ export class LspClient extends EventEmitter {
     this.child.stdout.on('data', (chunk: Buffer) => this.onData(chunk.toString('utf-8')))
     this.child.stderr.on('data', (chunk: Buffer) => {
       this.emit('log', chunk.toString('utf-8'))
+    })
+    this.child.on('error', (error) => {
+      for (const waiter of Array.from(this.waiters.values())) {
+        waiter.reject(error instanceof Error ? error : new Error(String(error)))
+      }
+      this.waiters.clear()
+      this.child = null
+      this.emit('exit')
     })
     this.child.on('exit', () => {
       this.child = null
@@ -489,7 +499,7 @@ export type LspServerConfig = {
 const DEFAULT_SERVERS: LspServerConfig[] = [
   {
     languageId: 'typescript',
-    extensions: ['.ts', '.tsx', '.js', '.jsx'],
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'],
     command: 'typescript-language-server',
     args: ['--stdio'],
     source: 'tsserver'
@@ -503,11 +513,25 @@ const DEFAULT_SERVERS: LspServerConfig[] = [
   }
 ]
 
+function resolveLspCommand(command: string): string {
+  if (process.platform !== 'win32') return command
+  if (/\.(cmd|exe|bat)$/i.test(command)) return command
+  return `${command}.cmd`
+}
+
+function normalizeDiagPath(filePath: string): string {
+  return filePath.replace(/\//g, '\\').toLowerCase()
+}
+
 export class LspManager {
   private clients = new Map<string, LspClient>()
   private versions = new Map<string, number>()
   private onDiagnostics: ((items: LspDiagnostic[]) => void) | null = null
   private byPath = new Map<string, LspDiagnostic[]>()
+  private failedAt = new Map<string, number>()
+  private readonly failCooldownMs = 15_000
+  private syncQueue = new Map<string, { cwd: string; content: string; seq: number }>()
+  private syncSeq = 0
 
   setDiagnosticsHandler(handler: (items: LspDiagnostic[]) => void): void {
     this.onDiagnostics = handler
@@ -519,6 +543,38 @@ export class LspManager {
     this.onDiagnostics?.(all.slice(0, 300))
   }
 
+  private clearDiagnosticsForLanguage(source: string): void {
+    let changed = false
+    for (const [path, rows] of Array.from(this.byPath.entries())) {
+      const next = rows.filter((row) => row.source !== source)
+      if (next.length !== rows.length) {
+        changed = true
+        if (next.length === 0) this.byPath.delete(path)
+        else this.byPath.set(path, next)
+      }
+    }
+    if (changed) this.emitAll()
+  }
+
+  private bindClient(config: LspServerConfig, client: LspClient): void {
+    client.on('diagnostics', (payload: { path: string; diagnostics: LspDiagnostic[] }) => {
+      this.byPath.set(normalizeDiagPath(payload.path), payload.diagnostics)
+      this.emitAll()
+    })
+    client.on('exit', () => {
+      this.clients.delete(config.languageId)
+      this.clearDiagnosticsForLanguage(config.source ?? config.languageId)
+      this.failedAt.set(config.languageId, Date.now())
+      // Drop open versions so next sync re-opens documents
+      for (const key of Array.from(this.versions.keys())) {
+        const match = DEFAULT_SERVERS.find((row) =>
+          row.extensions.some((ext) => key.endsWith(ext))
+        )
+        if (match?.languageId === config.languageId) this.versions.delete(key)
+      }
+    })
+  }
+
   async ensureForFile(workspaceRoot: string, filePath: string, text: string): Promise<void> {
     const lower = filePath.toLowerCase()
     const config = DEFAULT_SERVERS.find((row) =>
@@ -526,28 +582,52 @@ export class LspManager {
     )
     if (!config) return
 
+    const pathKey = normalizeDiagPath(filePath)
+    const seq = ++this.syncSeq
+    this.syncQueue.set(pathKey, { cwd: workspaceRoot, content: text, seq })
+
+    const failed = this.failedAt.get(config.languageId)
+    if (failed && Date.now() - failed < this.failCooldownMs) return
+
     let client = this.clients.get(config.languageId)
     if (!client) {
       client = new LspClient(config.languageId, config.source ?? config.languageId)
-      client.on('diagnostics', (payload: { path: string; diagnostics: LspDiagnostic[] }) => {
-        this.byPath.set(payload.path.toLowerCase(), payload.diagnostics)
-        this.emitAll()
-      })
+      this.bindClient(config, client)
       try {
-        await client.start(config.command, config.args ?? [], workspaceRoot)
+        await client.start(resolveLspCommand(config.command), config.args ?? [], workspaceRoot)
         this.clients.set(config.languageId, client)
+        this.failedAt.delete(config.languageId)
       } catch {
-        // server binary missing — silently skip
+        this.failedAt.set(config.languageId, Date.now())
         return
       }
     }
 
-    const key = filePath.toLowerCase()
-    const version = (this.versions.get(key) ?? 0) + 1
-    this.versions.set(key, version)
+    // Only apply the latest queued content for this path
+    const queued = this.syncQueue.get(pathKey)
+    if (!queued || queued.seq !== seq) return
+
+    const version = (this.versions.get(pathKey) ?? 0) + 1
+    this.versions.set(pathKey, version)
     const languageId = languageIdForPath(filePath, config.languageId)
-    if (version === 1) await client.openDocument(filePath, text, languageId)
-    else await client.changeDocument(filePath, text, version)
+    if (version === 1) await client.openDocument(filePath, queued.content, languageId)
+    else await client.changeDocument(filePath, queued.content, version)
+  }
+
+  async closeDocument(filePath: string): Promise<void> {
+    const pathKey = normalizeDiagPath(filePath)
+    const client = this.clientForPath(filePath)
+    if (client) {
+      try {
+        await client.closeDocument(filePath)
+      } catch {
+        // ignore
+      }
+    }
+    this.byPath.delete(pathKey)
+    this.versions.delete(pathKey)
+    this.syncQueue.delete(pathKey)
+    this.emitAll()
   }
 
   private clientForPath(filePath: string): LspClient | null {
@@ -637,6 +717,9 @@ export class LspManager {
     this.clients.clear()
     this.byPath.clear()
     this.versions.clear()
+    this.syncQueue.clear()
+    this.failedAt.clear()
+    this.emitAll()
   }
 }
 
