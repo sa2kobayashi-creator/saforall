@@ -2,11 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 test('agent mode banner copy distinguishes tool execution', () => {
-  const ask = '説明・提案が中心。コードは差分確認してから適用します。'
-  const agent =
-    'ツール必須（plan → explore → edit_file → run_shell）。文章だけで終わらず Composer に載せます。'
+  const ask = '説明・提案。差分は確認してから適用'
+  const agent = 'ツール必須 → Composer に載せる'
   assert.match(ask, /確認/)
-  assert.match(agent, /edit_file/)
   assert.match(agent, /Composer/)
 })
 

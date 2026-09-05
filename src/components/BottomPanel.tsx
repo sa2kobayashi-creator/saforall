@@ -53,10 +53,15 @@ export function BottomPanel({
   onOpenFile
 }: Props) {
   const { t } = useI18n()
-  if (!open) return null
 
   return (
-    <section className="bottom-panel" style={{ height }} aria-label={t('bottom.aria')}>
+    <section
+      className={`bottom-panel${open ? '' : ' is-collapsed'}`}
+      style={{ height: open ? height : 0 }}
+      aria-label={t('bottom.aria')}
+      aria-hidden={!open}
+      hidden={!open}
+    >
       <div className="bottom-panel-header">
         <div className="bottom-panel-tabs" role="tablist">
           <button
@@ -105,12 +110,13 @@ export function BottomPanel({
           style={{ display: activeTab === 'terminal' ? 'flex' : 'none' }}
         >
           <TerminalPanel
-            open={open}
+            open
+            visible={open && activeTab === 'terminal'}
             embedded
             height={height}
-            fitTrigger={activeTab}
+            fitTrigger={`${activeTab}-${open}-${height}`}
             cwd={cwd}
-            pendingCommand={activeTab === 'terminal' ? pendingCommand : null}
+            pendingCommand={open && activeTab === 'terminal' ? pendingCommand : null}
             onCommandSent={onCommandSent}
           />
         </div>

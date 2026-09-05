@@ -163,6 +163,13 @@ export function ChatPanel({
   } | null>(null)
   const [sessions, setSessions] = useState<ChatSessionRecord[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [bannerDismissed, setBannerDismissed] = useState(() => {
+    try {
+      return window.localStorage.getItem('saforall-chat-banner-dismissed') === '1'
+    } catch {
+      return false
+    }
+  })
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null)
 
   const modeRef = useRef(mode)
@@ -178,6 +185,17 @@ export function ChatPanel({
     }
     prevChatWidthRef.current = width
   }, [width])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        'saforall-chat-banner-dismissed',
+        bannerDismissed ? '1' : '0'
+      )
+    } catch {
+      // ignore
+    }
+  }, [bannerDismissed])
 
   const activeSession = useMemo(
     () => sessions.find((row) => Number(row.id) === sessionId) ?? null,
@@ -1136,8 +1154,8 @@ export function ChatPanel({
     <aside className="chat-panel" aria-label="AI チャット" style={{ width }}>
       <div className="chat-layout">
         <div className="chat-main">
-          <div className="chat-header">
-            <div className="chat-header-left">
+          <div className="chat-header chat-header--compact">
+            <div className="chat-header-row">
               <button
                 type="button"
                 className={`chat-history-toggle${historyOpen ? ' is-active' : ''}`}
@@ -1146,10 +1164,7 @@ export function ChatPanel({
               >
                 履歴
               </button>
-              <div>
-                <strong>{activeSession?.title || 'AI'}</strong>
-                <span className="chat-context">{contextLabel}</span>
-              </div>
+              <strong className="chat-session-title">{activeSession?.title || 'AI'}</strong>
               <button
                 type="button"
                 className="chat-new-btn"
@@ -1159,30 +1174,22 @@ export function ChatPanel({
               >
                 新規
               </button>
-            </div>
-            <div className="chat-header-right">
-              <fieldset className="engine-picker">
-                <legend>AI</legend>
-                {(
-                  [
-                    ['auto', '自動（おすすめ）'],
-                    ['cursor', 'Cursor'],
-                    ['openai', 'OpenAI'],
-                    ['gemini', 'Gemini'],
-                    ['workers', 'Workers AI']
-                  ] as const
-                ).map(([value, label]) => (
-                  <label key={value}>
-                    <input
-                      type="radio"
-                      name="saforall-engine"
-                      checked={engine === value}
-                      onChange={() => changeEngine(value)}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </fieldset>
+              <span className="chat-header-spacer" />
+              <label className="engine-select">
+                <span className="sr-only">AI</span>
+                <select
+                  value={engine}
+                  disabled={!backendConnected}
+                  title="AI エンジン"
+                  onChange={(event) => changeEngine(event.target.value as AiEngine)}
+                >
+                  <option value="auto">自動</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="cursor">Cursor</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="workers">Workers</option>
+                </select>
+              </label>
               {engine !== 'auto' && (
                 <label className="model-select">
                   <span className="sr-only">Model</span>
@@ -1192,7 +1199,7 @@ export function ChatPanel({
                     title="このエンジン内のモデル"
                     onChange={(event) => setModelChoice(event.target.value)}
                   >
-                    <option value="auto-within-engine">モデル自動（安い/作業向け）</option>
+                    <option value="auto-within-engine">モデル自動</option>
                     {enabledByEngine[engine].map((id) => {
                       const meta = optionsForEngine(engine, enabledByEngine[engine]).find(
                         (row) => row.id === id
@@ -1206,7 +1213,7 @@ export function ChatPanel({
                   </select>
                 </label>
               )}
-              <div className="mode-switch" role="group" aria-label="チャットモード">
+              <div className="mode-switch mode-switch--compact" role="group" aria-label="チャットモード">
                 <button
                   type="button"
                   className={mode === 'ask' ? 'active' : ''}
@@ -1214,7 +1221,6 @@ export function ChatPanel({
                   title="説明中心。コード適用は確認してから"
                 >
                   Ask
-                  <small>確認して適用</small>
                 </button>
                 <button
                   type="button"
@@ -1223,44 +1229,62 @@ export function ChatPanel({
                   title="edit_file / run_shell などのツールで調査・修正・検証"
                 >
                   Agent
-                  <small>ツールで実行</small>
                 </button>
               </div>
               <span className={`chat-backend ${backendConnected ? 'ok' : 'ng'}`}>
-                {backendConnected ? 'API 接続済み' : 'API 未接続'}
+                {backendConnected ? '接続' : '未接続'}
               </span>
             </div>
+            <div className="chat-context-line">{contextLabel}</div>
           </div>
 
-          <div className={`mode-banner ${mode}`}>
-            <div className="mode-banner-main">
-              {mode === 'ask' ? (
-                <>
-                  <strong>Ask</strong>
-                  <span>説明・提案が中心。コードは差分確認してから適用します。</span>
-                </>
-              ) : (
-                <>
-                  <strong>Agent</strong>
-                  <span>
-                    ツール必須（plan → explore → edit_file → run_shell）。文章だけで終わらず Composer に載せます。
-                  </span>
-                </>
-              )}
+          {!bannerDismissed && (
+            <div className={`mode-banner mode-banner--compact ${mode}`}>
+              <div className="mode-banner-main">
+                {mode === 'ask' ? (
+                  <>
+                    <strong>Ask</strong>
+                    <span>説明・提案。差分は確認してから適用</span>
+                  </>
+                ) : (
+                  <>
+                    <strong>Agent</strong>
+                    <span>ツール必須 → Composer に載せる</span>
+                  </>
+                )}
+              </div>
+              <span className="mode-banner-sub">
+                {engine === 'auto'
+                  ? '自動切替'
+                  : engine === 'cursor'
+                    ? 'Cursor'
+                    : engine === 'gemini'
+                      ? 'Gemini（ツール不可）'
+                      : engine === 'workers'
+                        ? 'Workers（ツール不可）'
+                        : 'OpenAI'}
+                {routeLabel ? ` · ${routeLabel}` : ''}
+              </span>
+              <button
+                type="button"
+                className="mode-banner-dismiss"
+                title="バナーを閉じる（メッセージ領域を広げる）"
+                onClick={() => setBannerDismissed(true)}
+              >
+                ×
+              </button>
             </div>
-            <div className="mode-banner-sub">
-              {engine === 'auto'
-                ? '自動: 設定の Auto パイプラインで AI を切替'
-                : engine === 'cursor'
-                  ? 'Cursor 固定: ディスクへ直接変更 + 完了後にローカル検証'
-                  : engine === 'gemini'
-                    ? 'Gemini 固定（ツール Agent 未対応 → Ask 相当になりやすい）'
-                    : engine === 'workers'
-                      ? 'Workers AI 固定'
-                      : 'OpenAI 固定'}
-              {routeLabel ? ` · 今回: ${routeLabel}` : ''}
-            </div>
-          </div>
+          )}
+          {bannerDismissed && (
+            <button
+              type="button"
+              className="mode-banner-restore"
+              onClick={() => setBannerDismissed(false)}
+              title="モード説明を再表示"
+            >
+              {mode === 'agent' ? 'Agent' : 'Ask'} 説明
+            </button>
+          )}
           {usageText && <div className="usage-bar">今月 {usageText}</div>}
 
           {error && <div className="chat-error">{error}</div>}

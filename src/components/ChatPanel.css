@@ -141,12 +141,66 @@
 }
 
 .chat-header {
-  padding: 10px 12px;
+  padding: 8px 10px 6px;
   border-bottom: 1px solid var(--border);
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.chat-header--compact .chat-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chat-session-title {
+  font-size: 12px;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-header-spacer {
+  flex: 1;
+  min-width: 4px;
+}
+
+.chat-context-line {
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engine-select select,
+.model-select select {
+  max-width: 110px;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.mode-switch--compact {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.mode-switch--compact button {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.mode-switch--compact button small {
+  display: none;
 }
 
 .chat-header-left {
@@ -265,6 +319,55 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex-shrink: 0;
+}
+
+.mode-banner--compact {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 12px;
+}
+
+.mode-banner--compact .mode-banner-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.mode-banner--compact .mode-banner-sub {
+  font-size: 10px;
+}
+
+.mode-banner-dismiss {
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mode-banner-dismiss:hover {
+  opacity: 1;
+}
+
+.mode-banner-restore {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-align: left;
+  padding: 2px 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mode-banner-restore:hover {
+  color: var(--text);
 }
 
 .mode-banner-main {

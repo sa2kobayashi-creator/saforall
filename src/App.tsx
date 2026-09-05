@@ -51,6 +51,8 @@ import {
   CHAT_WIDTH_MIN,
   loadLayoutPrefs,
   saveLayoutPrefs,
+  terminalHeightMax,
+  TERMINAL_HEIGHT_MIN,
   type UsageLayoutMode
 } from './lib/layoutPrefs'
 import { pushRecentWorkspace, loadLastWorkspace, saveLastWorkspace } from './lib/recentWorkspaces'
@@ -85,6 +87,7 @@ export default function App() {
     initialLayout.usageMode === 'overlay' ? 'overlay' : 'right'
   )
   const [terminalOpen, setTerminalOpen] = useState(initialLayout.terminalOpen)
+  const [terminalMounted, setTerminalMounted] = useState(initialLayout.terminalOpen)
   const [bottomTab, setBottomTab] = useState<BottomPanelTab>('terminal')
   const [scmSyncCommand, setScmSyncCommand] = useState<'pull' | 'push' | null>(null)
   const [cloneOpen, setCloneOpen] = useState(false)
@@ -347,6 +350,10 @@ export default function App() {
       setPreferredUsageMode(mode)
     }
   }, [])
+
+  useEffect(() => {
+    if (terminalOpen) setTerminalMounted(true)
+  }, [terminalOpen])
 
   useEffect(() => {
     saveLayoutPrefs({
@@ -1515,17 +1522,22 @@ export default function App() {
                 )}
               </div>
             </div>
-            {terminalOpen && (
+            {terminalMounted && (
               <>
-                <ResizeHandle
-                  direction="vertical"
-                  title="下部パネルの高さを変更"
-                  onResize={(delta) => {
-                    setTerminalHeight((height) =>
-                      Math.min(Math.floor(window.innerHeight * 0.7), Math.max(120, height - delta))
-                    )
-                  }}
-                />
+                {terminalOpen && (
+                  <ResizeHandle
+                    direction="vertical"
+                    title="下部パネルの高さを変更（上にドラッグで拡大）"
+                    onResize={(delta) => {
+                      setTerminalHeight((height) =>
+                        Math.min(
+                          terminalHeightMax(),
+                          Math.max(TERMINAL_HEIGHT_MIN, height - delta)
+                        )
+                      )
+                    }}
+                  />
+                )}
                 <BottomPanel
                   open={terminalOpen}
                   height={terminalHeight}

@@ -1,9 +1,18 @@
 .bottom-panel {
   display: flex;
   flex-direction: column;
-  min-height: 120px;
+  min-height: 0;
   background: #0c0c0c;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.bottom-panel.is-collapsed {
+  height: 0 !important;
+  min-height: 0 !important;
+  border-top: none;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .bottom-panel-header {

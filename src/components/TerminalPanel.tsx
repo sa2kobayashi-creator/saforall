@@ -5,7 +5,10 @@ import '@xterm/xterm/css/xterm.css'
 import './TerminalPanel.css'
 
 type Props = {
+  /** セッションを維持するか（閉じても true のままにして履歴を残す） */
   open: boolean
+  /** 画面上に表示するか（false でも PTY/xterm は破棄しない） */
+  visible?: boolean
   height?: number
   cwd: string | null
   pendingCommand: string | null
@@ -19,6 +22,7 @@ type Props = {
 
 export function TerminalPanel({
   open,
+  visible = true,
   height,
   cwd,
   pendingCommand,
@@ -34,7 +38,9 @@ export function TerminalPanel({
   const [sessionReady, setSessionReady] = useState(false)
   const [backend, setBackend] = useState<'node-pty' | 'child_process' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const show = open && visible
 
+  // セッションは open=true の間維持。パネルを畳んでも破棄しない。
   useEffect(() => {
     if (!open) {
       setSessionReady(false)
@@ -49,6 +55,7 @@ export function TerminalPanel({
       cursorBlink: true,
       fontSize: 13,
       fontFamily: 'Cascadia Code, Consolas, monospace',
+      scrollback: 10000,
       theme: {
         background: '#0c0c0c',
         foreground: '#cccccc',
@@ -94,7 +101,7 @@ export function TerminalPanel({
         setBackend(session.backend)
         setError(null)
         setSessionReady(true)
-        term.focus()
+        if (show) term.focus()
       } catch (err) {
         setError(String(err))
         term.writeln(`ターミナル起動に失敗しました: ${String(err)}`)
@@ -111,6 +118,7 @@ export function TerminalPanel({
 
     const applyFit = () => {
       try {
+        if (!host.isConnected || host.clientHeight < 8) return
         fitAddon.fit()
         const id = sessionIdRef.current
         if (id) {
@@ -147,12 +155,16 @@ export function TerminalPanel({
       termRef.current = null
       fitRef.current = null
     }
+    // cwd 変更時のみ作り直す（表示の開閉では破棄しない）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, cwd])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || !show) return
     const frame = window.requestAnimationFrame(() => {
       try {
+        const host = hostRef.current
+        if (!host || host.clientHeight < 8) return
         fitRef.current?.fit()
         const term = termRef.current
         const id = sessionIdRef.current
@@ -164,10 +176,10 @@ export function TerminalPanel({
       }
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [open, height, fitTrigger])
+  }, [open, show, height, fitTrigger])
 
   useEffect(() => {
-    if (!open || !pendingCommand || !sessionReady) return
+    if (!open || !show || !pendingCommand || !sessionReady) return
     const id = sessionIdRef.current
     if (!id) return
 
@@ -175,19 +187,22 @@ export function TerminalPanel({
       void window.saforall.writeTerminal(id, pendingCommand).then(() => {
         onCommandSent()
         termRef.current?.focus()
+        termRef.current?.scrollToBottom()
       })
     }, 250)
 
     return () => window.clearTimeout(timer)
-  }, [open, pendingCommand, sessionReady, onCommandSent])
+  }, [open, show, pendingCommand, sessionReady, onCommandSent])
 
   if (!open) return null
 
   return (
     <section
-      className={`terminal-panel${embedded ? ' terminal-panel--embedded' : ''}`}
+      className={`terminal-panel${embedded ? ' terminal-panel--embedded' : ''}${show ? '' : ' is-hidden'}`}
       style={embedded ? undefined : { height }}
       aria-label="ターミナル"
+      aria-hidden={!show}
+      hidden={!show}
     >
       {!embedded && (
         <div className="terminal-header">
@@ -196,12 +211,27 @@ export function TerminalPanel({
             <span>
               {cwd ? cwd : 'カレントディレクトリ'}
               {backend ? ` · ${backend}` : ''}
+              {' · scrollback 10k'}
             </span>
           </div>
           <div className="terminal-actions">
             <button
               type="button"
-              title="再起動"
+              title="先頭へスクロール"
+              onClick={() => termRef.current?.scrollToTop()}
+            >
+              ↑履歴
+            </button>
+            <button
+              type="button"
+              title="末尾へスクロール"
+              onClick={() => termRef.current?.scrollToBottom()}
+            >
+              ↓最新
+            </button>
+            <button
+              type="button"
+              title="再起動（履歴はクリアされます）"
               onClick={() => {
                 const term = termRef.current
                 if (!term) return

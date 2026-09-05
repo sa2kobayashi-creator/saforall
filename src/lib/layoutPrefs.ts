@@ -9,6 +9,8 @@ export type LayoutPrefs = {
   terminalOpen: boolean
   terminalHeight: number
   historyOpen?: boolean
+  /** チャット上部の説明バナーを閉じた状態 */
+  chatBannerDismissed?: boolean
 }
 
 const STORAGE_KEY = 'saforall-layout-prefs'
@@ -20,21 +22,28 @@ export const DEFAULT_LAYOUT_PREFS: LayoutPrefs = {
   usageWidth: 320,
   sidebarWidth: 260,
   terminalOpen: false,
-  terminalHeight: 220
+  terminalHeight: 280,
+  chatBannerDismissed: false
 }
 
 export const CHAT_WIDTH_MIN = 260
+export const TERMINAL_HEIGHT_MIN = 140
 
 /** エディタ側に最低限残す幅（アクティビティバー等は呼び出し側で差し引く） */
-export const EDITOR_WIDTH_MIN = 200
+export const EDITOR_WIDTH_MIN = 160
 
-/** ウィンドウ幅に応じたチャット最大幅（画面の約 80% まで広げられる） */
+/** ウィンドウ幅に応じたチャット最大幅（画面の約 90% まで広げられる） */
 export function chatWidthMax(reservedLeft = 320): number {
-  if (typeof window === 'undefined') return 1200
+  if (typeof window === 'undefined') return 1400
   const available = window.innerWidth - reservedLeft - EDITOR_WIDTH_MIN
-  return Math.max(CHAT_WIDTH_MIN, Math.min(Math.floor(window.innerWidth * 0.85), available))
+  return Math.max(CHAT_WIDTH_MIN, Math.min(Math.floor(window.innerWidth * 0.9), available))
 }
 
+/** 下部パネル（Terminal）の最大高さ — 画面の約 85% まで上に伸ばせる */
+export function terminalHeightMax(): number {
+  if (typeof window === 'undefined') return 1200
+  return Math.max(TERMINAL_HEIGHT_MIN, Math.floor(window.innerHeight * 0.85))
+}
 
 export function loadLayoutPrefs(): LayoutPrefs {
   try {
@@ -58,9 +67,10 @@ export function loadLayoutPrefs(): LayoutPrefs {
       terminalOpen: parsed.terminalOpen ?? DEFAULT_LAYOUT_PREFS.terminalOpen,
       terminalHeight: clamp(
         parsed.terminalHeight ?? DEFAULT_LAYOUT_PREFS.terminalHeight,
-        120,
-        800
-      )
+        TERMINAL_HEIGHT_MIN,
+        terminalHeightMax()
+      ),
+      chatBannerDismissed: parsed.chatBannerDismissed ?? DEFAULT_LAYOUT_PREFS.chatBannerDismissed
     }
   } catch {
     return { ...DEFAULT_LAYOUT_PREFS }
