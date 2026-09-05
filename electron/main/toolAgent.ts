@@ -162,7 +162,8 @@ const TOOLS = [
           serverId: { type: 'string', description: 'Optional MCP server id from mcp.json' },
           arguments: {
             type: 'object',
-            description: 'JSON arguments object for the tool'
+            description: 'JSON arguments object for the tool',
+            additionalProperties: true
           }
         },
         required: ['tool']
@@ -239,6 +240,30 @@ export function normalizeAgentPath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
 }
 
+/** Detect when the model roleplays tools in markdown instead of calling them. */
+export function looksLikeFakeToolProse(text: string): boolean {
+  const raw = (text || '').trim()
+  if (!raw) return false
+  const lower = raw.toLowerCase()
+  const names = [
+    'set_phase',
+    'edit_file',
+    'read_file',
+    'run_shell',
+    'search_code',
+    'list_dir',
+    'list_mcp_tools',
+    'call_mcp_tool'
+  ]
+  const hitCount = names.filter((name) => lower.includes(name)).length
+  if (hitCount >= 2) return true
+  if (/手順\s*\d+/.test(raw) && hitCount >= 1) return true
+  if (/```(?:bash|shell|sh|powershell)?\s*\n?\s*(set_phase|edit_file|read_file|run_shell)\b/i.test(raw)) {
+    return true
+  }
+  return false
+}
+
 /** Normalize to a stable workspace-relative POSIX path for pending edits. */
 export function toWorkspaceRelativePath(workspaceRoot: string, pathArg: string): string {
   const absolute = resolveWorkspacePath(workspaceRoot, pathArg)
@@ -312,6 +337,109 @@ function isAgentPhase(value: string): value is AgentPhase {
   return value === 'plan' || value === 'explore' || value === 'edit' || value === 'verify'
 }
 
+export function isToolAgentCompatibleEndpoint(engine: string, baseUrl: string, model: string): boolean {
+  if (engine === 'workers' || engine === 'gemini' || engine === 'cursor') return false
+  const id = (model || '').trim().toLowerCase()
+  if (id.startsWith('@cf/')) return false
+  const u = (baseUrl || '').trim().toLowerCase()
+  if (!u || u === 'gemini-native') return false
+  if (u.includes('cloudflare.com') || u.includes('workers.ai')) return false
+  // Cloudflare Workers OpenAI-compat path
+  if (u.includes('/client/v4/accounts/') && u.includes('/ai/')) return false
+  return true
+}
+
+function flattenMessageContent(content: unknown): string {
+  if (content == null) return ''
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part
+        if (part && typeof part === 'object') {
+          const row = part as { text?: unknown; content?: unknown; type?: unknown }
+          if (typeof row.text === 'string') return row.text
+          if (typeof row.content === 'string') return row.content
+        }
+        return ''
+      })
+      .filter(Boolean)
+      .join('\n')
+  }
+  if (typeof content === 'object') {
+    try {
+      return JSON.stringify(content)
+    } catch {
+      return String(content)
+    }
+  }
+  return String(content)
+}
+
+/** OpenAI / gateways that only accept string content (not multimodal arrays / null). */
+function normalizeMessagesForLlm(messages: ProviderMessage[]): Array<Record<string, unknown>> {
+  return messages.map((row) => {
+    if (row.role === 'tool') {
+      return {
+        role: 'tool',
+        tool_call_id: row.tool_call_id,
+        content: flattenMessageContent(row.content)
+      }
+    }
+    const out: Record<string, unknown> = {
+      role: row.role,
+      content: flattenMessageContent(row.content)
+    }
+    if (row.tool_calls && row.tool_calls.length > 0) {
+      out.tool_calls = row.tool_calls
+    }
+    return out
+  })
+}
+
+function modelOmitsTemperature(model: string): boolean {
+  const id = model.trim().toLowerCase()
+  return (
+    id.startsWith('o1') ||
+    id.startsWith('o3') ||
+    id.startsWith('o4') ||
+    id.startsWith('gpt-5') ||
+    id.includes('reason')
+  )
+}
+
+function modelAllowsRequiredToolChoice(model: string): boolean {
+  const id = model.trim().toLowerCase()
+  // gpt-5 / o-series は tool_choice=required で 400 になることがある
+  return !(
+    id.startsWith('gpt-5') ||
+    id.startsWith('o1') ||
+    id.startsWith('o3') ||
+    id.startsWith('o4')
+  )
+}
+
+function formatLlmHttpError(status: number, bodyText: string): string {
+  const raw = (bodyText || '').trim()
+  if (!raw) return `LLM HTTP ${status}`
+  try {
+    const json = JSON.parse(raw) as {
+      error?: { message?: string; code?: string; type?: string }
+      errors?: Array<{ message?: string }>
+      message?: string
+    }
+    const msg =
+      json.error?.message ||
+      json.errors?.[0]?.message ||
+      json.message ||
+      raw
+    const code = json.error?.code || json.error?.type
+    return code ? `LLM HTTP ${status}: ${msg} (${code})` : `LLM HTTP ${status}: ${msg}`
+  } catch {
+    return `LLM HTTP ${status}: ${raw.slice(0, 600)}`
+  }
+}
+
 async function callChatCompletions(params: {
   apiKey: string
   baseUrl: string
@@ -324,18 +452,26 @@ async function callChatCompletions(params: {
 }): Promise<ChatCompletionResponse> {
   const url = `${params.baseUrl.replace(/\/$/, '')}/chat/completions`
   let lastError: Error | null = null
-  const body: Record<string, unknown> = {
-    model: params.model,
-    messages: params.messages,
-    temperature: 0.2
-  }
-  if (params.tools) {
-    body.tools = params.tools
-    body.tool_choice = params.toolChoice ?? 'auto'
-  }
+  let toolChoice: 'auto' | 'required' =
+    params.toolChoice === 'required' && modelAllowsRequiredToolChoice(params.model)
+      ? 'required'
+      : 'auto'
+  let includeTemperature = !modelOmitsTemperature(params.model)
+  let includeTools = Boolean(params.tools)
+
   const timeoutMs = params.timeoutMs ?? 45_000
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const body: Record<string, unknown> = {
+      model: params.model,
+      messages: normalizeMessagesForLlm(params.messages)
+    }
+    if (includeTemperature) body.temperature = 0.2
+    if (includeTools && params.tools) {
+      body.tools = params.tools
+      body.tool_choice = toolChoice
+    }
+
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
@@ -350,20 +486,56 @@ async function callChatCompletions(params: {
         signal: controller.signal
       })
 
-      const json = (await response.json()) as ChatCompletionResponse
+      const bodyText = await response.text()
+      let json: ChatCompletionResponse
+      try {
+        json = JSON.parse(bodyText) as ChatCompletionResponse
+      } catch {
+        throw new Error(formatLlmHttpError(response.status, bodyText))
+      }
+
       if (!response.ok) {
-        throw new Error(json.error?.message ?? `LLM HTTP ${response.status}`)
+        const err = new Error(formatLlmHttpError(response.status, bodyText))
+        const lower = err.message.toLowerCase()
+        // Retry ladder for common 400s
+        if (response.status === 400) {
+          if (toolChoice === 'required') {
+            toolChoice = 'auto'
+            lastError = err
+            continue
+          }
+          if (includeTemperature && /temperature|unsupported_value|unknown parameter/i.test(lower)) {
+            includeTemperature = false
+            lastError = err
+            continue
+          }
+          if (includeTools && /tool_choice|tools|function/i.test(lower)) {
+            // Keep tools if possible — but if provider rejects tools entirely, surface clearly
+            if (/not support|unsupported|does not support/i.test(lower)) {
+              throw new Error(
+                `${err.message} — このモデル/プロバイダは function calling 未対応の可能性があります。設定で gpt-4.1 / gpt-4o 系の OpenAI モデルを選んでください。`
+              )
+            }
+          }
+        }
+        throw err
       }
       return json
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
-      // Some providers reject tool_choice=required — fall back once.
-      if (params.toolChoice === 'required' && attempt === 0) {
-        params = { ...params, toolChoice: 'auto' }
-        body.tool_choice = 'auto'
+      if (attempt < 3 && /LLM HTTP 400/i.test(lastError.message) && toolChoice === 'required') {
+        toolChoice = 'auto'
         continue
       }
-      if (attempt < 2) await sleep(500 * (attempt + 1))
+      if (attempt < 3 && /abort|network|fetch failed|ECONNRESET/i.test(lastError.message)) {
+        await sleep(500 * (attempt + 1))
+        continue
+      }
+      // non-retryable
+      if (!/LLM HTTP 400/i.test(lastError.message) || attempt >= 3) {
+        throw lastError
+      }
+      await sleep(400 * (attempt + 1))
     } finally {
       clearTimeout(timer)
     }
@@ -834,11 +1006,13 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     complete
   } = params
 
-  if (baseUrl === 'gemini-native') {
+  if (!isToolAgentCompatibleEndpoint(engine, baseUrl, model)) {
     onEvent({
       type: 'error',
       code: 'AGENT_UNSUPPORTED',
-      message: 'Gemini のツール Agent は未対応です。OpenAI / Workers、または Cursor を使ってください。'
+      message:
+        'このエンドポイントはツール Agent 非対応です（Cloudflare Workers AI / Gemini など）。' +
+        '設定で OpenAI を選び、Base URL を https://api.openai.com/v1 にして再実行してください。'
     })
     return
   }
@@ -868,6 +1042,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     'verify: 編集ファイルを read_file で確認し、run_shell で検証する。失敗したら errorExcerpt を読んで edit に戻り、修正後に再実行。',
     '重要: 修正内容を markdown のコードブロックで説明するだけでは終了しない。必ず edit_file ツールで Composer に載せる。',
     '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）と、依頼が修正なら edit_file + run_shell を行う。',
+    '禁止: set_phase / edit_file / read_file / run_shell を文章・bash・手順リストとして書くこと。必ず function/tool_calls で呼ぶ。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
     'MCP: list_mcp_tools / call_mcp_tool で外部ツールを使える（.saforall/mcp.json）。',
     '破壊的コマンドは禁止。まず短い検証（typecheck）を通し、必要なら test を追加。',
@@ -946,9 +1121,10 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
   for (let step = 0; step < maxSteps; step += 1) {
     const preferRequiredTools =
-      !anyToolCall ||
-      (editedPaths.size === 0 && step < 10) ||
-      (editedPaths.size > 0 && !shellState.passed && shellState.editRecoveries < 3 && step < 40)
+      modelAllowsRequiredToolChoice(model) &&
+      (!anyToolCall ||
+        (editedPaths.size === 0 && step < 10) ||
+        (editedPaths.size > 0 && !shellState.passed && shellState.editRecoveries < 3 && step < 40))
 
     let completion: ChatCompletionResponse
     try {
@@ -963,24 +1139,30 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      if (step > 0) {
-        messages.push({
-          role: 'user',
-          content: `システム: LLM 呼び出し失敗（${message}）。これまでに分かったことと残作業を日本語で短くまとめてください。`
+      // Surface provider detail immediately (avoid opaque "LLM HTTP 400")
+      if (step === 0) {
+        throw new Error(
+          message.includes('LLM HTTP')
+            ? message
+            : `ツール Agent の LLM 呼び出しに失敗: ${message}`
+        )
+      }
+      messages.push({
+        role: 'user',
+        content: `システム: LLM 呼び出し失敗（${message}）。これまでに分かったことと残作業を日本語で短くまとめてください。`
+      })
+      try {
+        const fallback = await callChatCompletions({
+          apiKey,
+          baseUrl,
+          model,
+          extraHeaders,
+          messages
         })
-        try {
-          const fallback = await callChatCompletions({
-            apiKey,
-            baseUrl,
-            model,
-            extraHeaders,
-            messages
-          })
-          finalText = (fallback.choices?.[0]?.message?.content ?? '').trim()
-          if (finalText) break
-        } catch {
-          // fall through
-        }
+        finalText = (fallback.choices?.[0]?.message?.content ?? '').trim()
+        if (finalText) break
+      } catch {
+        // fall through
       }
       throw error
     }
@@ -1307,7 +1489,9 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     }
 
     // Model tried to answer in prose without any tool calls — block hard in Agent mode.
-    if (!anyToolCall || editedPaths.size === 0) {
+    const prose = (message.content ?? '').trim()
+    const fakingTools = looksLikeFakeToolProse(prose)
+    if (!anyToolCall || editedPaths.size === 0 || fakingTools) {
       if (proseOnlyBlocks < MAX_PROSE_ONLY_BLOCKS) {
         proseOnlyBlocks += 1
         messages.push({
@@ -1316,13 +1500,18 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         })
         messages.push({
           role: 'user',
-          content:
-            editedPaths.size === 0
+          content: fakingTools
+            ? 'システム: ツール名を文章や bash コードブロックで書くのは無効です。API の function/tool_calls として set_phase / read_file / edit_file / run_shell を実際に呼び出してください。説明手順は禁止です。'
+            : editedPaths.size === 0
               ? 'システム: Agent モードでは説明や markdown コード提示だけでは終了できません。必ずツールを呼び出してください（set_phase → read_file/search_code → edit_file）。edit_file なしの「修正案の説明」は無効です。'
               : 'システム: まだツール実行が不十分です。verify のため run_shell を実行するか、追加の edit_file を行ってください。文章だけの最終回答は禁止です。'
         })
         continue
       }
+      finalText =
+        'Agent がツールを正しく呼び出せませんでした（文章での「手順: edit_file」などは無効です）。' +
+        'モデルを OpenAI にし、フォルダを開いた状態で再試行してください。Composer に差分が出るまで成功ではありません。'
+      break
     }
 
     // Model attempted to finalize without tools

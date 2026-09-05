@@ -275,17 +275,71 @@ export async function streamChat(
   const mode = typeof decided.mode === 'string' ? decided.mode : 'ask'
   const workspacePath =
     typeof requestBody.workspace_path === 'string' ? requestBody.workspace_path : ''
-  const canToolAgent =
-    mode === 'agent' &&
-    workspacePath.trim() !== '' &&
-    decided.engine !== 'gemini' &&
+  const providerOk = Boolean(
     decided.provider &&
-    decided.provider.api_key &&
-    decided.provider.base_url &&
-    decided.provider.base_url !== 'gemini-native'
+      decided.provider.api_key &&
+      decided.provider.base_url &&
+      decided.provider.base_url !== 'gemini-native'
+  )
+  const endpointOk =
+    providerOk &&
+    decided.engine !== 'workers' &&
+    decided.engine !== 'gemini' &&
+    !String(decided.model || '')
+      .toLowerCase()
+      .startsWith('@cf/') &&
+    (() => {
+      const u = String(decided.provider?.base_url || '').toLowerCase()
+      if (u.includes('cloudflare.com') || u.includes('workers.ai')) return false
+      if (u.includes('/client/v4/accounts/') && u.includes('/ai/')) return false
+      return true
+    })()
+  const canToolAgent =
+    mode === 'agent' && workspacePath.trim() !== '' && providerOk && endpointOk
+
+  if (mode === 'agent') {
+    if (!canToolAgent) {
+      const reasons: string[] = []
+      if (!workspacePath.trim()) reasons.push('ワークスペース未選択（フォルダを開く）')
+      if (decided.engine === 'gemini') reasons.push('Gemini はツール Agent 未対応')
+      if (decided.engine === 'workers') {
+        reasons.push('Workers AI は function calling 非対応（OpenAI を選択）')
+      }
+      if (!decided.provider) {
+        reasons.push('provider 情報なし（アプリ再起動 / API 接続を確認）')
+      } else {
+        if (!decided.provider.api_key) reasons.push(`${decided.engine} の API キー未設定`)
+        if (!decided.provider.base_url || decided.provider.base_url === 'gemini-native') {
+          reasons.push('ツール呼び出し可能な base_url が無い')
+        }
+        const u = decided.provider.base_url.toLowerCase()
+        if (u.includes('cloudflare.com') || u.includes('workers.ai')) {
+          reasons.push('Base URL が Cloudflare（api.openai.com/v1 に変更）')
+        }
+      }
+      onEvent({
+        type: 'error',
+        code: 'AGENT_TOOLS_UNAVAILABLE',
+        message:
+          `Agent（ツール実行）を開始できません: ${reasons.join(' / ') || '条件不足'}。` +
+          'OpenAI（api.openai.com）を選び、フォルダを開いて再実行してください。' +
+          'Ask への自動フォールバックはしません（edit_file を文章で演じるのを防ぐため）。'
+      })
+      return
+    }
+  }
 
   if (canToolAgent && decided.provider) {
     try {
+      onEvent({
+        type: 'agent_phase',
+        phase: 'plan',
+        note: 'ツール Agent 起動（edit_file / run_shell）'
+      })
+      onEvent({
+        type: 'delta',
+        text: '🔧 ツール Agent を開始します。説明だけで終わらず、ツールで編集・検証します。\n'
+      })
       const { runToolAgent } = await import('./toolAgent')
       await runToolAgent({
         workspacePath,
@@ -328,14 +382,6 @@ export async function streamChat(
       })
     }
     return
-  }
-
-  if (mode === 'agent') {
-    onEvent({
-      type: 'delta',
-      text:
-        '⚠ Agent（ツール実行）を開始できませんでした。OpenAI / Workers AI のキー設定と、フォルダを開いたワークスペースが必要です（Gemini 単体ではツール Agent 未対応）。Ask 相当の文章応答に切り替えます。\n\n'
-    })
   }
 
   await streamProviderChat(

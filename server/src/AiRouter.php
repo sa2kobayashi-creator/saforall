@@ -60,9 +60,11 @@ final class AiRouter
             $preferred = self::engineForTask($taskType, $policy, $mode);
             // Ask で Cursor 回避など、ポリシーで希望を再調整
             $preferred = self::applyModeGuards($preferred, $taskType, $policy, $mode);
+            // Agent は edit_file / Composer のツール実行を標準にする（Cursor/Gemini は別経路）
+            $preferred = self::preferToolAgentEngine($preferred, $mode);
 
             $engine = self::firstAvailable(
-                self::preferenceChain($preferred, $policy),
+                self::preferenceChain($preferred, $policy, $mode),
                 $enabled,
                 $ready,
                 $pdo,
@@ -74,7 +76,9 @@ final class AiRouter
             if ($engine === null) {
                 Response::error(
                     'LLM_NOT_CONFIGURED',
-                    'Auto で有効な AI のうち、キー設定済みかつ月額上限内のものがありません。',
+                    $mode === 'agent'
+                        ? 'Agent モードには OpenAI（function calling 対応）が必要です。設定で OpenAI API キーを保存してください。Workers / Gemini ではツール Agent を実行できません。'
+                        : 'Auto で有効な AI のうち、キー設定済みかつ月額上限内のものがありません。',
                     400
                 );
             }
@@ -102,6 +106,13 @@ final class AiRouter
 
         // 固定エンジン: Auto の有効リストとは独立（明示選択を優先）
         $engine = $requested;
+        if ($mode === 'agent' && in_array($engine, ['workers', 'gemini'], true)) {
+            Response::error(
+                'AGENT_ENGINE_UNSUPPORTED',
+                self::label($engine) . ' は Agent（ツール実行）に未対応です。OpenAI（api.openai.com）を選択してください。',
+                400
+            );
+        }
         if (!($ready[$engine] ?? false)) {
             Response::error(
                 'LLM_NOT_CONFIGURED',
@@ -194,8 +205,13 @@ final class AiRouter
      * @param array<string, mixed> $policy
      * @return list<string>
      */
-    private static function preferenceChain(string $preferred, array $policy): array
+    private static function preferenceChain(string $preferred, array $policy, string $mode = 'ask'): array
     {
+        // Agent は OpenAI function calling（Composer / edit_file）が必要。Workers へ落とさない。
+        if ($mode === 'agent') {
+            return ['openai', 'cursor'];
+        }
+
         $cheapMid = !empty($policy['gemini_for_mid_tasks']);
         $chains = [
             'workers' => $cheapMid
@@ -358,6 +374,23 @@ final class AiRouter
             'patch_small' => ($strongOnly && $mode === 'agent') ? 'cursor' : 'openai',
             default => $geminiMid ? 'gemini' : 'openai',
         };
+    }
+
+    /**
+     * Auto + Agent では OpenAI function calling（ツール Agent）を優先する。
+     * Cursor / Gemini / Workers は明示選択時のみ（Workers は tools 400 になりやすい）。
+     */
+    private static function preferToolAgentEngine(string $preferred, string $mode): string
+    {
+        if ($mode !== 'agent') {
+            return $preferred;
+        }
+
+        if ($preferred === 'gemini' || $preferred === 'cursor' || $preferred === 'workers') {
+            return 'openai';
+        }
+
+        return $preferred;
     }
 
     /**

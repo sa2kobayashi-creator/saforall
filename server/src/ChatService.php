@@ -135,11 +135,9 @@ final class ChatService
 
         if ($mode === 'agent' && $engine !== 'cursor') {
             $systemParts[] =
-                'Agent モードです。修正依頼では markdown のコード提示だけで終わらず、'
-                . '実際の変更手順（対象パス・検証コマンド）を明確にしてください。'
-                . '複数ファイルを扱うときは、コードブロックに必ずパスを付けてください'
-                . '（例: ```typescript src/App.tsx）。可能なら変更対象ごとにフルファイルを出してください。'
-                . 'ツール実行ランタイムがある場合は edit / shell ツールが優先されます。';
+                'Agent モードです。edit_file / run_shell などのツールは API の tool_calls でのみ実行されます。'
+                . 'set_phase・edit_file・run_shell を bash や markdown「手順」として書いてはいけません（無効・禁止）。'
+                . 'ツール実行ができない環境では、コード修正案の詳細を出さず、OpenAI 選択とフォルダオープンが必要である旨だけ伝えてください。';
         }
         if ($mode === 'ask') {
             $systemParts[] =
