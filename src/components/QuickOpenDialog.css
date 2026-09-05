@@ -57,3 +57,14 @@
 .quick-open-item:hover {
   background: #243044;
 }
+
+.quick-open-item .quick-open-path {
+  display: block;
+}
+
+.quick-open-item .quick-open-meta {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 2px;
+}

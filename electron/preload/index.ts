@@ -103,8 +103,10 @@ const api = {
     ipcRenderer.invoke('fs:delete', targetPath),
   renamePath: (params: { from: string; to: string }): Promise<boolean> =>
     ipcRenderer.invoke('fs:rename', params),
-  readDir: (dirPath: string): Promise<DirEntry[]> =>
-    ipcRenderer.invoke('fs:readDir', dirPath),
+  readDir: (
+    dirPath: string,
+    options?: { workspaceRoot?: string }
+  ): Promise<DirEntry[]> => ipcRenderer.invoke('fs:readDir', dirPath, options),
   searchFiles: (cwd: string, query: string): Promise<string[]> =>
     ipcRenderer.invoke('fs:searchFiles', cwd, query),
   searchCode: (cwd: string, query: string, anchorPaths?: string[]): Promise<string> =>

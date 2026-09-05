@@ -27,6 +27,7 @@ import {
   writeTerminal
 } from './terminal'
 import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch, listProjectRuleFiles, readProjectMemory, appendProjectMemory, saveProjectMemory, readProjectRuleFile, replaceInWorkspace } from './workspaceTools'
+import { createWorkspaceIgnoreMatcher, resolveIgnoreRoot } from './gitIgnore'
 import { loadWorkspaceExtensions, scaffoldExtensionFromMarketplace, setWorkspaceExtensionEnabled } from './extensions'
 import {
   listLocalHistory,
@@ -169,20 +170,29 @@ ipcMain.handle(
   }
 )
 
-ipcMain.handle('fs:readDir', async (_event, dirPath: string) => {
-  const entries = await readdir(dirPath, { withFileTypes: true })
-  return entries
-    .map((entry) => ({
-      name: entry.name,
-      path: join(dirPath, entry.name),
-      isDirectory: entry.isDirectory()
-    }))
-    .filter((entry) => !entry.name.startsWith('.'))
-    .sort((a, b) => {
-      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
-      return a.name.localeCompare(b.name)
-    })
-})
+ipcMain.handle(
+  'fs:readDir',
+  async (_event, dirPath: string, options?: { workspaceRoot?: string }) => {
+    const entries = await readdir(dirPath, { withFileTypes: true })
+    const ignoreRoot = await resolveIgnoreRoot(dirPath, options?.workspaceRoot ?? null)
+    const matcher = await createWorkspaceIgnoreMatcher(ignoreRoot)
+    return entries
+      .map((entry) => ({
+        name: entry.name,
+        path: join(dirPath, entry.name),
+        isDirectory: entry.isDirectory()
+      }))
+      .filter((entry) => {
+        if (entry.name === '.git') return false
+        if (entry.name.startsWith('.')) return false
+        return !matcher.ignores(entry.path, entry.isDirectory)
+      })
+      .sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
+  }
+)
 
 ipcMain.handle('fs:stat', async (_event, filePath: string) => {
   const info = await stat(filePath)

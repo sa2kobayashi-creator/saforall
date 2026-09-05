@@ -12,7 +12,7 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --win nsis",
     "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
-    "test": "npm run typecheck && node --test scripts/workspace-tools.test.mjs scripts/problems.test.mjs scripts/codebase-mentions.test.mjs scripts/agent-verify.test.mjs scripts/agent-mode.test.mjs scripts/gh-pr.test.mjs scripts/gh-auth.test.mjs scripts/apply-proposals.test.mjs scripts/background-jobs.test.mjs scripts/codebase-rank.test.mjs scripts/tab-lsp.test.mjs scripts/cursor-cloud.test.mjs scripts/debug-extras.test.mjs scripts/mcp-http-verify.test.mjs scripts/bugbot-review.test.mjs scripts/rules-jobs-inlay-bb.test.mjs scripts/next-four-slices.test.mjs scripts/packaging-daily.test.mjs scripts/scm-daily-ide.test.mjs scripts/autosave-history-ide.test.mjs scripts/io-hardening.test.mjs scripts/cursor-gap-ide.test.mjs"
+    "test": "npm run typecheck && node --test scripts/workspace-tools.test.mjs scripts/problems.test.mjs scripts/codebase-mentions.test.mjs scripts/agent-verify.test.mjs scripts/agent-mode.test.mjs scripts/gh-pr.test.mjs scripts/gh-auth.test.mjs scripts/apply-proposals.test.mjs scripts/background-jobs.test.mjs scripts/codebase-rank.test.mjs scripts/tab-lsp.test.mjs scripts/cursor-cloud.test.mjs scripts/debug-extras.test.mjs scripts/mcp-http-verify.test.mjs scripts/bugbot-review.test.mjs scripts/rules-jobs-inlay-bb.test.mjs scripts/next-four-slices.test.mjs scripts/packaging-daily.test.mjs scripts/scm-daily-ide.test.mjs scripts/autosave-history-ide.test.mjs scripts/io-hardening.test.mjs scripts/cursor-gap-ide.test.mjs scripts/editor-nav-ide.test.mjs"
   },
   "dependencies": {
     "@cursor/sdk": "^1.0.30",

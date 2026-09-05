@@ -22,6 +22,7 @@ import { PendingEditsBar } from './components/PendingEditsBar'
 import { ComposerPanel } from './components/ComposerPanel'
 import { QuickOpenDialog } from './components/QuickOpenDialog'
 import { CommandPalette, BUILTIN_PALETTE_COMMANDS } from './components/CommandPalette'
+import { SymbolPickerDialog } from './components/SymbolPickerDialog'
 import { ExtensionsPanel } from './components/ExtensionsPanel'
 import { resolveProblemOpenPath } from './lib/problemPaths'
 import { buildBackendOfflineMessage } from './lib/backendGuide'
@@ -161,6 +162,11 @@ export default function App() {
   const [referenceSymbol, setReferenceSymbol] = useState<string | null>(null)
   const [referencesLoading, setReferencesLoading] = useState(false)
   const [inlineEditTrigger, setInlineEditTrigger] = useState(0)
+  const [peekDefinitionTrigger, setPeekDefinitionTrigger] = useState(0)
+  const [peekReferencesTrigger, setPeekReferencesTrigger] = useState(0)
+  const [symbolPicker, setSymbolPicker] = useState<'document' | 'workspace' | null>(null)
+  const [splitPath, setSplitPath] = useState<string | null>(null)
+  const [editorFocusGroup, setEditorFocusGroup] = useState<'primary' | 'secondary'>('primary')
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
@@ -196,6 +202,8 @@ export default function App() {
   }, [backend, monacoProblems, lspProblems, bugbotProblems])
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
+  const activePathRef = useRef(activePath)
+  activePathRef.current = activePath
 
   const checkBackend = useCallback(async () => {
     setBackend((current) => ({ ...current, checking: true }))
@@ -442,6 +450,13 @@ export default function App() {
     [activePath]
   )
 
+  const updateContentAt = useCallback((path: string | null, content: string) => {
+    if (!path) return
+    setTabs((current) =>
+      current.map((tab) => (tab.path === path ? { ...tab, content, dirty: true } : tab))
+    )
+  }, [])
+
   const saveFile = useCallback(async () => {
     if (!activeFile) return
     try {
@@ -512,6 +527,7 @@ export default function App() {
         delete next[path]
         return next
       })
+      setSplitPath((current) => (current === path ? null : current))
       if (typeof window.saforall.closeLsp === 'function') {
         void window.saforall.closeLsp({ path })
       }
@@ -623,6 +639,23 @@ export default function App() {
           return
         }
         if (workspacePath) setQuickOpen(true)
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'o') {
+        event.preventDefault()
+        setSymbolPicker('document')
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 't') {
+        event.preventDefault()
+        if (workspacePath) setSymbolPicker('workspace')
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === '\\') {
+        event.preventDefault()
+        setSplitPath((current) => {
+          if (current) return null
+          const active = activePathRef.current
+          const other = tabsRef.current.find((tab) => tab.path !== active)?.path
+          return other ?? active
+        })
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -1299,6 +1332,27 @@ export default function App() {
         case 'view:commands':
           setCommandPaletteOpen(true)
           break
+        case 'go:symbolInFile':
+          setSymbolPicker('document')
+          break
+        case 'go:workspaceSymbol':
+          if (workspacePath) setSymbolPicker('workspace')
+          else showNotice('先にフォルダを開いてください')
+          break
+        case 'go:peekDefinition':
+          setPeekDefinitionTrigger((n) => n + 1)
+          break
+        case 'go:peekReferences':
+          setPeekReferencesTrigger((n) => n + 1)
+          break
+        case 'view:splitEditor':
+          setSplitPath((current) => {
+            if (current) return null
+            const active = activePathRef.current
+            const other = tabsRef.current.find((tab) => tab.path !== active)?.path
+            return other ?? active
+          })
+          break
         case 'view:problems':
           setBottomTab('problems')
           setTerminalOpen(true)
@@ -1686,51 +1740,127 @@ export default function App() {
                 onRejectAll={rejectAllProposals}
               />
               <div className="editor-composer-row">
-                <EditorPane
-                  tabs={tabs}
-                  activePath={activePath}
-                  tabWidths={tabWidths}
-                  backendConnected={backend.connected}
-                  workspacePath={workspacePath}
-                  onSelectTab={(path) => {
-                    setActivePath(path)
-                    setStatus(path)
-                    setRevealLine(null)
-                  }}
-                  onCloseTab={closeTab}
-                  onResizeTab={(path, width) => {
-                    setTabWidths((current) => ({ ...current, [path]: width }))
-                  }}
-                  onChange={updateContent}
-                  onSave={saveFile}
-                  onSelectionChange={setEditorSelection}
-                  onDiagnostics={setMonacoProblems}
-                  onOpenDefinition={(path, line) => {
-                    void openFileAt(path, line)
-                  }}
-                  onFindReferences={(hits, symbolLabel) => {
-                    setReferenceHits(hits)
-                    setReferenceSymbol(symbolLabel ?? null)
-                    setReferencesLoading(false)
-                    setTerminalOpen(true)
-                    setBottomTab('references')
-                    showNotice(
-                      hits.length > 0
-                        ? `参照 ${hits.length} 件${symbolLabel ? ` · ${symbolLabel}` : ''}`
-                        : '参照が見つかりませんでした'
-                    )
-                  }}
-                  onApplyLspEdits={(edits) => applyLspEdits(edits)}
-                  revealLine={revealLine}
-                  breakpoints={breakpoints}
-                  onToggleBreakpoint={toggleBreakpoint}
-                  pausedLine={pausedLine}
-                  inlineEditTrigger={inlineEditTrigger}
-                  onStatusMessage={(message) => {
-                    setStatus(message)
-                    showNotice(message)
-                  }}
-                />
+                <div className="editor-split-row">
+                  <EditorPane
+                    tabs={tabs}
+                    activePath={activePath}
+                    tabWidths={tabWidths}
+                    backendConnected={backend.connected}
+                    workspacePath={workspacePath}
+                    registerProviders
+                    showOutline={!splitPath}
+                    onEditorFocus={() => setEditorFocusGroup('primary')}
+                    onSelectTab={(path) => {
+                      setActivePath(path)
+                      setStatus(path)
+                      setRevealLine(null)
+                      setEditorFocusGroup('primary')
+                    }}
+                    onCloseTab={closeTab}
+                    onResizeTab={(path, width) => {
+                      setTabWidths((current) => ({ ...current, [path]: width }))
+                    }}
+                    onChange={updateContent}
+                    onSave={saveFile}
+                    onSelectionChange={setEditorSelection}
+                    onDiagnostics={setMonacoProblems}
+                    onOpenDefinition={(path, line) => {
+                      void openFileAt(path, line)
+                    }}
+                    onFindReferences={(hits, symbolLabel) => {
+                      setReferenceHits(hits)
+                      setReferenceSymbol(symbolLabel ?? null)
+                      setReferencesLoading(false)
+                      setTerminalOpen(true)
+                      setBottomTab('references')
+                      showNotice(
+                        hits.length > 0
+                          ? `参照 ${hits.length} 件${symbolLabel ? ` · ${symbolLabel}` : ''}`
+                          : '参照が見つかりませんでした'
+                      )
+                    }}
+                    onApplyLspEdits={(edits) => applyLspEdits(edits)}
+                    revealLine={editorFocusGroup === 'primary' ? revealLine : null}
+                    breakpoints={breakpoints}
+                    onToggleBreakpoint={toggleBreakpoint}
+                    pausedLine={pausedLine}
+                    inlineEditTrigger={
+                      editorFocusGroup === 'primary' ? inlineEditTrigger : 0
+                    }
+                    peekDefinitionTrigger={
+                      editorFocusGroup === 'primary' ? peekDefinitionTrigger : 0
+                    }
+                    peekReferencesTrigger={
+                      editorFocusGroup === 'primary' ? peekReferencesTrigger : 0
+                    }
+                    onStatusMessage={(message) => {
+                      setStatus(message)
+                      showNotice(message)
+                    }}
+                  />
+                  {splitPath && (
+                    <>
+                      <div className="editor-split-divider" aria-hidden />
+                      <EditorPane
+                        tabs={tabs}
+                        activePath={splitPath}
+                        tabWidths={tabWidths}
+                        backendConnected={backend.connected}
+                        workspacePath={workspacePath}
+                        registerProviders={false}
+                        showOutline
+                        onEditorFocus={() => setEditorFocusGroup('secondary')}
+                        onSelectTab={(path) => {
+                          setSplitPath(path)
+                          setStatus(path)
+                          setEditorFocusGroup('secondary')
+                        }}
+                        onCloseTab={(path) => {
+                          if (path === splitPath) setSplitPath(null)
+                          else closeTab(path)
+                        }}
+                        onResizeTab={(path, width) => {
+                          setTabWidths((current) => ({ ...current, [path]: width }))
+                        }}
+                        onChange={(content) => updateContentAt(splitPath, content)}
+                        onSave={saveFile}
+                        onSelectionChange={setEditorSelection}
+                        onOpenDefinition={(path, line) => {
+                          void openFileAt(path, line)
+                        }}
+                        onFindReferences={(hits, symbolLabel) => {
+                          setReferenceHits(hits)
+                          setReferenceSymbol(symbolLabel ?? null)
+                          setReferencesLoading(false)
+                          setTerminalOpen(true)
+                          setBottomTab('references')
+                          showNotice(
+                            hits.length > 0
+                              ? `参照 ${hits.length} 件${symbolLabel ? ` · ${symbolLabel}` : ''}`
+                              : '参照が見つかりませんでした'
+                          )
+                        }}
+                        revealLine={editorFocusGroup === 'secondary' ? revealLine : null}
+                        breakpoints={breakpoints}
+                        onToggleBreakpoint={toggleBreakpoint}
+                        pausedLine={pausedLine}
+                        inlineEditTrigger={
+                          editorFocusGroup === 'secondary' ? inlineEditTrigger : 0
+                        }
+                        peekDefinitionTrigger={
+                          editorFocusGroup === 'secondary' ? peekDefinitionTrigger : 0
+                        }
+                        peekReferencesTrigger={
+                          editorFocusGroup === 'secondary' ? peekReferencesTrigger : 0
+                        }
+                        onStatusMessage={(message) => {
+                          setStatus(message)
+                          showNotice(message)
+                        }}
+                      />
+                    </>
+                  )}
+                </div>
                 {composerOpen && (
                   <ComposerPanel
                     proposals={applyQueue}
@@ -2048,6 +2178,23 @@ export default function App() {
         onClose={() => setQuickOpen(false)}
         onOpenFile={(path) => {
           void openFileAt(path)
+        }}
+      />
+      <SymbolPickerDialog
+        open={symbolPicker !== null}
+        mode={symbolPicker ?? 'document'}
+        workspacePath={workspacePath}
+        activePath={activePath}
+        onClose={() => setSymbolPicker(null)}
+        onPick={(hit) => {
+          if (symbolPicker === 'document') {
+            setRevealLine(null)
+            window.setTimeout(() => setRevealLine(hit.line), 0)
+            return
+          }
+          if (!hit.path || !workspacePath) return
+          const abs = resolveProblemOpenPath(workspacePath, hit.path)
+          void openFileAt(abs, hit.line)
         }}
       />
       <CommandPalette

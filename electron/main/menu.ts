@@ -30,6 +30,11 @@ export type MenuCommand =
   | 'view:extensions'
   | 'view:commands'
   | 'terminal:new'
+  | 'go:symbolInFile'
+  | 'go:workspaceSymbol'
+  | 'go:peekDefinition'
+  | 'go:peekReferences'
+  | 'view:splitEditor'
   | 'edit:inline'
   | 'agent:bugbot'
   | 'agent:background'
@@ -100,6 +105,26 @@ export function setupApplicationMenu(locale: MenuLocale = currentLocale): void {
           label: L.inlineEdit,
           accelerator: 'CmdOrCtrl+K',
           click: () => send('edit:inline')
+        },
+        {
+          label: L.goSymbolInFile,
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => send('go:symbolInFile')
+        },
+        {
+          label: L.goWorkspaceSymbol,
+          accelerator: 'CmdOrCtrl+T',
+          click: () => send('go:workspaceSymbol')
+        },
+        {
+          label: L.peekDefinition,
+          accelerator: 'Alt+F12',
+          click: () => send('go:peekDefinition')
+        },
+        {
+          label: L.peekReferences,
+          accelerator: 'Shift+Alt+F12',
+          click: () => send('go:peekReferences')
         },
         { type: 'separator' },
         {
@@ -184,6 +209,11 @@ export function setupApplicationMenu(locale: MenuLocale = currentLocale): void {
           label: L.extensions,
           accelerator: 'CmdOrCtrl+Shift+X',
           click: () => send('view:extensions')
+        },
+        {
+          label: L.splitEditor,
+          accelerator: 'CmdOrCtrl+\\',
+          click: () => send('view:splitEditor')
         },
         { type: 'separator' },
         { role: 'reload' },

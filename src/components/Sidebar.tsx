@@ -30,6 +30,7 @@ type TreeNodeProps = {
   depth: number
   activePath: string | null
   refreshToken: number
+  workspaceRoot: string
   onOpenFile: (path: string) => void
   onContextMenu: (event: ReactMouseEvent, entry: DirEntry) => void
 }
@@ -39,6 +40,7 @@ function TreeNode({
   depth,
   activePath,
   refreshToken,
+  workspaceRoot,
   onOpenFile,
   onContextMenu
 }: TreeNodeProps) {
@@ -51,7 +53,7 @@ function TreeNode({
     setLoading(true)
     setError(null)
     try {
-      const list = await window.saforall.readDir(entry.path)
+      const list = await window.saforall.readDir(entry.path, { workspaceRoot })
       setChildren(list)
     } catch (err) {
       setError(String(err))
@@ -59,7 +61,7 @@ function TreeNode({
     } finally {
       setLoading(false)
     }
-  }, [entry.path])
+  }, [entry.path, workspaceRoot])
 
   useEffect(() => {
     if (expanded) void loadChildren()
@@ -102,6 +104,7 @@ function TreeNode({
               depth={depth + 1}
               activePath={activePath}
               refreshToken={refreshToken}
+              workspaceRoot={workspaceRoot}
               onOpenFile={onOpenFile}
               onContextMenu={onContextMenu}
             />
@@ -134,7 +137,9 @@ export function Sidebar({
       return
     }
     try {
-      const list = await window.saforall.readDir(workspacePath)
+      const list = await window.saforall.readDir(workspacePath, {
+        workspaceRoot: workspacePath
+      })
       setEntries(list)
       setError(null)
       setRefreshToken((n) => n + 1)
@@ -257,6 +262,7 @@ export function Sidebar({
                 depth={0}
                 activePath={activePath}
                 refreshToken={refreshToken}
+                workspaceRoot={workspacePath}
                 onOpenFile={onOpenFile}
                 onContextMenu={(event, target) => {
                   event.preventDefault()

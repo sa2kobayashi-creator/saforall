@@ -7,6 +7,10 @@ type MenuLabels = {
   save: string
   edit: string
   inlineEdit: string
+  goSymbolInFile: string
+  goWorkspaceSymbol: string
+  peekDefinition: string
+  peekReferences: string
   bugbot: string
   backgroundAgent: string
   view: string
@@ -24,6 +28,7 @@ type MenuLabels = {
   hide: string
   settings: string
   extensions: string
+  splitEditor: string
   run: string
   runFile: string
   startDebug: string
@@ -56,6 +61,10 @@ const ja: MenuLabels = {
   save: '保存',
   edit: '編集',
   inlineEdit: '選択範囲をインライン編集',
+  goSymbolInFile: 'ファイル内のシンボルへ移動',
+  goWorkspaceSymbol: 'ワークスペースのシンボルへ移動',
+  peekDefinition: '定義をピーク',
+  peekReferences: '参照をピーク',
   bugbot: '差分で Bugbot を実行',
   backgroundAgent: 'Background Agent…',
   view: '表示',
@@ -73,6 +82,7 @@ const ja: MenuLabels = {
   hide: '隠す',
   settings: '設定',
   extensions: '拡張機能',
+  splitEditor: 'エディタを分割',
   run: '実行',
   runFile: '現在のファイルを実行',
   startDebug: 'デバッグ開始',
@@ -105,6 +115,10 @@ const en: MenuLabels = {
   save: 'Save',
   edit: 'Edit',
   inlineEdit: 'Inline Edit Selection',
+  goSymbolInFile: 'Go to Symbol in Editor',
+  goWorkspaceSymbol: 'Go to Symbol in Workspace',
+  peekDefinition: 'Peek Definition',
+  peekReferences: 'Peek References',
   bugbot: 'Run Bugbot on Diff',
   backgroundAgent: 'Background Agent…',
   view: 'View',
@@ -122,6 +136,7 @@ const en: MenuLabels = {
   hide: 'Hide',
   settings: 'Settings',
   extensions: 'Extensions',
+  splitEditor: 'Split Editor',
   run: 'Run',
   runFile: 'Run Current File',
   startDebug: 'Start Debugging',

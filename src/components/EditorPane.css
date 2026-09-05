@@ -205,3 +205,66 @@
   border-top: 10px solid #ffc400 !important;
   border-radius: 0 !important;
 }
+
+.editor-peek {
+  flex-shrink: 0;
+  max-height: 180px;
+  border-bottom: 1px solid var(--border);
+  background: #1a1f2a;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-peek-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-peek-header span {
+  color: var(--text-muted);
+}
+
+.editor-peek-header button {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.editor-peek-list {
+  overflow: auto;
+  padding: 4px;
+}
+
+.editor-peek-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.editor-peek-item:hover {
+  background: #243044;
+}
+
+.editor-peek-path {
+  display: block;
+  font-size: 12px;
+}
+
+.editor-peek-meta {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: Consolas, 'Cascadia Code', monospace;
+}

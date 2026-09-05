@@ -54,6 +54,13 @@ type Props = {
   pausedLine?: { path: string; line: number } | null
   /** Increment to open Ctrl+K from outside (menu) */
   inlineEditTrigger?: number
+  /** Increment to run peek definition / references from menu */
+  peekDefinitionTrigger?: number
+  peekReferencesTrigger?: number
+  /** Register Monaco LSP/tab providers (only one pane should) */
+  registerProviders?: boolean
+  showOutline?: boolean
+  onEditorFocus?: () => void
   onStatusMessage?: (message: string) => void
 }
 
@@ -82,6 +89,11 @@ export function EditorPane({
   onToggleBreakpoint,
   pausedLine = null,
   inlineEditTrigger = 0,
+  peekDefinitionTrigger = 0,
+  peekReferencesTrigger = 0,
+  registerProviders = true,
+  showOutline = true,
+  onEditorFocus,
   onStatusMessage
 }: Props) {
   const file = tabs.find((tab) => tab.path === activePath) ?? null
@@ -128,6 +140,10 @@ export function EditorPane({
   const decorationIdsRef = useRef<string[]>([])
   const [inlineTarget, setInlineTarget] = useState<InlineEditTarget | null>(null)
   const [previewMode, setPreviewMode] = useState<PreviewMode>('edit')
+  const [peek, setPeek] = useState<{
+    title: string
+    hits: Array<{ path: string; line: number; column: number }>
+  } | null>(null)
   const openInlineEditRef = useRef<() => void>(() => undefined)
 
   const openInlineEdit = useCallback(() => {
@@ -187,12 +203,88 @@ export function EditorPane({
     if (inlineEditTrigger > 0) openInlineEdit()
   }, [inlineEditTrigger, openInlineEdit])
 
+  const runPeekDefinition = useCallback(async () => {
+    const editor = editorRef.current
+    const meta = fileMetaRef.current
+    if (!editor || !meta || typeof window.saforall.lspDefinition !== 'function') return
+    const pos = editor.getPosition()
+    if (!pos) return
+    try {
+      const hits = await window.saforall.lspDefinition({
+        path: meta.path,
+        line: pos.lineNumber - 1,
+        character: pos.column - 1
+      })
+      if (hits.length === 0) {
+        statusMessageRef.current?.('定義が見つかりません')
+        setPeek(null)
+        return
+      }
+      if (hits.length === 1 && hits[0].path === meta.path) {
+        const hit = hits[0]
+        editor.revealLineInCenter(hit.line)
+        editor.setPosition({ lineNumber: hit.line, column: hit.column || 1 })
+      }
+      setPeek({
+        title: 'Peek Definition',
+        hits: hits.map((row) => ({
+          path: row.path,
+          line: row.line,
+          column: row.column || 1
+        }))
+      })
+    } catch (error) {
+      statusMessageRef.current?.(`Peek Definition 失敗: ${String(error)}`)
+    }
+  }, [])
+
+  const runPeekReferences = useCallback(async () => {
+    const editor = editorRef.current
+    const meta = fileMetaRef.current
+    if (!editor || !meta || typeof window.saforall.lspReferences !== 'function') return
+    const pos = editor.getPosition()
+    if (!pos) return
+    const model = editor.getModel()
+    const word = model?.getWordAtPosition(pos)?.word
+    try {
+      const hits = await window.saforall.lspReferences({
+        path: meta.path,
+        line: pos.lineNumber - 1,
+        character: pos.column - 1
+      })
+      if (hits.length === 0) {
+        statusMessageRef.current?.('参照が見つかりません')
+        setPeek(null)
+        return
+      }
+      setPeek({
+        title: `Peek References${word ? ` · ${word}` : ''}`,
+        hits: hits.map((row) => ({
+          path: row.path,
+          line: row.line,
+          column: row.column || 1
+        }))
+      })
+    } catch (error) {
+      statusMessageRef.current?.(`Peek References 失敗: ${String(error)}`)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (peekDefinitionTrigger > 0) void runPeekDefinition()
+  }, [peekDefinitionTrigger, runPeekDefinition])
+
+  useEffect(() => {
+    if (peekReferencesTrigger > 0) void runPeekReferences()
+  }, [peekReferencesTrigger, runPeekReferences])
+
   useEffect(() => {
     return () => {
+      if (!registerProviders) return
       disposeTabCompletions()
       disposeLspProviders()
     }
-  }, [])
+  }, [registerProviders])
 
   useEffect(() => {
     const editor = editorRef.current
@@ -303,22 +395,24 @@ export function EditorPane({
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
-    registerTabCompletions(monaco, () => fileMetaRef.current, {
-      isBackendConnected: () => backendConnectedRef.current,
-      getRelatedFiles: () =>
-        tabsRef.current.map((tab) => ({
-          path: tab.path,
-          content: tab.content
-        }))
-    })
-    registerLspProviders(
-      monaco,
-      () => fileMetaRef.current,
-      (path, line) => {
-        openDefinitionRef.current?.(path, line)
-      },
-      (edits) => applyLspEditsRef.current?.(edits)
-    )
+    if (registerProviders) {
+      registerTabCompletions(monaco, () => fileMetaRef.current, {
+        isBackendConnected: () => backendConnectedRef.current,
+        getRelatedFiles: () =>
+          tabsRef.current.map((tab) => ({
+            path: tab.path,
+            content: tab.content
+          }))
+      })
+      registerLspProviders(
+        monaco,
+        () => fileMetaRef.current,
+        (path, line) => {
+          openDefinitionRef.current?.(path, line)
+        },
+        (edits) => applyLspEditsRef.current?.(edits)
+      )
+    }
 
     editor.addAction({
       id: 'saforall.inlineEdit',
@@ -326,6 +420,24 @@ export function EditorPane({
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
       run: () => {
         openInlineEditRef.current()
+      }
+    })
+
+    editor.addAction({
+      id: 'saforall.peekDefinition',
+      label: 'Peek Definition',
+      keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.F12],
+      run: () => {
+        void runPeekDefinition()
+      }
+    })
+
+    editor.addAction({
+      id: 'saforall.peekReferences',
+      label: 'Peek References',
+      keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.F12],
+      run: () => {
+        void runPeekReferences()
       }
     })
 
@@ -666,12 +778,53 @@ export function EditorPane({
           editor.focus()
         }}
       />
+      {peek && (
+        <div className="editor-peek" role="dialog" aria-label={peek.title}>
+          <div className="editor-peek-header">
+            <strong>{peek.title}</strong>
+            <span>{peek.hits.length} 件</span>
+            <button type="button" onClick={() => setPeek(null)}>
+              ×
+            </button>
+          </div>
+          <div className="editor-peek-list">
+            {peek.hits.map((hit, i) => (
+              <button
+                key={`${hit.path}:${hit.line}:${i}`}
+                type="button"
+                className="editor-peek-item"
+                onClick={() => {
+                  if (hit.path === activePath) {
+                    const editor = editorRef.current
+                    if (editor) {
+                      editor.revealLineInCenter(hit.line)
+                      editor.setPosition({ lineNumber: hit.line, column: hit.column || 1 })
+                      editor.focus()
+                    }
+                  } else {
+                    openDefinitionRef.current?.(hit.path, hit.line)
+                  }
+                  setPeek(null)
+                }}
+              >
+                <span className="editor-peek-path">
+                  {hit.path.split(/[/\\]/).pop() ?? hit.path}
+                </span>
+                <span className="editor-peek-meta">
+                  L{hit.line}:{hit.column} · {hit.path}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div
         className={
           previewMode === 'split' && supportsPreview(file.language, file.path)
             ? 'editor-preview-split'
             : 'editor-host-wrap'
         }
+        onFocusCapture={() => onEditorFocus?.()}
       >
         {previewMode !== 'preview' && (
           <div className="editor-host">
@@ -705,17 +858,19 @@ export function EditorPane({
           />
         )}
       </div>
-      <OutlinePanel
-        symbols={symbols}
-        activePath={activePath}
-        onJump={(line, column) => {
-          const editor = editorRef.current
-          if (!editor) return
-          editor.revealLineInCenter(line)
-          editor.setPosition({ lineNumber: line, column: column ?? 1 })
-          editor.focus()
-        }}
-      />
+      {showOutline && (
+        <OutlinePanel
+          symbols={symbols}
+          activePath={activePath}
+          onJump={(line, column) => {
+            const editor = editorRef.current
+            if (!editor) return
+            editor.revealLineInCenter(line)
+            editor.setPosition({ lineNumber: line, column: column ?? 1 })
+            editor.focus()
+          }}
+        />
+      )}
     </div>
   )
 }
