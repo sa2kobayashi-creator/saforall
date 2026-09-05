@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useI18n } from '../i18n'
+import { CreatePrDialog } from './CreatePrDialog'
 import './SourceControlPanel.css'
 
 type GitFile = {
@@ -42,6 +43,12 @@ export function SourceControlPanel({
   const [files, setFiles] = useState<GitFile[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [prOpen, setPrOpen] = useState(false)
+  const [ghAuth, setGhAuth] = useState<{
+    loggedIn: boolean
+    account?: string
+    error?: string
+  } | null>(null)
 
   const staged = useMemo(() => files.filter((file) => file.staged), [files])
   const changes = useMemo(() => files.filter((file) => file.unstaged), [files])
@@ -55,6 +62,7 @@ export function SourceControlPanel({
       setAhead(0)
       setBehind(0)
       setError(null)
+      setGhAuth(null)
       return
     }
 
@@ -81,6 +89,17 @@ export function SourceControlPanel({
         setError(result.error)
       } else {
         setError(null)
+      }
+      if (result.isRepo && typeof window.saforall.ghAuthStatus === 'function') {
+        void window.saforall.ghAuthStatus(workspacePath).then((auth) => {
+          setGhAuth({
+            loggedIn: auth.loggedIn,
+            account: auth.account,
+            error: auth.error
+          })
+        })
+      } else {
+        setGhAuth(null)
       }
     } catch (err) {
       setError(String(err))
@@ -154,6 +173,14 @@ export function SourceControlPanel({
           <button type="button" title={t('scm.push')} disabled={busy || !isRepo} onClick={() => void runOp('Push', () => window.saforall.gitPush(workspacePath!))}>
             ⇑
           </button>
+          <button
+            type="button"
+            title={t('scm.createPr')}
+            disabled={busy || !isRepo}
+            onClick={() => setPrOpen(true)}
+          >
+            PR
+          </button>
           <button type="button" title={t('scm.clone')} onClick={onClone}>
             ↓
           </button>
@@ -196,6 +223,11 @@ export function SourceControlPanel({
                 <button type="button" onClick={() => void onInit()}>
                   git init
                 </button>
+              </div>
+            )}
+            {isRepo && ghAuth && (
+              <div className={`scm-gh-auth ${ghAuth.loggedIn ? 'ok' : 'ng'}`}>
+                GitHub: {ghAuth.loggedIn ? `✓ ${ghAuth.account ?? 'ログイン済'}` : '未ログイン（gh auth login）'}
               </div>
             )}
             {error && <div className="scm-error">{error}</div>}
@@ -323,6 +355,23 @@ export function SourceControlPanel({
             </>
           )}
         </div>
+      )}
+      {workspacePath && (
+        <CreatePrDialog
+          open={prOpen}
+          workspacePath={workspacePath}
+          defaultTitle={message.trim()}
+          onClose={() => setPrOpen(false)}
+          onCreated={(info) => {
+            const note = info.url
+              ? `PR 作成: ${info.url}`
+              : 'PR を作成しました'
+            onStatusMessage?.(note)
+            if (info.url && typeof window.saforall.openExternal === 'function') {
+              void window.saforall.openExternal(info.url)
+            }
+          }}
+        />
       )}
     </aside>
   )

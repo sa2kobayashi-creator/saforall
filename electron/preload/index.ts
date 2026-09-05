@@ -456,6 +456,26 @@ const api = {
     ipcRenderer.invoke('git:push', cwd),
   gitPull: (cwd: string): Promise<{ ok: boolean; stdout?: string; error?: string }> =>
     ipcRenderer.invoke('git:pull', cwd),
+  createPullRequest: (payload: {
+    cwd: string
+    title: string
+    body?: string
+    base?: string
+    draft?: boolean
+  }): Promise<{ ok: boolean; url?: string; stdout?: string; error?: string }> =>
+    ipcRenderer.invoke('gh:prCreate', payload),
+  ghAuthStatus: (
+    cwd?: string
+  ): Promise<{
+    ok: boolean
+    loggedIn: boolean
+    account?: string
+    host?: string
+    stdout?: string
+    error?: string
+  }> => ipcRenderer.invoke('gh:authStatus', cwd),
+  openExternal: (url: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('shell:openExternal', url),
   listJobs: (): Promise<
     Array<{
       id: string

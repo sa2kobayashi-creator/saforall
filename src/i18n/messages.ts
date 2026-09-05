@@ -52,6 +52,7 @@ const ja = {
   'scm.pull': 'Pull',
   'scm.push': 'Push',
   'scm.refresh': '更新',
+  'scm.createPr': 'Pull Request を作成',
 
   'bottom.terminal': 'ターミナル',
   'bottom.problems': '問題',
@@ -162,6 +163,7 @@ const en: Record<MessageKey, string> = {
   'scm.pull': 'Pull',
   'scm.push': 'Push',
   'scm.refresh': 'Refresh',
+  'scm.createPr': 'Create Pull Request',
 
   'bottom.terminal': 'TERMINAL',
   'bottom.problems': 'PROBLEMS',

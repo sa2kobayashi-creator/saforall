@@ -94,6 +94,19 @@
   white-space: pre-wrap;
 }
 
+.scm-gh-auth {
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.scm-gh-auth.ok {
+  color: #9fdfb0;
+}
+
+.scm-gh-auth.ng {
+  color: #f0d48a;
+}
+
 .scm-commit {
   padding: 0 12px 10px;
   display: flex;

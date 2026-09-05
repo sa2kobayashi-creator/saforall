@@ -15,6 +15,7 @@ import {
   stagePaths,
   unstagePaths
 } from './git'
+import { createPullRequest, getGhAuthStatus } from './gh'
 import { setupApplicationMenu } from './menu'
 import {
   createTerminalSession,
@@ -300,6 +301,32 @@ ipcMain.handle('git:pull', async (_event, cwd: string) => pullRepository(cwd))
 ipcMain.handle(
   'git:diff',
   async (_event, cwd: string, options?: { staged?: boolean }) => getGitDiff(cwd, options)
+)
+
+ipcMain.handle(
+  'gh:prCreate',
+  async (
+    _event,
+    payload: { cwd: string; title: string; body?: string; base?: string; draft?: boolean }
+  ) =>
+    createPullRequest(payload.cwd, {
+      title: payload.title,
+      body: payload.body,
+      base: payload.base,
+      draft: payload.draft
+    })
+)
+
+ipcMain.handle('gh:authStatus', async (_event, cwd?: string) => getGhAuthStatus(cwd))
+
+ipcMain.handle(
+  'shell:openExternal',
+  async (_event, url: string) => {
+    const { shell } = await import('electron')
+    if (!/^https?:\/\//i.test(url)) return { ok: false as const, error: 'URL が不正です' }
+    await shell.openExternal(url)
+    return { ok: true as const }
+  }
 )
 
 ipcMain.handle(

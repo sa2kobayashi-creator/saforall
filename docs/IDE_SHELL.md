@@ -23,7 +23,8 @@ Right: AI Chat
 | **2** | 下部パネルタブ（Terminal / Problems） | 完了 |
 | **3** | Search サイドバー（コード内 / ファイル名） | 完了 |
 | **3** | 最近のワークスペース | 完了（Welcome） |
-| **3** | PR 作成・認証マネージャ（gh / Bitbucket） | 未着手 |
+| **3** | GitHub PR 作成（gh）+ auth 表示 | 完了 |
+| **3** | Bitbucket PR / 認証マネージャ UI | 未着手 |
 
 ## Git 方針
 
