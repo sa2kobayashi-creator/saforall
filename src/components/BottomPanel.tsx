@@ -2,11 +2,12 @@ import { TerminalPanel } from './TerminalPanel'
 import { ProblemsPanel, type ProblemItem } from './ProblemsPanel'
 import { DebugPanel } from './DebugPanel'
 import { ReferencesPanel, type ReferenceHit } from './ReferencesPanel'
+import { JobsPanel } from './JobsPanel'
 import type { DebugCallFrame } from '../lib/debugTypes'
 import { useI18n } from '../i18n'
 import './BottomPanel.css'
 
-export type BottomPanelTab = 'terminal' | 'problems' | 'debug' | 'references'
+export type BottomPanelTab = 'terminal' | 'problems' | 'debug' | 'references' | 'jobs'
 
 type Props = {
   open: boolean
@@ -21,6 +22,15 @@ type Props = {
     loading?: boolean
     onOpen: (path: string, line: number) => void
   }
+  onJobDetail?: (job: {
+    id: string
+    kind: 'agent' | 'bugbot'
+    title: string
+    status: string
+    summary?: string
+    error?: string
+    prompt?: string
+  }) => void
   debug: {
     running: boolean
     paused: boolean
@@ -56,6 +66,7 @@ export function BottomPanel({
   pendingCommand,
   problems,
   references,
+  onJobDetail,
   debug,
   onChangeTab,
   onCommandSent,
@@ -113,6 +124,15 @@ export function BottomPanel({
             References
             {references.hits.length > 0 ? ` (${references.hits.length})` : ''}
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'jobs'}
+            className={activeTab === 'jobs' ? 'active' : ''}
+            onClick={() => onChangeTab('jobs')}
+          >
+            Jobs
+          </button>
         </div>
         <div className="bottom-panel-actions">
           {activeTab === 'terminal' && (
@@ -160,6 +180,13 @@ export function BottomPanel({
           style={{ display: activeTab === 'references' ? 'flex' : 'none' }}
         >
           <ReferencesPanel {...references} />
+        </div>
+        <div
+          className="bottom-panel-page"
+          hidden={activeTab !== 'jobs'}
+          style={{ display: activeTab === 'jobs' ? 'flex' : 'none' }}
+        >
+          <JobsPanel onOpenPrompt={onJobDetail} />
         </div>
       </div>
     </section>

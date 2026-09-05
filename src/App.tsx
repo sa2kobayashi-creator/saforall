@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityBar, type SidebarView } from './components/ActivityBar'
+import { RulesPanel } from './components/RulesPanel'
 import { Sidebar } from './components/Sidebar'
 import { SearchPanel } from './components/SearchPanel'
 import { SourceControlPanel } from './components/SourceControlPanel'
@@ -1493,6 +1494,17 @@ export default function App() {
                 showNotice(message)
               }}
             />
+          ) : sidebarView === 'rules' ? (
+            <RulesPanel
+              workspacePath={workspacePath}
+              width={sidebarWidth}
+              onOpenWorkspace={openWorkspace}
+              onOpenFile={openFileAt}
+              onStatusMessage={(message) => {
+                setStatus(message)
+                showNotice(message)
+              }}
+            />
           ) : (
             <div
               style={{
@@ -1631,6 +1643,17 @@ export default function App() {
                     loading: referencesLoading,
                     onOpen: (path, line) => {
                       void openFileAt(path, line)
+                    }
+                  }}
+                  onJobDetail={(job) => {
+                    showNotice(
+                      `${job.kind} · ${job.status} · ${job.title}` +
+                        (job.summary ? ` — ${job.summary}` : '') +
+                        (job.error ? ` / ${job.error}` : '')
+                    )
+                    if (job.prompt) {
+                      setChatOpen(true)
+                      setPendingChatPrompt(job.prompt)
                     }
                   }}
                   debug={{

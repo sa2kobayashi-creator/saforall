@@ -193,6 +193,22 @@ const api = {
   }): Promise<
     Array<{ path: string; line: number; column: number; endLine?: number; endColumn?: number }>
   > => ipcRenderer.invoke('lsp:references', params),
+  lspInlayHints: (params: {
+    path: string
+    startLine: number
+    startCharacter: number
+    endLine: number
+    endCharacter: number
+  }): Promise<
+    Array<{
+      label: string
+      line: number
+      column: number
+      kind?: 'type' | 'parameter' | 'other'
+      paddingLeft?: boolean
+      paddingRight?: boolean
+    }>
+  > => ipcRenderer.invoke('lsp:inlayHints', params),
   lspRename: (params: {
     path: string
     line: number
@@ -489,6 +505,32 @@ const api = {
   }> => ipcRenderer.invoke('gh:authStatus', cwd),
   openExternal: (url: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('shell:openExternal', url),
+  listRules: (
+    cwd: string
+  ): Promise<Array<{ path: string; kind: 'rules' | 'agents' | 'memory'; bytes: number }>> =>
+    ipcRenderer.invoke('rules:list', cwd),
+  readRuleFile: (cwd: string, relativePath: string): Promise<string> =>
+    ipcRenderer.invoke('rules:readFile', cwd, relativePath),
+  readMemory: (cwd: string): Promise<string> => ipcRenderer.invoke('rules:readMemory', cwd),
+  appendMemory: (
+    cwd: string,
+    note: string
+  ): Promise<{ path: string; bytes: number }> =>
+    ipcRenderer.invoke('rules:appendMemory', cwd, note),
+  saveMemory: (
+    cwd: string,
+    content: string
+  ): Promise<{ path: string; bytes: number }> =>
+    ipcRenderer.invoke('rules:saveMemory', cwd, content),
+  bitbucketRemote: (
+    cwd: string
+  ): Promise<{
+    ok: boolean
+    info?: { host: string; workspace: string; repo: string; url: string }
+    branch?: string | null
+    createUrl?: string
+    error?: string
+  }> => ipcRenderer.invoke('bitbucket:remote', cwd),
   listJobs: (): Promise<
     Array<{
       id: string
@@ -556,6 +598,42 @@ const api = {
     ipcRenderer.on('jobs:run', listener)
     return () => {
       ipcRenderer.removeListener('jobs:run', listener)
+    }
+  },
+  onJobsUpdated: (
+    callback: (job: {
+      id: string
+      kind: 'agent' | 'bugbot'
+      title: string
+      status: string
+      createdAt: number
+      finishedAt?: number
+      summary?: string
+      error?: string
+      prompt: string
+      cwd: string | null
+    }) => void
+  ) => {
+    const listener = (
+      _event: unknown,
+      job: {
+        id: string
+        kind: 'agent' | 'bugbot'
+        title: string
+        status: string
+        createdAt: number
+        finishedAt?: number
+        summary?: string
+        error?: string
+        prompt: string
+        cwd: string | null
+      }
+    ): void => {
+      callback(job)
+    }
+    ipcRenderer.on('jobs:updated', listener)
+    return () => {
+      ipcRenderer.removeListener('jobs:updated', listener)
     }
   },
   getRuntimeInfo: (): {

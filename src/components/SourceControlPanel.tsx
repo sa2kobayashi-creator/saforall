@@ -49,6 +49,12 @@ export function SourceControlPanel({
     account?: string
     error?: string
   } | null>(null)
+  const [bitbucket, setBitbucket] = useState<{
+    createUrl: string
+    workspace: string
+    repo: string
+    branch?: string | null
+  } | null>(null)
 
   const staged = useMemo(() => files.filter((file) => file.staged), [files])
   const changes = useMemo(() => files.filter((file) => file.unstaged), [files])
@@ -63,6 +69,7 @@ export function SourceControlPanel({
       setBehind(0)
       setError(null)
       setGhAuth(null)
+      setBitbucket(null)
       return
     }
 
@@ -100,6 +107,22 @@ export function SourceControlPanel({
         })
       } else {
         setGhAuth(null)
+      }
+      if (result.isRepo && typeof window.saforall.bitbucketRemote === 'function') {
+        void window.saforall.bitbucketRemote(workspacePath).then((remote) => {
+          if (remote.ok && remote.createUrl && remote.info) {
+            setBitbucket({
+              createUrl: remote.createUrl,
+              workspace: remote.info.workspace,
+              repo: remote.info.repo,
+              branch: remote.branch
+            })
+          } else {
+            setBitbucket(null)
+          }
+        })
+      } else {
+        setBitbucket(null)
       }
     } catch (err) {
       setError(String(err))
@@ -181,6 +204,24 @@ export function SourceControlPanel({
           >
             PR
           </button>
+          {bitbucket && (
+            <button
+              type="button"
+              title={`Bitbucket PR · ${bitbucket.workspace}/${bitbucket.repo}`}
+              disabled={busy || !isRepo}
+              onClick={() => {
+                void window.saforall.openExternal(bitbucket.createUrl).then((result) => {
+                  if (!result.ok) {
+                    onStatusMessage?.(result.error ?? 'Bitbucket PR ページを開けませんでした')
+                  } else {
+                    onStatusMessage?.('Bitbucket の PR 作成ページを開きました')
+                  }
+                })
+              }}
+            >
+              BB
+            </button>
+          )}
           <button type="button" title={t('scm.clone')} onClick={onClone}>
             ↓
           </button>
@@ -228,6 +269,12 @@ export function SourceControlPanel({
             {isRepo && ghAuth && (
               <div className={`scm-gh-auth ${ghAuth.loggedIn ? 'ok' : 'ng'}`}>
                 GitHub: {ghAuth.loggedIn ? `✓ ${ghAuth.account ?? 'ログイン済'}` : '未ログイン（gh auth login）'}
+              </div>
+            )}
+            {isRepo && bitbucket && (
+              <div className="scm-note">
+                Bitbucket: {bitbucket.workspace}/{bitbucket.repo}
+                {bitbucket.branch ? ` · ${bitbucket.branch}` : ''}
               </div>
             )}
             {error && <div className="scm-error">{error}</div>}

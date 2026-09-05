@@ -180,6 +180,114 @@ export async function loadProjectRules(workspaceRoot: string): Promise<string | 
   return merged.length > maxTotal ? `${merged.slice(0, maxTotal)}\n\n... (truncated)` : merged
 }
 
+export type ProjectRuleFile = {
+  path: string
+  kind: 'rules' | 'agents' | 'memory'
+  bytes: number
+}
+
+export async function listProjectRuleFiles(workspaceRoot: string): Promise<ProjectRuleFile[]> {
+  const out: ProjectRuleFile[] = []
+  const tryStat = async (rel: string, kind: ProjectRuleFile['kind']): Promise<void> => {
+    try {
+      const absolute = resolveWorkspacePath(workspaceRoot, rel)
+      const info = await stat(absolute)
+      if (info.isFile()) out.push({ path: rel, kind, bytes: info.size })
+    } catch {
+      // missing
+    }
+  }
+  await tryStat('.saforall/rules.md', 'rules')
+  await tryStat('.saforall/rules', 'rules')
+  await tryStat('AGENTS.md', 'agents')
+  await tryStat('SAFORALL.md', 'agents')
+  await tryStat('.cursorrules', 'rules')
+  await tryStat('.cursor/rules.md', 'rules')
+  await tryStat('.saforall/memories.md', 'memory')
+  await tryStat('.saforall/memories', 'memory')
+  try {
+    const rulesDir = resolveWorkspacePath(workspaceRoot, '.cursor/rules')
+    const entries = await readdir(rulesDir, { withFileTypes: true })
+    for (const row of entries) {
+      if (!row.isFile() || !/\.(mdc|md|txt)$/i.test(row.name)) continue
+      const rel = `.cursor/rules/${row.name}`
+      const info = await stat(join(rulesDir, row.name))
+      out.push({ path: rel, kind: 'rules', bytes: info.size })
+    }
+  } catch {
+    // no dir
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path))
+}
+
+export async function readProjectMemory(workspaceRoot: string): Promise<string> {
+  for (const rel of ['.saforall/memories.md', '.saforall/memories']) {
+    try {
+      const absolute = resolveWorkspacePath(workspaceRoot, rel)
+      const { text } = await readTextFile(absolute)
+      return text
+    } catch {
+      // try next
+    }
+  }
+  return ''
+}
+
+export async function appendProjectMemory(
+  workspaceRoot: string,
+  note: string
+): Promise<{ path: string; bytes: number }> {
+  const trimmed = note.trim()
+  if (!trimmed) throw new Error('memory が空です')
+  const rel = '.saforall/memories.md'
+  const absolute = resolveWorkspacePath(workspaceRoot, rel)
+  await mkdir(dirname(absolute), { recursive: true })
+  let existing = ''
+  try {
+    const { text } = await readTextFile(absolute)
+    existing = text
+  } catch {
+    existing = ''
+  }
+  const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ')
+  const block = `${existing.trimEnd()}${existing.trim() ? '\n\n' : ''}## ${stamp}\n\n${trimmed}\n`
+  await writeFile(absolute, block, 'utf-8')
+  return { path: rel, bytes: Buffer.byteLength(block, 'utf-8') }
+}
+
+export async function saveProjectMemory(
+  workspaceRoot: string,
+  content: string
+): Promise<{ path: string; bytes: number }> {
+  const rel = '.saforall/memories.md'
+  const absolute = resolveWorkspacePath(workspaceRoot, rel)
+  await mkdir(dirname(absolute), { recursive: true })
+  const text = content.endsWith('\n') ? content : `${content}\n`
+  await writeFile(absolute, text, 'utf-8')
+  return { path: rel, bytes: Buffer.byteLength(text, 'utf-8') }
+}
+
+export async function readProjectRuleFile(
+  workspaceRoot: string,
+  relativePath: string
+): Promise<string> {
+  const allowedPrefixes = ['.saforall/', '.cursor/', 'AGENTS.md', 'SAFORALL.md', '.cursorrules']
+  const rel = relativePath.replace(/\\/g, '/').replace(/^\.\//, '')
+  if (
+    !allowedPrefixes.some(
+      (prefix) => rel === prefix || rel.startsWith(prefix) || prefix.endsWith(rel)
+    ) &&
+    rel !== 'AGENTS.md' &&
+    rel !== 'SAFORALL.md' &&
+    rel !== '.cursorrules'
+  ) {
+    throw new Error('許可されていない rules パスです')
+  }
+  const absolute = resolveWorkspacePath(workspaceRoot, rel)
+  const { text } = await readTextFile(absolute)
+  return text.length > 100_000 ? `${text.slice(0, 100_000)}\n\n... (truncated)` : text
+}
+
 export async function searchFilesByName(
   workspaceRoot: string,
   query: string,

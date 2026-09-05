@@ -24,9 +24,14 @@ import {
   resizeTerminal,
   writeTerminal
 } from './terminal'
-import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch } from './workspaceTools'
+import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch, listProjectRuleFiles, readProjectMemory, appendProjectMemory, saveProjectMemory, readProjectRuleFile } from './workspaceTools'
 import { loadWorkspaceExtensions } from './extensions'
 import { type DebugBreakpoint, type DebugSession } from './debugSession'
+import {
+  detectBitbucketRemote,
+  detectCurrentBranchName,
+  buildBitbucketPullRequestCreateUrl
+} from './bitbucket'
 import {
   continueUnifiedDebug,
   evaluateUnifiedDebug,
@@ -458,8 +463,30 @@ ipcMain.handle(
   async (
     _event,
     params: { path: string; line: number; character: number }
-  ): Promise<Array<{ path: string; line: number; column: number }>> =>
-    lspManager.references(params.path, params.line, params.character)
+  ): Promise<
+    Array<{ path: string; line: number; column: number; endLine?: number; endColumn?: number }>
+  > => lspManager.references(params.path, params.line, params.character)
+)
+
+ipcMain.handle(
+  'lsp:inlayHints',
+  async (
+    _event,
+    params: {
+      path: string
+      startLine: number
+      startCharacter: number
+      endLine: number
+      endCharacter: number
+    }
+  ) =>
+    lspManager.inlayHints(
+      params.path,
+      params.startLine,
+      params.startCharacter,
+      params.endLine,
+      params.endCharacter
+    )
 )
 
 ipcMain.handle(
@@ -486,6 +513,28 @@ lspManager.setDiagnosticsHandler((items: LspDiagnostic[]) => {
 })
 
 ipcMain.handle('marketplace:search', async (_event, query: string) => searchOpenVsx(query))
+
+ipcMain.handle('rules:list', async (_event, cwd: string) => listProjectRuleFiles(cwd))
+ipcMain.handle('rules:readFile', async (_event, cwd: string, relativePath: string) =>
+  readProjectRuleFile(cwd, relativePath)
+)
+ipcMain.handle('rules:readMemory', async (_event, cwd: string) => readProjectMemory(cwd))
+ipcMain.handle('rules:appendMemory', async (_event, cwd: string, note: string) =>
+  appendProjectMemory(cwd, note)
+)
+ipcMain.handle('rules:saveMemory', async (_event, cwd: string, content: string) =>
+  saveProjectMemory(cwd, content)
+)
+
+ipcMain.handle('bitbucket:remote', async (_event, cwd: string) => {
+  const info = await detectBitbucketRemote(cwd)
+  if (!info) return { ok: false as const, error: 'Bitbucket remote ではありません' }
+  const branch = await detectCurrentBranchName(cwd)
+  const createUrl = buildBitbucketPullRequestCreateUrl(info, {
+    source: branch ?? undefined
+  })
+  return { ok: true as const, info, branch, createUrl }
+})
 
 ipcMain.handle('jobs:list', async () => listBackgroundJobs())
 

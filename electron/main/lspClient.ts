@@ -30,6 +30,15 @@ export type LspHover = {
   contents: string
 }
 
+export type LspInlayHint = {
+  label: string
+  line: number
+  column: number
+  kind?: 'type' | 'parameter' | 'other'
+  paddingLeft?: boolean
+  paddingRight?: boolean
+}
+
 export type LspTextEdit = {
   path: string
   startLine: number
@@ -93,6 +102,22 @@ function formatHoverContents(contents: unknown): string {
     }
   }
   return String(contents)
+}
+
+function formatInlayLabel(label: unknown): string {
+  if (typeof label === 'string') return label
+  if (Array.isArray(label)) {
+    return label
+      .map((part) => {
+        if (typeof part === 'string') return part
+        if (part && typeof part === 'object' && typeof (part as { value?: string }).value === 'string') {
+          return (part as { value: string }).value
+        }
+        return ''
+      })
+      .join('')
+  }
+  return ''
 }
 
 function parseWorkspaceEdits(result: unknown): LspTextEdit[] {
@@ -222,7 +247,10 @@ export class LspClient extends EventEmitter {
             contentFormat: ['markdown', 'plaintext']
           },
           references: {},
-          rename: { prepareSupport: false }
+          rename: { prepareSupport: false },
+          inlayHint: {
+            resolveSupport: { properties: [] }
+          }
         }
       },
       clientInfo: { name: 'saforall', version: '0.1.0' }
@@ -382,6 +410,47 @@ export class LspClient extends EventEmitter {
       })
     }
     return locations.slice(0, 100)
+  }
+
+  async inlayHints(
+    filePath: string,
+    startLine: number,
+    startCharacter: number,
+    endLine: number,
+    endCharacter: number
+  ): Promise<LspInlayHint[]> {
+    const response = await this.request('textDocument/inlayHint', {
+      textDocument: { uri: toUri(filePath) },
+      range: {
+        start: { line: startLine, character: startCharacter },
+        end: { line: endLine, character: endCharacter }
+      }
+    })
+    const result = response.result
+    const rows = Array.isArray(result) ? result : []
+    const hints: LspInlayHint[] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue
+      const item = row as {
+        label?: unknown
+        position?: { line?: number; character?: number }
+        kind?: number
+        paddingLeft?: boolean
+        paddingRight?: boolean
+      }
+      const label = formatInlayLabel(item.label)
+      if (!label) continue
+      const kindNum = Number(item.kind ?? 0)
+      hints.push({
+        label: label.slice(0, 80),
+        line: Number(item.position?.line ?? 0) + 1,
+        column: Number(item.position?.character ?? 0) + 1,
+        kind: kindNum === 1 ? 'type' : kindNum === 2 ? 'parameter' : 'other',
+        paddingLeft: item.paddingLeft,
+        paddingRight: item.paddingRight
+      })
+    }
+    return hints.slice(0, 200)
   }
 
   async rename(
@@ -705,6 +774,28 @@ export class LspManager {
     if (!client) return []
     try {
       return await client.references(filePath, line, character)
+    } catch {
+      return []
+    }
+  }
+
+  async inlayHints(
+    filePath: string,
+    startLine: number,
+    startCharacter: number,
+    endLine: number,
+    endCharacter: number
+  ): Promise<LspInlayHint[]> {
+    const client = this.clientForPath(filePath)
+    if (!client) return []
+    try {
+      return await client.inlayHints(
+        filePath,
+        startLine,
+        startCharacter,
+        endLine,
+        endCharacter
+      )
     } catch {
       return []
     }

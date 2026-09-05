@@ -317,9 +317,61 @@ export function registerLspProviders(
         }
       })
     )
+
+    disposables.push(
+      monaco.languages.registerInlayHintsProvider(language, {
+        provideInlayHints: async (
+          _model: unknown,
+          range: {
+            startLineNumber: number
+            startColumn: number
+            endLineNumber: number
+            endColumn: number
+          },
+          token: CancellationToken
+        ) => {
+          const meta = getMeta()
+          if (!meta || typeof window.saforall.lspInlayHints !== 'function') {
+            return { hints: [], dispose: () => undefined }
+          }
+          try {
+            const hints = await window.saforall.lspInlayHints({
+              path: meta.path,
+              startLine: range.startLineNumber - 1,
+              startCharacter: range.startColumn - 1,
+              endLine: range.endLineNumber - 1,
+              endCharacter: range.endColumn - 1
+            })
+            if (token.isCancellationRequested) {
+              return { hints: [], dispose: () => undefined }
+            }
+            return {
+              hints: hints.map((hint) => ({
+                label: hint.label,
+                position: {
+                  lineNumber: hint.line,
+                  column: hint.column
+                },
+                kind:
+                  hint.kind === 'type'
+                    ? monaco.languages.InlayHintKind.Type
+                    : hint.kind === 'parameter'
+                      ? monaco.languages.InlayHintKind.Parameter
+                      : undefined,
+                paddingLeft: hint.paddingLeft,
+                paddingRight: hint.paddingRight
+              })),
+              dispose: () => undefined
+            }
+          } catch {
+            return { hints: [], dispose: () => undefined }
+          }
+        }
+      })
+    )
   }
 
-  // Route Monaco go-to-definition / references into our tab opener
+    // Route Monaco go-to-definition / references into our tab opener
   const openerApi = monaco.editor as typeof monaco.editor & {
     registerEditorOpener?: (opener: {
       openCodeEditor: (
