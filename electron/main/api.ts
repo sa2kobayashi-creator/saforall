@@ -330,6 +330,14 @@ export async function streamChat(
     return
   }
 
+  if (mode === 'agent') {
+    onEvent({
+      type: 'delta',
+      text:
+        '⚠ Agent（ツール実行）を開始できませんでした。OpenAI / Workers AI のキー設定と、フォルダを開いたワークスペースが必要です（Gemini 単体ではツール Agent 未対応）。Ask 相当の文章応答に切り替えます。\n\n'
+    })
+  }
+
   await streamProviderChat(
     {
       ...requestBody,
@@ -387,6 +395,47 @@ async function runCursorStream(
       }
     })
 
+    // Post-run local verify so Cursor path also surfaces pass/fail.
+    let verifyAppendix = ''
+    try {
+      const { suggestVerifyCommand, toolRunShell } = await import('./workspaceTools')
+      const command = await suggestVerifyCommand(cwd)
+      if (command) {
+        const verifyId = `cursor-verify-${Date.now()}`
+        onEvent({ type: 'agent_phase', phase: 'verify', note: 'Cursor 完了後のローカル検証' })
+        onEvent({
+          type: 'tool_call',
+          id: verifyId,
+          name: 'run_shell',
+          args: { command }
+        })
+        const shell = await toolRunShell(cwd, command, { timeoutMs: 90_000 })
+        onEvent({
+          type: 'tool_result',
+          id: verifyId,
+          name: 'run_shell',
+          ok: shell.ok,
+          summary: shell.timedOut
+            ? `timeout: ${command}`
+            : `exit ${shell.exitCode ?? '?'} · ${command}`
+        })
+        verifyAppendix = shell.ok
+          ? `\n\n---\n✅ ローカル検証成功: \`${command}\``
+          : `\n\n---\n⚠ ローカル検証失敗: \`${command}\` (exit=${shell.exitCode ?? 'timeout'})\n` +
+            [shell.stderr, shell.stdout].filter(Boolean).join('\n').slice(0, 2500)
+        if (verifyAppendix) {
+          onEvent({ type: 'delta', text: verifyAppendix })
+        }
+      }
+    } catch (verifyError) {
+      verifyAppendix =
+        `\n\n---\n⚠ ローカル検証を実行できませんでした: ` +
+        (verifyError instanceof Error ? verifyError.message : String(verifyError))
+      onEvent({ type: 'delta', text: verifyAppendix })
+    }
+
+    const finalContent = `${result.text}${verifyAppendix}`.trim()
+
     const completed = await fetchJson<{
       assistant_message: Record<string, unknown>
       estimated_usd: number
@@ -396,7 +445,7 @@ async function runCursorStream(
       '/ai/complete',
       {
         session_id: decided.session_id,
-        content: result.text,
+        content: finalContent,
         engine: 'cursor',
         task_type: decided.task_type,
         model: decided.model,

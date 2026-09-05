@@ -1211,17 +1211,19 @@ export function ChatPanel({
                   type="button"
                   className={mode === 'ask' ? 'active' : ''}
                   onClick={() => changeMode('ask')}
-                  title="適用・実行の前に確認します"
+                  title="説明中心。コード適用は確認してから"
                 >
                   Ask
+                  <small>確認して適用</small>
                 </button>
                 <button
                   type="button"
                   className={mode === 'agent' ? 'active' : ''}
                   onClick={() => changeMode('agent')}
-                  title="応答後にコード適用とコマンド実行を自動で行います"
+                  title="edit_file / run_shell などのツールで調査・修正・検証"
                 >
                   Agent
+                  <small>ツールで実行</small>
                 </button>
               </div>
               <span className={`chat-backend ${backendConnected ? 'ok' : 'ng'}`}>
@@ -1231,17 +1233,33 @@ export function ChatPanel({
           </div>
 
           <div className={`mode-banner ${mode}`}>
-            {engine === 'auto'
-              ? '自動: 設定の「Auto パイプライン」で有効にした AI だけを作業に合わせて切替'
-              : engine === 'cursor'
-                ? 'Cursor 固定: 下のリストからモデル選択、またはエンジン内自動'
-                : engine === 'gemini'
-                  ? 'Gemini 固定: モデルはリスト選択 / 自動可'
-                  : engine === 'workers'
-                    ? 'Workers AI 固定: 簡単な作業向けモデルをリスト選択'
-                    : 'OpenAI 固定: モデルはリスト選択 / 自動可'}
-            {routeLabel ? ` · 今回: ${routeLabel}` : ''}
-            {mode === 'ask' ? ' · Ask（差分確認）' : ' · Agent（plan→explore→edit→verify）'}
+            <div className="mode-banner-main">
+              {mode === 'ask' ? (
+                <>
+                  <strong>Ask</strong>
+                  <span>説明・提案が中心。コードは差分確認してから適用します。</span>
+                </>
+              ) : (
+                <>
+                  <strong>Agent</strong>
+                  <span>
+                    ツール必須（plan → explore → edit_file → run_shell）。文章だけで終わらず Composer に載せます。
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="mode-banner-sub">
+              {engine === 'auto'
+                ? '自動: 設定の Auto パイプラインで AI を切替'
+                : engine === 'cursor'
+                  ? 'Cursor 固定: ディスクへ直接変更 + 完了後にローカル検証'
+                  : engine === 'gemini'
+                    ? 'Gemini 固定（ツール Agent 未対応 → Ask 相当になりやすい）'
+                    : engine === 'workers'
+                      ? 'Workers AI 固定'
+                      : 'OpenAI 固定'}
+              {routeLabel ? ` · 今回: ${routeLabel}` : ''}
+            </div>
           </div>
           {usageText && <div className="usage-bar">今月 {usageText}</div>}
 
@@ -1362,8 +1380,8 @@ export function ChatPanel({
                     : loading
                       ? '履歴読み込み中…'
                       : mode === 'agent'
-                        ? 'Agent に依頼…（@ でファイル / @selection @problems @rules）'
-                        : '質問する…（@ でコンテキスト追加）'
+                        ? 'Agent: 修正を依頼…（ツールで edit → verify。@file @codebase）'
+                        : 'Ask: 質問する…（適用前に確認。@ でコンテキスト）'
                 }
                 rows={3}
                 disabled={busy !== null || loading}

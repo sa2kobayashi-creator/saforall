@@ -319,6 +319,7 @@ async function callChatCompletions(params: {
   extraHeaders: string[]
   messages: ProviderMessage[]
   tools?: typeof TOOLS
+  toolChoice?: 'auto' | 'required'
   timeoutMs?: number
 }): Promise<ChatCompletionResponse> {
   const url = `${params.baseUrl.replace(/\/$/, '')}/chat/completions`
@@ -330,7 +331,7 @@ async function callChatCompletions(params: {
   }
   if (params.tools) {
     body.tools = params.tools
-    body.tool_choice = 'auto'
+    body.tool_choice = params.toolChoice ?? 'auto'
   }
   const timeoutMs = params.timeoutMs ?? 45_000
 
@@ -356,6 +357,12 @@ async function callChatCompletions(params: {
       return json
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
+      // Some providers reject tool_choice=required — fall back once.
+      if (params.toolChoice === 'required' && attempt === 0) {
+        params = { ...params, toolChoice: 'auto' }
+        body.tool_choice = 'auto'
+        continue
+      }
       if (attempt < 2) await sleep(500 * (attempt + 1))
     } finally {
       clearTimeout(timer)
@@ -859,6 +866,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     'explore: read_file / search_code / MCP で深く調査（関連ファイルを複数読む）。',
     'edit: edit_file で複数ファイルを提案（Composer レビュー用。即時永続保存されない）。完全なファイル内容を送る（断片・切り捨て禁止）。',
     'verify: 編集ファイルを read_file で確認し、run_shell で検証する。失敗したら errorExcerpt を読んで edit に戻り、修正後に再実行。',
+    '重要: 修正内容を markdown のコードブロックで説明するだけでは終了しない。必ず edit_file ツールで Composer に載せる。',
+    '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）と、依頼が修正なら edit_file + run_shell を行う。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
     'MCP: list_mcp_tools / call_mcp_tool で外部ツールを使える（.saforall/mcp.json）。',
     '破壊的コマンドは禁止。まず短い検証（typecheck）を通し、必要なら test を追加。',
@@ -931,8 +940,16 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   let verifyIncomplete = false
   let shellIncomplete = false
   let recoverNudgeCount = 0
+  let proseOnlyBlocks = 0
+  let anyToolCall = false
+  const MAX_PROSE_ONLY_BLOCKS = 5
 
   for (let step = 0; step < maxSteps; step += 1) {
+    const preferRequiredTools =
+      !anyToolCall ||
+      (editedPaths.size === 0 && step < 10) ||
+      (editedPaths.size > 0 && !shellState.passed && shellState.editRecoveries < 3 && step < 40)
+
     let completion: ChatCompletionResponse
     try {
       completion = await callChatCompletions({
@@ -941,7 +958,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         model,
         extraHeaders,
         messages,
-        tools: TOOLS
+        tools: TOOLS,
+        toolChoice: preferRequiredTools ? 'required' : 'auto'
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -974,6 +992,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
     const toolCalls = message.tool_calls ?? []
     if (toolCalls.length > 0) {
+      anyToolCall = true
       messages.push({
         role: 'assistant',
         content: message.content ?? null,
@@ -1285,6 +1304,25 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         consecutiveToolFailures = 0
       }
       continue
+    }
+
+    // Model tried to answer in prose without any tool calls — block hard in Agent mode.
+    if (!anyToolCall || editedPaths.size === 0) {
+      if (proseOnlyBlocks < MAX_PROSE_ONLY_BLOCKS) {
+        proseOnlyBlocks += 1
+        messages.push({
+          role: 'assistant',
+          content: message.content ?? null
+        })
+        messages.push({
+          role: 'user',
+          content:
+            editedPaths.size === 0
+              ? 'システム: Agent モードでは説明や markdown コード提示だけでは終了できません。必ずツールを呼び出してください（set_phase → read_file/search_code → edit_file）。edit_file なしの「修正案の説明」は無効です。'
+              : 'システム: まだツール実行が不十分です。verify のため run_shell を実行するか、追加の edit_file を行ってください。文章だけの最終回答は禁止です。'
+        })
+        continue
+      }
     }
 
     // Model attempted to finalize without tools

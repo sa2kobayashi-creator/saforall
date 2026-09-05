@@ -230,7 +230,7 @@
 .mode-switch {
   display: inline-flex;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 8px;
   overflow: hidden;
 }
 
@@ -238,8 +238,19 @@
   border: none;
   background: transparent;
   color: var(--text-muted);
-  padding: 3px 10px;
+  padding: 4px 10px;
   font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+  gap: 1px;
+}
+
+.mode-switch button small {
+  font-size: 9px;
+  opacity: 0.8;
+  font-weight: 400;
 }
 
 .mode-switch button.active {
@@ -248,9 +259,27 @@
 }
 
 .mode-banner {
-  padding: 6px 12px;
+  padding: 8px 12px;
   font-size: 11px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mode-banner-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.mode-banner-main strong {
+  font-size: 12px;
+}
+
+.mode-banner-sub {
+  opacity: 0.85;
 }
 
 .mode-banner.ask {
