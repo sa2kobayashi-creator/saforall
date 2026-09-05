@@ -33,6 +33,44 @@ type ToolCall = {
   function: { name: string; arguments: string }
 }
 
+/** Coerce provider tool_calls (OpenAI / flat / sparse) into a safe list. */
+export function normalizeToolCalls(raw: unknown): ToolCall[] {
+  if (!Array.isArray(raw)) return []
+  const out: ToolCall[] = []
+  for (let index = 0; index < raw.length; index += 1) {
+    const item = raw[index]
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+    const id =
+      typeof row.id === 'string' && row.id.trim() !== ''
+        ? row.id
+        : `call_${out.length + 1}_${index}`
+
+    const nested = row.function
+    if (nested && typeof nested === 'object') {
+      const fn = nested as Record<string, unknown>
+      const name = typeof fn.name === 'string' ? fn.name.trim() : ''
+      if (name === '') continue
+      const args =
+        typeof fn.arguments === 'string'
+          ? fn.arguments
+          : JSON.stringify(fn.arguments ?? {})
+      out.push({ id, type: 'function', function: { name, arguments: args } })
+      continue
+    }
+
+    // Flat / Anthropic-ish shapes: { name, arguments } or { name, input }
+    const name = typeof row.name === 'string' ? row.name.trim() : ''
+    if (name === '') continue
+    const args =
+      typeof row.arguments === 'string'
+        ? row.arguments
+        : JSON.stringify(row.arguments ?? row.input ?? {})
+    out.push({ id, type: 'function', function: { name, arguments: args } })
+  }
+  return out
+}
+
 type ChatCompletionResponse = {
   choices?: Array<{
     message?: {
@@ -523,7 +561,7 @@ function toAnthropicMessages(messages: ProviderMessage[]): {
       if (typeof row.content === 'string' && row.content.trim() !== '') {
         blocks.push({ type: 'text', text: row.content })
       }
-      for (const call of row.tool_calls) {
+      for (const call of normalizeToolCalls(row.tool_calls)) {
         let input: Record<string, unknown> = {}
         try {
           input = JSON.parse(repairToolArguments(call.function.arguments)) as Record<
@@ -540,7 +578,14 @@ function toAnthropicMessages(messages: ProviderMessage[]): {
           input
         })
       }
-      out.push({ role: 'assistant', content: blocks })
+      if (blocks.length === 0) {
+        out.push({
+          role: 'assistant',
+          content: typeof row.content === 'string' ? row.content : ''
+        })
+      } else {
+        out.push({ role: 'assistant', content: blocks })
+      }
       continue
     }
     out.push({
@@ -1600,6 +1645,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
   const agentSystem = [
     'あなたは saforall の長時間コーディング Agent です。大規模リファクタも担当します。',
+    'ユーザー入力に誤字・変換ミスがあっても、文脈から意図を汲み取って作業してください。',
     '必ずフェーズを進めます: plan → explore → edit → verify。',
     'set_phase でフェーズを宣言してから作業してください。',
     'plan: 変更方針を短く立てる（必要なら軽く list/search）。',
@@ -1750,7 +1796,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       throw new Error('LLM からメッセージを取得できませんでした')
     }
 
-    const toolCalls = message.tool_calls ?? []
+    const toolCalls = normalizeToolCalls(message.tool_calls)
     if (toolCalls.length > 0) {
       anyToolCall = true
       messages.push({
@@ -1778,19 +1824,21 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       let i = 0
       while (i < toolCalls.length) {
         const batch: ToolCall[] = []
-        while (i < toolCalls.length && canParallel(toolCalls[i].function.name)) {
+        while (i < toolCalls.length) {
+          const next = toolCalls[i]
+          if (!next?.function?.name || !canParallel(next.function.name)) break
           const sig = toolSignature(
-            toolCalls[i].function.name,
-            repairToolArguments(toolCalls[i].function.arguments)
+            next.function.name,
+            repairToolArguments(next.function.arguments)
           )
           if (recentSignatures.includes(sig)) {
-            orderedResults.push({ call: toolCalls[i], result: null, skippedDup: true })
+            orderedResults.push({ call: next, result: null, skippedDup: true })
             i += 1
             continue
           }
           recentSignatures.push(sig)
           if (recentSignatures.length > 24) recentSignatures.shift()
-          batch.push(toolCalls[i])
+          batch.push(next)
           i += 1
           if (batch.length >= maxParallel) break
         }
@@ -1823,6 +1871,9 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
         const call = toolCalls[i]
         i += 1
+        if (!call?.function?.name) {
+          continue
+        }
         const sig = toolSignature(
           call.function.name,
           repairToolArguments(call.function.arguments)

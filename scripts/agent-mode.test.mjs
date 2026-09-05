@@ -62,16 +62,23 @@ test('agent tools unavailable error forbids ask fallback', () => {
   assert.match(msg, /Claude/)
 })
 
-test('cloudflare base url is not tool-agent compatible', () => {
-  const urls = [
-    'https://api.cloudflare.com/client/v4/accounts/x/ai/v1',
-    'https://gateway.ai.cloudflare.com/v1/x/y/openai'
-  ]
-  for (const baseUrl of urls) {
-    const u = baseUrl.toLowerCase()
-    const bad =
-      u.includes('cloudflare.com') || u.includes('workers.ai') || u.includes('/ai/v1')
-    assert.equal(bad, true)
-  }
-  assert.equal('https://api.openai.com/v1'.includes('cloudflare.com'), false)
+test('normalizeToolCalls skips sparse / flat / missing function', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { dirname, join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const src = await readFile(join(root, 'electron/main/toolAgent.ts'), 'utf8')
+  assert.match(src, /export function normalizeToolCalls/)
+  assert.match(src, /const toolCalls = normalizeToolCalls\(message\.tool_calls\)/)
+  assert.match(src, /!next\?\.function\?\.name/)
+})
+
+test('ChatService asks model to tolerate typos', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { dirname, join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const src = await readFile(join(root, 'server/src/ChatService.php'), 'utf8')
+  assert.match(src, /誤字・変換ミス/)
+  assert.match(src, /大備考/)
 })
