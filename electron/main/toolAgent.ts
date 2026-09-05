@@ -3,6 +3,7 @@ import { mcpManager, type McpToolInfo } from './mcpClient'
 import {
   excerptShellFailure,
   loadProjectRules,
+  nextVerifyFallback,
   resolveWorkspacePath,
   searchFilesByName,
   suggestVerifyCommands,
@@ -556,7 +557,13 @@ async function runTool(
   readCache: Map<string, string>,
   editSummaries: Map<string, string>,
   pendingEdits: Map<string, string>,
-  shellState: { attempts: number; passed: boolean; lastExit: number | null; editRecoveries: number },
+  shellState: {
+    attempts: number
+    passed: boolean
+    lastExit: number | null
+    editRecoveries: number
+    triedVerifyCommands: string[]
+  },
   verifyHint?: { primary: string; fallbacks: string[] } | null
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
   let args: Record<string, unknown> = {}
@@ -834,33 +841,82 @@ async function runTool(
           : typeof args.timeoutMs === 'number'
             ? args.timeoutMs
             : undefined
-      const result = await withMaterializedEdits(workspacePath, pendingEdits, () =>
-        toolRunShell(workspacePath, command, { cwd, timeoutMs })
-      )
+
+      const runOnce = async (cmd: string) =>
+        withMaterializedEdits(workspacePath, pendingEdits, () =>
+          toolRunShell(workspacePath, cmd, { cwd, timeoutMs })
+        )
+
+      let activeCommand = command
+      let result = await runOnce(activeCommand)
       shellState.attempts += 1
+      shellState.triedVerifyCommands.push(activeCommand.trim())
       shellState.lastExit = result.exitCode
-      if (result.ok) shellState.passed = true
-      else shellState.passed = false
+      shellState.passed = result.ok
+
+      // Auto-chain verify fallbacks (typecheck → test → lint) before edit recovery.
+      const autoTried: string[] = []
+      while (!result.ok) {
+        const next = nextVerifyFallback(
+          activeCommand,
+          verifyHint ?? null,
+          shellState.triedVerifyCommands
+        )
+        if (!next) break
+        autoTried.push(next)
+        shellState.triedVerifyCommands.push(next)
+        onEvent({
+          type: 'tool_call',
+          id: `${callId}-fb-${autoTried.length}`,
+          name: 'run_shell',
+          args: { command: next, auto_fallback: true }
+        })
+        result = await runOnce(next)
+        shellState.attempts += 1
+        shellState.lastExit = result.exitCode
+        shellState.passed = result.ok
+        activeCommand = next
+        onEvent({
+          type: 'tool_result',
+          id: `${callId}-fb-${autoTried.length}`,
+          name: 'run_shell',
+          ok: result.ok,
+          summary: result.timedOut
+            ? `timeout: ${next}`
+            : `exit ${result.exitCode ?? '?'} · ${next} (auto fallback)`
+        })
+        if (result.ok) break
+      }
 
       const failureExcerpt = excerptShellFailure(result.stderr, result.stdout, 5_000)
+      const remaining = nextVerifyFallback(
+        activeCommand,
+        verifyHint ?? null,
+        shellState.triedVerifyCommands
+      )
       const fallbackNote =
-        result.timedOut && verifyHint?.fallbacks?.[0]
-          ? ` Timed out — try a shorter command next: ${verifyHint.fallbacks[0]}`
-          : !result.ok && verifyHint?.fallbacks?.length
-            ? ` If this stays flaky, also try: ${verifyHint.fallbacks.join(' | ')}`
-            : ''
+        result.ok && autoTried.length > 0
+          ? ` Auto-fallback succeeded after trying: ${autoTried.join(' → ')}`
+          : result.timedOut && remaining
+            ? ` Timed out — next candidate: ${remaining}`
+            : !result.ok && remaining
+              ? ` Remaining verify candidates: ${remaining}`
+              : !result.ok && autoTried.length > 0
+                ? ` Auto-tried fallbacks: ${autoTried.join(' → ')}`
+                : ''
       const payload = {
         ok: result.ok,
         exitCode: result.exitCode,
         timedOut: result.timedOut,
         cwd: result.cwd,
         command: result.command,
+        autoFallbacksTried: autoTried,
         appliedPendingEdits: Array.from(pendingEdits.keys()).slice(0, 40),
         stdout: result.stdout,
         stderr: result.stderr,
         errorExcerpt: result.ok ? undefined : failureExcerpt,
         note: result.ok
-          ? 'Command succeeded. Pending edits were restored after the run; accept Composer to keep them.'
+          ? `Command succeeded${autoTried.length > 0 ? ' via auto-fallback' : ''}. Pending edits were restored after the run; accept Composer to keep them.${fallbackNote}`
           : `Command failed. Inspect errorExcerpt (tail-focused), set_phase edit, edit_file, then run_shell again.${fallbackNote}`
       }
       onEvent({
@@ -869,8 +925,8 @@ async function runTool(
         name,
         ok: result.ok,
         summary: result.timedOut
-          ? `timeout: ${command}`
-          : `exit ${result.exitCode ?? '?'} · ${command}`
+          ? `timeout: ${activeCommand}`
+          : `exit ${result.exitCode ?? '?'} · ${activeCommand}${autoTried.length ? ' (+fallbacks)' : ''}`
       })
       if (!result.ok && shellState.editRecoveries < 3) {
         shellState.editRecoveries += 1
@@ -1097,7 +1153,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     attempts: 0,
     passed: false,
     lastExit: null as number | null,
-    editRecoveries: 0
+    editRecoveries: 0,
+    triedVerifyCommands: [] as string[]
   }
   let lastShellFailure = ''
   let lastShellCommand = ''

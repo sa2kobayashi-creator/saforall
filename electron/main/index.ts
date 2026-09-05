@@ -563,17 +563,13 @@ ipcMain.handle(
     if (!diff.ok || !diff.stdout?.trim()) {
       return { ok: false as const, error: diff.error || 'レビュー対象の差分がありません' }
     }
+    const { buildBugbotPrompt, heuristicBugbotFindings } = await import('./bugbotReview')
+    const findings = heuristicBugbotFindings(diff.stdout)
     return {
       ok: true as const,
       diff: diff.stdout,
-      prompt: [
-        '【Bugbot】次の git diff をレビューしてください。',
-        'バグ・回帰リスク・欠けているテストを重要度付きで日本語指摘。修正案はコードブロックで。',
-        '',
-        '```diff',
-        diff.stdout.slice(0, 50000),
-        '```'
-      ].join('\n')
+      findings,
+      prompt: buildBugbotPrompt(diff.stdout, findings)
     }
   }
 )

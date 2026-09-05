@@ -190,8 +190,9 @@ const api = {
     path: string
     line: number
     character: number
-  }): Promise<Array<{ path: string; line: number; column: number }>> =>
-    ipcRenderer.invoke('lsp:references', params),
+  }): Promise<
+    Array<{ path: string; line: number; column: number; endLine?: number; endColumn?: number }>
+  > => ipcRenderer.invoke('lsp:references', params),
   lspRename: (params: {
     path: string
     line: number
@@ -252,8 +253,19 @@ const api = {
   }> => ipcRenderer.invoke('marketplace:search', query),
   prepareBugbot: (
     cwd: string
-  ): Promise<{ ok: boolean; prompt?: string; diff?: string; error?: string }> =>
-    ipcRenderer.invoke('bugbot:prepare', cwd),
+  ): Promise<{
+    ok: boolean
+    prompt?: string
+    diff?: string
+    findings?: Array<{
+      severity: 'error' | 'warning' | 'info'
+      path: string
+      line?: number
+      title: string
+      detail: string
+    }>
+    error?: string
+  }> => ipcRenderer.invoke('bugbot:prepare', cwd),
   gitDiff: (
     cwd: string,
     options?: { staged?: boolean }
@@ -271,7 +283,7 @@ const api = {
   listMcp: (
     cwd: string
   ): Promise<{
-    servers: Array<{ id: string; command: string; args?: string[] }>
+    servers: Array<{ id: string; command?: string; url?: string; args?: string[] }>
     tools: Array<{ name: string; description?: string; serverId: string }>
     statuses?: Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }>
     summary?: string

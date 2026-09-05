@@ -5,9 +5,14 @@ import { delimiter, join } from 'path'
 
 export type McpServerConfig = {
   id: string
-  command: string
+  /** stdio transport */
+  command?: string
   args?: string[]
   env?: Record<string, string>
+  /** HTTP / streamable HTTP transport */
+  url?: string
+  headers?: Record<string, string>
+  transport?: 'stdio' | 'http' | 'sse'
 }
 
 export type McpToolInfo = {
@@ -24,11 +29,62 @@ type McpJson = {
     command?: string
     args?: string[]
     env?: Record<string, string>
+    url?: string
+    headers?: Record<string, string>
+    transport?: string
   }>
   mcpServers?: Record<
     string,
-    { command?: string; args?: string[]; env?: Record<string, string> }
+    {
+      command?: string
+      args?: string[]
+      env?: Record<string, string>
+      url?: string
+      headers?: Record<string, string>
+      transport?: string
+    }
   >
+}
+
+/** Normalize one config row (stdio or HTTP). Exported for tests. */
+export function normalizeMcpServerRow(
+  id: string,
+  row: {
+    command?: string
+    args?: string[]
+    env?: Record<string, string>
+    url?: string
+    headers?: Record<string, string>
+    transport?: string
+  }
+): McpServerConfig | null {
+  const url = typeof row.url === 'string' ? row.url.trim() : ''
+  const command = typeof row.command === 'string' ? row.command.trim() : ''
+  if (url) {
+    if (!/^https?:\/\//i.test(url)) return null
+    const transport =
+      row.transport === 'sse' || row.transport === 'http' || row.transport === 'stdio'
+        ? row.transport
+        : 'http'
+    return {
+      id,
+      url,
+      headers: row.headers,
+      transport: transport === 'stdio' ? 'http' : transport
+    }
+  }
+  if (!command) return null
+  return {
+    id,
+    command,
+    args: row.args,
+    env: row.env,
+    transport: 'stdio'
+  }
+}
+
+export function isHttpMcpServer(server: McpServerConfig): boolean {
+  return Boolean(server.url?.trim())
 }
 
 type Waiter = {
@@ -44,19 +100,15 @@ export async function loadMcpConfig(workspaceRoot: string): Promise<McpServerCon
     const out: McpServerConfig[] = []
     if (Array.isArray(json.servers)) {
       for (const row of json.servers) {
-        if (!row?.command) continue
-        out.push({
-          id: row.id || row.name || row.command,
-          command: row.command,
-          args: row.args,
-          env: row.env
-        })
+        const id = row.id || row.name || row.command || row.url || 'server'
+        const normalized = normalizeMcpServerRow(id, row)
+        if (normalized) out.push(normalized)
       }
     }
     if (json.mcpServers && typeof json.mcpServers === 'object') {
       for (const [id, row] of Object.entries(json.mcpServers)) {
-        if (!row?.command) continue
-        out.push({ id, command: row.command, args: row.args, env: row.env })
+        const normalized = normalizeMcpServerRow(id, row)
+        if (normalized) out.push(normalized)
       }
     }
     return out
@@ -241,6 +293,9 @@ export class McpSession {
   private stderrTail = ''
 
   constructor(server: McpServerConfig) {
+    if (!server.command?.trim()) {
+      throw new Error('stdio MCP server requires command')
+    }
     this.server = server
   }
 
@@ -255,7 +310,7 @@ export class McpSession {
   async start(cwd: string, timeoutMs = 45_000): Promise<void> {
     await this.dispose()
     this.stderrTail = ''
-    const spec = resolveMcpSpawn(this.server.command, this.server.args ?? [], cwd)
+    const spec = resolveMcpSpawn(this.server.command!, this.server.args ?? [], cwd)
     const env = enrichPath({ ...process.env, ...(this.server.env ?? {}) })
 
     await new Promise<void>((resolve, reject) => {
@@ -497,8 +552,180 @@ function formatMcpContent(content: unknown): string {
   return JSON.stringify(content)
 }
 
+/** Extract JSON-RPC response from Streamable HTTP body (JSON or SSE). */
+export function parseMcpHttpResponseBody(body: string, contentType: string): Record<string, unknown> {
+  const ct = contentType.toLowerCase()
+  if (ct.includes('text/event-stream') || body.includes('data:')) {
+    const lines = body.split(/\r?\n/)
+    let last: Record<string, unknown> | null = null
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const data = trimmed.slice(5).trim()
+      if (!data || data === '[DONE]') continue
+      try {
+        const parsed = JSON.parse(data) as Record<string, unknown>
+        if (parsed && typeof parsed === 'object' && ('result' in parsed || 'error' in parsed || 'id' in parsed)) {
+          last = parsed
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (last) return last
+    throw new Error('MCP SSE response had no JSON-RPC data')
+  }
+  const parsed = JSON.parse(body) as Record<string, unknown>
+  return parsed
+}
+
+/**
+ * Streamable HTTP MCP session (POST JSON-RPC; accepts JSON or SSE responses).
+ * Spec slice: initialize → notifications/initialized → tools/list → tools/call.
+ */
+export class McpHttpSession {
+  readonly server: McpServerConfig
+  private nextId = 1
+  private tools: McpToolInfo[] = []
+  private ready = false
+  private sessionId: string | null = null
+
+  constructor(server: McpServerConfig) {
+    if (!server.url?.trim()) throw new Error('HTTP MCP server requires url')
+    this.server = server
+  }
+
+  get listedTools(): McpToolInfo[] {
+    return this.tools
+  }
+
+  get isAlive(): boolean {
+    return this.ready
+  }
+
+  async start(_cwd: string, timeoutMs = 45_000): Promise<void> {
+    await this.dispose()
+    const init = await this.request(
+      'initialize',
+      {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        clientInfo: { name: 'saforall', version: '0.1.0' }
+      },
+      timeoutMs
+    )
+    if (init.error) {
+      throw new Error(String((init.error as { message?: string }).message ?? 'initialize failed'))
+    }
+    await this.notify('notifications/initialized', {})
+    const listed = await this.request('tools/list', {}, timeoutMs)
+    const tools = (listed.result as { tools?: Array<Record<string, unknown>> } | undefined)?.tools
+    this.tools = []
+    if (Array.isArray(tools)) {
+      for (const row of tools) {
+        const name = typeof row.name === 'string' ? row.name : ''
+        if (!name) continue
+        this.tools.push({
+          name,
+          description: typeof row.description === 'string' ? row.description : undefined,
+          serverId: this.server.id,
+          inputSchema:
+            row.inputSchema && typeof row.inputSchema === 'object'
+              ? (row.inputSchema as Record<string, unknown>)
+              : undefined
+        })
+      }
+    }
+    this.ready = true
+  }
+
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs = 60_000
+  ): Promise<{ ok: boolean; content: string; isError?: boolean }> {
+    if (!this.ready) throw new Error('MCP HTTP session not ready')
+    const response = await this.request('tools/call', { name, arguments: args }, timeoutMs)
+    if (response.error) {
+      return {
+        ok: false,
+        content: String((response.error as { message?: string }).message ?? 'MCP tool error'),
+        isError: true
+      }
+    }
+    const result = (response.result ?? {}) as { content?: unknown; isError?: boolean }
+    const text = formatMcpContent(result.content)
+    return {
+      ok: !result.isError,
+      content: text.slice(0, 24_000),
+      isError: Boolean(result.isError)
+    }
+  }
+
+  async dispose(): Promise<void> {
+    this.ready = false
+    this.sessionId = null
+    this.tools = []
+  }
+
+  private async notify(method: string, params: Record<string, unknown>): Promise<void> {
+    try {
+      await this.post({ jsonrpc: '2.0', method, params }, 15_000)
+    } catch {
+      // notifications may be fire-and-forget
+    }
+  }
+
+  private async request(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<Record<string, unknown>> {
+    const id = this.nextId++
+    return this.post({ jsonrpc: '2.0', id, method, params }, timeoutMs)
+  }
+
+  private async post(
+    payload: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<Record<string, unknown>> {
+    const url = this.server.url!.trim()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      ...(this.server.headers ?? {})
+    }
+    if (this.sessionId) headers['Mcp-Session-Id'] = this.sessionId
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      })
+      const sessionHeader = response.headers.get('mcp-session-id')
+      if (sessionHeader) this.sessionId = sessionHeader
+      const text = await response.text()
+      if (!response.ok) {
+        throw new Error(`MCP HTTP ${response.status}: ${text.slice(0, 400)}`)
+      }
+      if (!text.trim()) {
+        return { jsonrpc: '2.0', id: payload.id, result: {} }
+      }
+      return parseMcpHttpResponseBody(text, response.headers.get('content-type') ?? '')
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+}
+
+export type AnyMcpSession = McpSession | McpHttpSession
+
 export class McpManager {
-  private sessions = new Map<string, McpSession>()
+  private sessions = new Map<string, AnyMcpSession>()
   private workspaceRoot = ''
 
   async ensureWorkspace(workspaceRoot: string): Promise<void> {
@@ -582,7 +809,6 @@ export class McpManager {
       ? servers.find((row) => row.id === params.serverId)
       : undefined
     if (!server) {
-      // Resolve by tool name across started/listable servers
       for (const candidate of servers.slice(0, 6)) {
         try {
           const session = await this.getOrStart(candidate, workspaceRoot)
@@ -625,12 +851,14 @@ export class McpManager {
     }
   }
 
-  private async getOrStart(server: McpServerConfig, cwd: string): Promise<McpSession> {
+  private async getOrStart(server: McpServerConfig, cwd: string): Promise<AnyMcpSession> {
     const key = this.key(server.id)
     const existing = this.sessions.get(key)
     if (existing?.isAlive) return existing
     if (existing) await existing.dispose()
-    const session = new McpSession(server)
+    const session: AnyMcpSession = isHttpMcpServer(server)
+      ? new McpHttpSession(server)
+      : new McpSession(server)
     await session.start(cwd)
     this.sessions.set(key, session)
     return session

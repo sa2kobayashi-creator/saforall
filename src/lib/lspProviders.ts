@@ -223,7 +223,14 @@ export function registerLspProviders(
             if (token.isCancellationRequested) return []
             return locs.map((loc) => ({
               uri: monaco.Uri.file(loc.path),
-              range: new monaco.Range(loc.line, loc.column, loc.line, loc.column)
+              range: new monaco.Range(
+                loc.line,
+                loc.column,
+                ('endLine' in loc && typeof loc.endLine === 'number' ? loc.endLine : loc.line),
+                ('endColumn' in loc && typeof loc.endColumn === 'number'
+                  ? loc.endColumn
+                  : loc.column)
+              )
             }))
           } catch {
             return []

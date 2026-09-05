@@ -25,6 +25,13 @@ type Props = {
   onSelectionChange?: (selection: EditorSelection | null) => void
   onDiagnostics?: (items: ProblemItem[]) => void
   onOpenDefinition?: (path: string, line?: number) => void
+  onFindReferences?: (hits: Array<{
+    path: string
+    line: number
+    column: number
+    endLine?: number
+    endColumn?: number
+  }>, symbolLabel?: string) => void
   onApplyLspEdits?: (
     edits: Array<{
       path: string
@@ -60,6 +67,7 @@ export function EditorPane({
   onSelectionChange,
   onDiagnostics,
   onOpenDefinition,
+  onFindReferences,
   onApplyLspEdits,
   revealLine,
   breakpoints = {},
@@ -79,6 +87,8 @@ export function EditorPane({
   diagnosticsHandlerRef.current = onDiagnostics
   const openDefinitionRef = useRef(onOpenDefinition)
   openDefinitionRef.current = onOpenDefinition
+  const findReferencesRef = useRef(onFindReferences)
+  findReferencesRef.current = onFindReferences
   const applyLspEditsRef = useRef(onApplyLspEdits)
   applyLspEditsRef.current = onApplyLspEdits
   const toggleBpRef = useRef(onToggleBreakpoint)
@@ -237,6 +247,31 @@ export function EditorPane({
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
       run: () => {
         openInlineEditRef.current()
+      }
+    })
+
+    editor.addAction({
+      id: 'saforall.findReferences',
+      label: 'Find All References',
+      keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.F12],
+      run: async (ed) => {
+        const meta = fileMetaRef.current
+        if (!meta || typeof window.saforall.lspReferences !== 'function') return
+        const pos = ed.getPosition()
+        if (!pos) return
+        const model = ed.getModel()
+        const word = model?.getWordAtPosition(pos)
+        const symbolLabel = word?.word
+        try {
+          const hits = await window.saforall.lspReferences({
+            path: meta.path,
+            line: pos.lineNumber - 1,
+            character: pos.column - 1
+          })
+          findReferencesRef.current?.(hits, symbolLabel)
+        } catch {
+          findReferencesRef.current?.([], symbolLabel)
+        }
       }
     })
 

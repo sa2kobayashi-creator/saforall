@@ -22,6 +22,8 @@ export type LspLocation = {
   path: string
   line: number
   column: number
+  endLine?: number
+  endColumn?: number
 }
 
 export type LspHover = {
@@ -365,13 +367,18 @@ export class LspClient extends EventEmitter {
       if (!row || typeof row !== 'object') continue
       const loc = row as {
         uri?: string
-        range?: { start?: { line?: number; character?: number } }
+        range?: {
+          start?: { line?: number; character?: number }
+          end?: { line?: number; character?: number }
+        }
       }
       if (!loc.uri) continue
       locations.push({
         path: fromUri(loc.uri),
         line: Number(loc.range?.start?.line ?? 0) + 1,
-        column: Number(loc.range?.start?.character ?? 0) + 1
+        column: Number(loc.range?.start?.character ?? 0) + 1,
+        endLine: Number(loc.range?.end?.line ?? loc.range?.start?.line ?? 0) + 1,
+        endColumn: Number(loc.range?.end?.character ?? loc.range?.start?.character ?? 0) + 1
       })
     }
     return locations.slice(0, 100)

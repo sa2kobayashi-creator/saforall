@@ -4,6 +4,22 @@
       "id": "example-filesystem",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    },
+    {
+      "id": "example-http",
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN"
+      }
     }
-  ]
+  ],
+  "mcpServers": {
+    "cursor-style-stdio": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    },
+    "cursor-style-http": {
+      "url": "https://mcp.example.com/sse"
+    }
+  }
 }

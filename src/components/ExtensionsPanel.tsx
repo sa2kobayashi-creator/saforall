@@ -46,7 +46,9 @@ export function ExtensionsPanel({
   const [mcpTools, setMcpTools] = useState<
     Array<{ name: string; description?: string; serverId: string }>
   >([])
-  const [mcpServers, setMcpServers] = useState<Array<{ id: string; command: string }>>([])
+  const [mcpServers, setMcpServers] = useState<
+    Array<{ id: string; command?: string; url?: string }>
+  >([])
   const [mcpStatuses, setMcpStatuses] = useState<
     Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }>
   >([])
@@ -61,7 +63,13 @@ export function ExtensionsPanel({
     setMcpSummary(null)
     try {
       const result = await window.saforall.listMcp(workspacePath)
-      setMcpServers(result.servers.map((row) => ({ id: row.id, command: row.command })))
+      setMcpServers(
+        result.servers.map((row) => ({
+          id: row.id,
+          command: row.command,
+          url: 'url' in row ? (row as { url?: string }).url : undefined
+        }))
+      )
       setMcpTools(result.tools)
       setMcpStatuses(result.statuses ?? [])
       const fails = (result.statuses ?? []).filter((row) => !row.ok).length
@@ -158,9 +166,12 @@ export function ExtensionsPanel({
             ))}
           </ul>
         )}
-        {mcpServers.length > 0 && mcpStatuses.length === 0 && (
+        {mcpServers.length > 0 && (
           <p className="extensions-perms">
-            servers: {mcpServers.map((row) => row.id).join(', ')}
+            servers:{' '}
+            {mcpServers
+              .map((row) => (row.url ? `${row.id} (http)` : `${row.id} (stdio)`))
+              .join(', ')}
           </p>
         )}
         {mcpTools.length > 0 && (

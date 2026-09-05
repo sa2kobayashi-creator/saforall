@@ -296,6 +296,28 @@ export async function suggestVerifyCommand(workspaceRoot: string): Promise<strin
   return suggestion?.primary ?? null
 }
 
+export function nextVerifyFallback(
+  failedCommand: string,
+  hint: VerifySuggestion | null | undefined,
+  tried: string[]
+): string | null {
+  if (!hint) return null
+  const norm = (s: string) => s.trim().replace(/\s+/g, ' ')
+  const chain = [hint.primary, ...hint.fallbacks].map(norm).filter(Boolean)
+  if (chain.length === 0) return null
+  const triedSet = new Set(tried.map(norm))
+  const failed = norm(failedCommand)
+  triedSet.add(failed)
+  const isVerifyRelated = chain.some(
+    (cmd) => failed === cmd || failed.startsWith(cmd) || cmd.startsWith(failed)
+  )
+  if (!isVerifyRelated) return null
+  for (const cmd of chain) {
+    if (!triedSet.has(cmd)) return cmd
+  }
+  return null
+}
+
 export type ShellRunResult = {
   ok: boolean
   exitCode: number | null

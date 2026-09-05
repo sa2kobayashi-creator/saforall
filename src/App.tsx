@@ -117,6 +117,7 @@ export default function App() {
   const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null)
   const [monacoProblems, setMonacoProblems] = useState<ProblemItem[]>([])
   const [lspProblems, setLspProblems] = useState<ProblemItem[]>([])
+  const [bugbotProblems, setBugbotProblems] = useState<ProblemItem[]>([])
   const [pendingChatPrompt, setPendingChatPrompt] = useState<string | null>(null)
   const [revealLine, setRevealLine] = useState<number | null>(null)
   const [extensions, setExtensions] = useState<WorkspaceExtension[]>([])
@@ -141,6 +142,11 @@ export default function App() {
   debugWatchesRef.current = debugWatches
   const [debugLogs, setDebugLogs] = useState<string[]>([])
   const [pausedLine, setPausedLine] = useState<{ path: string; line: number } | null>(null)
+  const [referenceHits, setReferenceHits] = useState<
+    Array<{ path: string; line: number; column: number; endLine?: number; endColumn?: number }>
+  >([])
+  const [referenceSymbol, setReferenceSymbol] = useState<string | null>(null)
+  const [referencesLoading, setReferencesLoading] = useState(false)
   const [inlineEditTrigger, setInlineEditTrigger] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
@@ -172,8 +178,9 @@ export default function App() {
     }
     items.push(...monacoProblems)
     items.push(...lspProblems)
+    items.push(...bugbotProblems)
     return mergeProblems(items)
-  }, [backend, monacoProblems, lspProblems])
+  }, [backend, monacoProblems, lspProblems, bugbotProblems])
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
 
@@ -1310,9 +1317,38 @@ export default function App() {
               showNotice(prepared.error ?? 'Bugbot を開始できません')
               return
             }
+            const findings = prepared.findings ?? []
+            setBugbotProblems(
+              findings.map((row, index) => ({
+                id: `bugbot-${index}-${row.path}-${row.line ?? 0}`,
+                severity: row.severity,
+                source: 'Bugbot',
+                message: `${row.title}: ${row.detail}`,
+                path: row.path,
+                line: row.line
+              }))
+            )
+            if (typeof window.saforall.enqueueJob === 'function') {
+              try {
+                await window.saforall.enqueueJob({
+                  kind: 'bugbot',
+                  title: `Bugbot · ${findings.length} findings`,
+                  prompt: prepared.prompt,
+                  cwd: workspacePath
+                })
+              } catch {
+                // chat path still works without job tracking
+              }
+            }
             setChatOpen(true)
             setPendingChatPrompt(prepared.prompt)
-            showNotice('Bugbot: 差分レビューをチャットで開始します')
+            setTerminalOpen(true)
+            setBottomTab('problems')
+            showNotice(
+              findings.length > 0
+                ? `Bugbot: ヒューリスティック ${findings.length} 件 + チャットレビュー`
+                : 'Bugbot: 差分レビューをチャットで開始します'
+            )
           })()
           break
         case 'agent:background': {
@@ -1528,6 +1564,18 @@ export default function App() {
                   onOpenDefinition={(path, line) => {
                     void openFileAt(path, line)
                   }}
+                  onFindReferences={(hits, symbolLabel) => {
+                    setReferenceHits(hits)
+                    setReferenceSymbol(symbolLabel ?? null)
+                    setReferencesLoading(false)
+                    setTerminalOpen(true)
+                    setBottomTab('references')
+                    showNotice(
+                      hits.length > 0
+                        ? `参照 ${hits.length} 件${symbolLabel ? ` · ${symbolLabel}` : ''}`
+                        : '参照が見つかりませんでした'
+                    )
+                  }}
                   onApplyLspEdits={(edits) => applyLspEdits(edits)}
                   revealLine={revealLine}
                   breakpoints={breakpoints}
@@ -1577,6 +1625,14 @@ export default function App() {
                   cwd={workspacePath}
                   pendingCommand={pendingCommand}
                   problems={problems}
+                  references={{
+                    hits: referenceHits,
+                    symbolLabel: referenceSymbol,
+                    loading: referencesLoading,
+                    onOpen: (path, line) => {
+                      void openFileAt(path, line)
+                    }
+                  }}
                   debug={{
                     running: debugRunning,
                     paused: debugPaused,

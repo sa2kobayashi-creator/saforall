@@ -1,11 +1,12 @@
 import { TerminalPanel } from './TerminalPanel'
 import { ProblemsPanel, type ProblemItem } from './ProblemsPanel'
 import { DebugPanel } from './DebugPanel'
+import { ReferencesPanel, type ReferenceHit } from './ReferencesPanel'
 import type { DebugCallFrame } from '../lib/debugTypes'
 import { useI18n } from '../i18n'
 import './BottomPanel.css'
 
-export type BottomPanelTab = 'terminal' | 'problems' | 'debug'
+export type BottomPanelTab = 'terminal' | 'problems' | 'debug' | 'references'
 
 type Props = {
   open: boolean
@@ -14,6 +15,12 @@ type Props = {
   cwd: string | null
   pendingCommand: string | null
   problems: ProblemItem[]
+  references: {
+    hits: ReferenceHit[]
+    symbolLabel?: string | null
+    loading?: boolean
+    onOpen: (path: string, line: number) => void
+  }
   debug: {
     running: boolean
     paused: boolean
@@ -48,6 +55,7 @@ export function BottomPanel({
   cwd,
   pendingCommand,
   problems,
+  references,
   debug,
   onChangeTab,
   onCommandSent,
@@ -95,6 +103,16 @@ export function BottomPanel({
             {t('bottom.debug')}
             {debug.paused ? ' ●' : debug.running ? ' ▸' : ''}
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'references'}
+            className={activeTab === 'references' ? 'active' : ''}
+            onClick={() => onChangeTab('references')}
+          >
+            References
+            {references.hits.length > 0 ? ` (${references.hits.length})` : ''}
+          </button>
         </div>
         <div className="bottom-panel-actions">
           {activeTab === 'terminal' && (
@@ -135,6 +153,13 @@ export function BottomPanel({
           style={{ display: activeTab === 'debug' ? 'flex' : 'none' }}
         >
           <DebugPanel {...debug} />
+        </div>
+        <div
+          className="bottom-panel-page"
+          hidden={activeTab !== 'references'}
+          style={{ display: activeTab === 'references' ? 'flex' : 'none' }}
+        >
+          <ReferencesPanel {...references} />
         </div>
       </div>
     </section>

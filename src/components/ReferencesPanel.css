@@ -1,0 +1,80 @@
+.references-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 8px 10px;
+  gap: 8px;
+}
+
+.references-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.references-symbol {
+  color: var(--accent, #4fc1ff);
+  font-family: Consolas, monospace;
+}
+
+.references-count {
+  margin-left: auto;
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.references-empty {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.references-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.references-list button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 6px;
+  align-items: baseline;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.references-list button:hover {
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.06));
+}
+
+.references-file {
+  font-weight: 600;
+}
+
+.references-list em {
+  font-style: normal;
+  opacity: 0.7;
+}
+
+.references-list code {
+  font-size: 10px;
+  opacity: 0.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
