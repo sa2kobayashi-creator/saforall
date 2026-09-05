@@ -43,6 +43,11 @@ import {
   joinPath
 } from './lib/codeBlocks'
 import { planAppliedContent } from './lib/applyContent'
+import {
+  acceptAllProposalsCollected,
+  suggestPostApplyVerifyFromScripts,
+  validateProposal
+} from './lib/applyProposals'
 import { languageFromPath } from './lib/language'
 import { prefetchAllModelCatalogs } from './lib/modelCatalogCache'
 import { parseLocale, useI18n } from './i18n'
@@ -119,6 +124,9 @@ export default function App() {
     Record<string, ExtensionPermission[]>
   >({})
   const [breakpoints, setBreakpoints] = useState<DebugBreakpointMap>({})
+  const [exceptionBreakMode, setExceptionBreakMode] = useState<
+    'none' | 'uncaught' | 'all'
+  >('uncaught')
   const [debugRunning, setDebugRunning] = useState(false)
   const [debugPaused, setDebugPaused] = useState(false)
   const [debugPort, setDebugPort] = useState<number | null>(null)
@@ -664,6 +672,10 @@ export default function App() {
 
   const commitProposal = useCallback(
     async (proposal: ApplyDiffProposal) => {
+      const check = validateProposal(proposal, { workspacePath })
+      if (!check.ok) {
+        throw new Error(check.message)
+      }
       const label =
         proposal.mode === 'append'
           ? `追記して保存しました: ${proposal.targetPath}`
@@ -672,7 +684,7 @@ export default function App() {
             : `ファイルに保存しました: ${proposal.targetPath}`
       await persistFileContent(proposal.targetPath, proposal.modified, label)
     },
-    [persistFileContent]
+    [persistFileContent, workspacePath]
   )
 
   const writeCodeToFile = useCallback(
@@ -906,7 +918,8 @@ export default function App() {
     const result = await window.saforall.startDebug({
       filePath: activePath,
       cwd: workspacePath,
-      breakpoints: bpList
+      breakpoints: bpList,
+      exceptionBreakMode
     })
 
     if (!result.ok) {
@@ -923,7 +936,7 @@ export default function App() {
       `Inspector :${result.port ?? '?'}\n`
     ])
     showNotice('デバッグ実行中（停止したら Continue / Step Over）')
-  }, [activePath, breakpoints, showNotice, workspacePath])
+  }, [activePath, breakpoints, exceptionBreakMode, showNotice, workspacePath])
 
   const continueDebug = useCallback(async () => {
     const result = await window.saforall.continueDebug()
@@ -1086,22 +1099,30 @@ export default function App() {
     if (queue.length === 0) return
     setApplyQueue([])
     setReviewIndex(0)
-    const applied: string[] = []
-    for (let i = 0; i < queue.length; i += 1) {
-      const proposal = queue[i]
+    const result = await acceptAllProposalsCollected(
+      queue,
+      async (proposal) => {
+        await commitProposal(proposal as ApplyDiffProposal)
+      },
+      { workspacePath }
+    )
+    if (result.remaining.length > 0) {
+      setApplyQueue(result.remaining as ApplyDiffProposal[])
+    }
+    let notice = result.summary
+    if (result.ok && workspacePath) {
       try {
-        await commitProposal(proposal)
-        applied.push(proposal.targetPath)
-      } catch (error) {
-        setApplyQueue(queue.slice(i))
-        showNotice(
-          `適用失敗（${applied.length}/${queue.length} 完了）: ${String(error)}`
-        )
-        return
+        const pkgPath = joinPath(workspacePath, 'package.json')
+        const raw = await window.saforall.readFile(pkgPath)
+        const pkg = JSON.parse(raw) as { scripts?: Record<string, string> }
+        const verify = suggestPostApplyVerifyFromScripts(pkg.scripts)
+        if (verify) notice += ` · 検証推奨: ${verify.primary}`
+      } catch {
+        // ignore missing package.json / parse errors
       }
     }
-    showNotice(`${applied.length} 件の変更を適用しました`)
-  }, [applyQueue, commitProposal, showNotice])
+    showNotice(notice)
+  }, [applyQueue, commitProposal, showNotice, workspacePath])
 
   const rejectAllProposals = useCallback(() => {
     setApplyQueue([])
@@ -1569,6 +1590,8 @@ export default function App() {
                       (sum, entries) => sum + entries.length,
                       0
                     ),
+                    exceptionBreakMode,
+                    onExceptionBreakModeChange: setExceptionBreakMode,
                     onContinue: () => {
                       void continueDebug()
                     },

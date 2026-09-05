@@ -529,7 +529,7 @@ export class LspManager {
   private onDiagnostics: ((items: LspDiagnostic[]) => void) | null = null
   private byPath = new Map<string, LspDiagnostic[]>()
   private failedAt = new Map<string, number>()
-  private readonly failCooldownMs = 15_000
+  private readonly failCooldownMs = 8_000
   private syncQueue = new Map<string, { cwd: string; content: string; seq: number }>()
   private syncSeq = 0
 
@@ -610,8 +610,16 @@ export class LspManager {
     const version = (this.versions.get(pathKey) ?? 0) + 1
     this.versions.set(pathKey, version)
     const languageId = languageIdForPath(filePath, config.languageId)
-    if (version === 1) await client.openDocument(filePath, queued.content, languageId)
-    else await client.changeDocument(filePath, queued.content, version)
+    try {
+      if (version === 1) await client.openDocument(filePath, queued.content, languageId)
+      else await client.changeDocument(filePath, queued.content, version)
+    } catch {
+      // Restart tsserver/pylsp on transport errors (common for JS/TS churn)
+      await client.stop().catch(() => undefined)
+      this.clients.delete(config.languageId)
+      this.versions.delete(pathKey)
+      this.failedAt.set(config.languageId, Date.now())
+    }
   }
 
   async closeDocument(filePath: string): Promise<void> {

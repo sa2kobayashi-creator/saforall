@@ -14,6 +14,8 @@ type Props = {
   breakpoints: DebugBreakpointMap
   logs: string[]
   breakpointCount: number
+  exceptionBreakMode: 'none' | 'uncaught' | 'all'
+  onExceptionBreakModeChange: (mode: 'none' | 'uncaught' | 'all') => void
   onContinue: () => void
   onStepOver: () => void
   onStop: () => void
@@ -34,6 +36,8 @@ export function DebugPanel({
   breakpoints,
   logs,
   breakpointCount,
+  exceptionBreakMode,
+  onExceptionBreakModeChange,
   onContinue,
   onStepOver,
   onStop,
@@ -69,6 +73,23 @@ export function DebugPanel({
           {port ? ` · :${port}` : ''}
           {paused ? ' · PAUSED' : running ? ' · RUNNING' : ' · IDLE'}
         </span>
+        <label className="debug-exception">
+          例外
+          <select
+            value={exceptionBreakMode}
+            onChange={(event) =>
+              onExceptionBreakModeChange(
+                event.target.value as 'none' | 'uncaught' | 'all'
+              )
+            }
+            disabled={running}
+            title="次のデバッグ開始から適用"
+          >
+            <option value="none">なし</option>
+            <option value="uncaught">未捕捉</option>
+            <option value="all">すべて</option>
+          </select>
+        </label>
       </div>
       <div className="debug-body debug-body-rich">
         <div className="debug-stack">

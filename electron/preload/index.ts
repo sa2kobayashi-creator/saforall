@@ -141,6 +141,7 @@ const api = {
     cwd: string
     breakpoints: Array<{ path: string; line: number; condition?: string }>
     port?: number
+    exceptionBreakMode?: 'none' | 'uncaught' | 'all'
   }): Promise<{ ok: boolean; error?: string; port?: number; display?: string }> =>
     ipcRenderer.invoke('debug:start', params),
   continueDebug: (): Promise<{ ok: boolean; error?: string }> =>
@@ -510,6 +511,15 @@ const api = {
     id: string
     status: string
   } | null> => ipcRenderer.invoke('jobs:cancel', id),
+  completeJob: (payload: {
+    id: string
+    ok: boolean
+    summary?: string
+    error?: string
+  }): Promise<{
+    id: string
+    status: string
+  } | null> => ipcRenderer.invoke('jobs:complete', payload),
   onJobRun: (
     callback: (payload: {
       id: string

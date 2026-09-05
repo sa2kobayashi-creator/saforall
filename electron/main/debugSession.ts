@@ -1,5 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { EventEmitter } from 'events'
+import {
+  expandSourceMapBreakpointPaths,
+  type ExceptionBreakMode,
+  toCdpPauseOnExceptions
+} from './lib/debugExtras'
 
 export type DebugCallFrame = {
   functionName: string
@@ -82,6 +87,7 @@ export class DebugSession extends EventEmitter {
     cwd: string
     breakpoints: DebugBreakpoint[]
     port?: number
+    exceptionBreakMode?: ExceptionBreakMode
   }): Promise<void> {
     if (this.started) {
       await this.stop()
@@ -93,7 +99,10 @@ export class DebugSession extends EventEmitter {
       cwd: params.cwd,
       env: {
         ...process.env,
-        NODE_OPTIONS: ''
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, '--enable-source-maps']
+          .filter(Boolean)
+          .join(' ')
+          .trim()
       },
       windowsHide: true,
       shell: process.platform === 'win32' && /\.cmd$/i.test(params.command)
@@ -116,9 +125,19 @@ export class DebugSession extends EventEmitter {
     await this.connect(wsUrl)
     await this.send('Debugger.enable')
     await this.send('Runtime.enable')
+    try {
+      await this.send('Debugger.setPauseOnExceptions', {
+        state: toCdpPauseOnExceptions(params.exceptionBreakMode ?? 'uncaught')
+      })
+    } catch {
+      // ignore
+    }
 
     for (const bp of params.breakpoints) {
-      await this.setBreakpoint(bp.path, bp.line, bp.condition)
+      const paths = expandSourceMapBreakpointPaths(bp.path)
+      for (const path of paths) {
+        await this.setBreakpoint(path, bp.line, bp.condition)
+      }
     }
 
     await this.send('Runtime.runIfWaitingForDebugger')
@@ -371,6 +390,7 @@ export async function startDebugSession(params: {
   cwd: string
   breakpoints: DebugBreakpoint[]
   port?: number
+  exceptionBreakMode?: import('./lib/debugExtras').ExceptionBreakMode
   onCreated?: (session: DebugSession) => void
 }): Promise<DebugSession> {
   if (active) {

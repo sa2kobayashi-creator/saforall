@@ -1,6 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { EventEmitter } from 'events'
 import { createConnection, createServer, type Socket } from 'net'
+import {
+  type ExceptionBreakMode,
+  toDapExceptionFilters
+} from './lib/debugExtras'
 
 export type DapBreakpoint = { path: string; line: number; condition?: string }
 export type DapFrame = {
@@ -49,6 +53,7 @@ export class DapSession extends EventEmitter {
     cwd: string
     breakpoints: DapBreakpoint[]
     port?: number
+    exceptionBreakMode?: ExceptionBreakMode
   }): Promise<{ port: number }> {
     const port = params.port ?? (await getFreePort())
     await this.stop()
@@ -118,6 +123,12 @@ export class DapSession extends EventEmitter {
           condition: row.condition
         }))
       })
+    }
+    const filters = toDapExceptionFilters(params.exceptionBreakMode ?? 'uncaught')
+    try {
+      await this.request('setExceptionBreakpoints', { filters })
+    } catch {
+      // older adapters may not support exception filters
     }
     await this.request('configurationDone', {})
     this.emit('ready', { port })

@@ -146,6 +146,7 @@ export function ChatPanel({
   })
   const [routeLabel, setRouteLabel] = useState<string | null>(null)
   const [usageText, setUsageText] = useState<string | null>(null)
+  const [cursorRuntime, setCursorRuntime] = useState<'auto' | 'local' | 'cloud'>('auto')
   const [autoAppliedIds, setAutoAppliedIds] = useState<Record<string, boolean>>({})
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
   const [mentionOpen, setMentionOpen] = useState(false)
@@ -240,6 +241,12 @@ export function ChatPanel({
           ),
           cursor: parseModelList(settings['llm.cursor.models'], DEFAULT_ENABLED_MODELS.cursor)
         })
+        {
+          const runtime = settings['llm.cursor.runtime']
+          if (runtime === 'local' || runtime === 'cloud' || runtime === 'auto') {
+            setCursorRuntime(runtime)
+          }
+        }
       }
     })()
 
@@ -865,6 +872,7 @@ export function ChatPanel({
             ? undefined
             : modelChoice,
         workspace_path: workspacePath,
+        cursor_runtime: cursorRuntime,
         context: await buildContextPayload()
       }
 
@@ -911,6 +919,7 @@ export function ChatPanel({
       let usedEngine: string = engine
       let usedTools = false
       let editProposalCount = 0
+      let streamFailed: string | null = null
 
       await window.saforall.chatStream(payload, {
         onEvent: (event) => {
@@ -1108,6 +1117,7 @@ export function ChatPanel({
           }
 
           if (event.type === 'error') {
+            streamFailed = event.message
             setError(event.message)
             setMessages((prev) => {
               const withoutStream = prev.filter(
@@ -1135,6 +1145,22 @@ export function ChatPanel({
         onAgentNeedsReview?.({ editCount: 0, engine: usedEngine })
       }
       void refreshSessions()
+
+      const jobMatch = text.match(/【Background Agent · (job-[a-z0-9-]+)】/i)
+      if (jobMatch && typeof window.saforall.completeJob === 'function') {
+        void window.saforall.completeJob({
+          id: jobMatch[1],
+          ok: !streamFailed,
+          summary: streamFailed
+            ? undefined
+            : usedTools
+              ? `Agent 完了（ツール実行あり · 変更候補 ${editProposalCount}）`
+              : editProposalCount > 0
+                ? `完了（変更候補 ${editProposalCount}）`
+                : 'チャット応答完了',
+          error: streamFailed ?? undefined
+        })
+      }
     } finally {
       setBusy(null)
     }

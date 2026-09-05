@@ -91,6 +91,8 @@ export function EditorPane({
   activePathRef.current = activePath
   const fileMetaRef = useRef<{ path: string; language: string } | null>(null)
   fileMetaRef.current = file ? { path: file.path, language: file.language } : null
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null)
   const decorationIdsRef = useRef<string[]>([])
@@ -213,7 +215,12 @@ export function EditorPane({
     editorRef.current = editor
     monacoRef.current = monaco
     registerTabCompletions(monaco, () => fileMetaRef.current, {
-      isBackendConnected: () => backendConnectedRef.current
+      isBackendConnected: () => backendConnectedRef.current,
+      getRelatedFiles: () =>
+        tabsRef.current.map((tab) => ({
+          path: tab.path,
+          content: tab.content
+        }))
     })
     registerLspProviders(
       monaco,

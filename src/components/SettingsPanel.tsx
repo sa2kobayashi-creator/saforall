@@ -47,6 +47,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
   const [cursorKey, setCursorKey] = useState('')
   const [cursorKeySet, setCursorKeySet] = useState(false)
   const [cursorModels, setCursorModels] = useState<string[]>([...DEFAULT_ENABLED_MODELS.cursor])
+  const [cursorRuntime, setCursorRuntime] = useState<'auto' | 'local' | 'cloud'>('auto')
 
   const [workersAccountId, setWorkersAccountId] = useState('')
   const [workersGatewayId, setWorkersGatewayId] = useState('default')
@@ -131,6 +132,12 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
         )
         setGeminiKeySet(settings['llm.gemini.api_key_set'] === true)
         setCursorKeySet(settings['llm.cursor.api_key_set'] === true)
+        {
+          const runtime = settings['llm.cursor.runtime']
+          if (runtime === 'local' || runtime === 'cloud' || runtime === 'auto') {
+            setCursorRuntime(runtime)
+          }
+        }
         setWorkersTokenSet(
           settings['llm.workers.api_token_set'] === true ||
             settings['llm.simple.api_token_set'] === true
@@ -308,6 +315,7 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
       'llm.gemini.model': preferred('gemini', geminiModels, DEFAULT_GEMINI_MODEL),
       'llm.cursor.models': JSON.stringify(cursorModels),
       'llm.cursor.model': preferred('cursor', cursorModels, DEFAULT_CURSOR_MODEL),
+      'llm.cursor.runtime': cursorRuntime,
       'llm.workers.account_id': workersAccountId.trim(),
       'llm.workers.gateway_id': workersGatewayId.trim() || 'default',
       'llm.workers.models': JSON.stringify(workersModels),
@@ -665,6 +673,24 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
               autoComplete="off"
             />
           </label>
+          <label>
+            Cursor Agent 実行場所
+            <select
+              value={cursorRuntime}
+              onChange={(event) =>
+                setCursorRuntime(event.target.value as 'auto' | 'local' | 'cloud')
+              }
+              disabled={!backendConnected}
+            >
+              <option value="auto">自動（GitHub リモートがあれば Cloud）</option>
+              <option value="local">常に Local（この PC のフォルダ）</option>
+              <option value="cloud">常に Cloud（別 VM · PR 可）</option>
+            </select>
+          </label>
+          <p className="settings-hint">
+            Cloud は origin が GitHub のとき有効です。API キーと GitHub 連携が Cursor
+            側で済んでいる必要があります。
+          </p>
 
           <div className="settings-section-head">
             <h3 className="settings-section-title">Gemini モデル（複数選択）</h3>

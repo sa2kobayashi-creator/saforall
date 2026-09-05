@@ -99,6 +99,10 @@ export function extractCodebaseNeedles(input: string): string[] {
     'codebase',
     'file',
     'files',
+    'fix',
+    'make',
+    'want',
+    'need',
     'して',
     'ください',
     'です',
@@ -110,13 +114,24 @@ export function extractCodebaseNeedles(input: string): string[] {
     'は',
     'が'
   ])
+  const scored = words
+    .map((word) => {
+      const key = word.toLowerCase()
+      let weight = 1
+      if (/[A-Z]/.test(word) && /[a-z]/.test(word)) weight += 5 // CamelCase
+      if (word.includes('/') || word.includes('.')) weight += 4 // path-like
+      if (word.length >= 8) weight += 1
+      if (stop.has(key)) weight = -1
+      return { word, key, weight }
+    })
+    .filter((row) => row.weight > 0)
+
+  scored.sort((a, b) => b.weight - a.weight)
   const out: string[] = []
-  for (const word of words) {
-    const key = word.toLowerCase()
-    if (stop.has(key)) continue
-    if (out.some((row) => row.toLowerCase() === key)) continue
-    out.push(word)
-    if (out.length >= 5) break
+  for (const row of scored) {
+    if (out.some((existing) => existing.toLowerCase() === row.key)) continue
+    out.push(row.word)
+    if (out.length >= 6) break
   }
   return out
 }

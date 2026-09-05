@@ -24,7 +24,7 @@ import {
   resizeTerminal,
   writeTerminal
 } from './terminal'
-import { loadProjectRules, searchFilesByName, toolSearch } from './workspaceTools'
+import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch } from './workspaceTools'
 import { loadWorkspaceExtensions } from './extensions'
 import { type DebugBreakpoint, type DebugSession } from './debugSession'
 import {
@@ -381,6 +381,7 @@ ipcMain.handle(
       cwd: string
       breakpoints: DebugBreakpoint[]
       port?: number
+      exceptionBreakMode?: 'none' | 'uncaught' | 'all'
     }
   ) => {
     return startUnifiedDebug({
@@ -494,11 +495,34 @@ ipcMain.handle(
     _event,
     params: { kind?: 'agent' | 'bugbot'; title: string; prompt: string; cwd?: string | null }
   ) => {
+    let contextNote = ''
+    const cwd = params.cwd ?? null
+    if (cwd) {
+      try {
+        const verify = await suggestVerifyCommands(cwd)
+        const rules = await loadProjectRules(cwd)
+        contextNote = [
+          verify ? `推奨検証: ${verify.primary}` : null,
+          rules ? 'プロジェクト Rules/Memories を読み込み済み' : null
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      } catch {
+        contextNote = ''
+      }
+    }
+
+    const enrichedPrompt = [
+      params.prompt.trim(),
+      contextNote ? `\n\n（Background 準備: ${contextNote}）` : ''
+    ].join('')
+
     const job = enqueueBackgroundJob({
       kind: params.kind === 'bugbot' ? 'bugbot' : 'agent',
       title: params.title,
-      prompt: params.prompt,
-      cwd: params.cwd ?? null
+      prompt: enrichedPrompt,
+      cwd,
+      contextNote: contextNote || undefined
     })
     markBackgroundJobRunning(job.id)
     for (const win of BrowserWindow.getAllWindows()) {
@@ -507,16 +531,21 @@ ipcMain.handle(
         kind: job.kind,
         title: job.title,
         prompt: job.prompt,
-        cwd: job.cwd
+        cwd: job.cwd,
+        contextNote: job.contextNote
       })
     }
-    // Chat-driven jobs complete when the renderer acknowledges start.
-    completeBackgroundJob(job.id, {
-      ok: true,
-      summary: 'チャットで開始しました（Composer で差分を確認）'
-    })
+    // Do NOT complete here — renderer reports finish via jobs:complete after Agent run.
     return job
   }
+)
+
+ipcMain.handle(
+  'jobs:complete',
+  async (
+    _event,
+    payload: { id: string; ok: boolean; summary?: string; error?: string }
+  ) => completeBackgroundJob(payload.id, payload)
 )
 
 ipcMain.handle('jobs:cancel', async (_event, id: string) => cancelBackgroundJob(id))

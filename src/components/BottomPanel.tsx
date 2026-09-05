@@ -24,6 +24,8 @@ type Props = {
     breakpoints: import('../lib/debugTypes').DebugBreakpointMap
     logs: string[]
     breakpointCount: number
+    exceptionBreakMode: 'none' | 'uncaught' | 'all'
+    onExceptionBreakModeChange: (mode: 'none' | 'uncaught' | 'all') => void
     onContinue: () => void
     onStepOver: () => void
     onStop: () => void

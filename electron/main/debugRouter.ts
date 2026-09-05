@@ -7,6 +7,10 @@ import {
 } from './debugSession'
 import { DapSession } from './dapSession'
 import { buildDebugLaunch, DEBUG_INSPECT_PORT } from './lib/runCommands'
+import {
+  normalizeExceptionBreakMode,
+  type ExceptionBreakMode
+} from './lib/debugExtras'
 
 export type UnifiedDebugEvents = {
   ready: { port: number }
@@ -45,11 +49,13 @@ export async function startUnifiedDebug(params: {
   cwd: string
   breakpoints: DebugBreakpoint[]
   port?: number
+  exceptionBreakMode?: ExceptionBreakMode
   onEvent: (channelPayload: Record<string, unknown>) => void
   onCdpCreated?: (session: DebugSession) => void
 }): Promise<{ ok: true; port: number; display: string } | { ok: false; error: string }> {
   await stopUnifiedDebug()
   const lower = params.filePath.toLowerCase()
+  const exceptionBreakMode = normalizeExceptionBreakMode(params.exceptionBreakMode)
 
   if (lower.endsWith('.py')) {
     dap = new DapSession()
@@ -62,7 +68,8 @@ export async function startUnifiedDebug(params: {
         filePath: params.filePath,
         cwd: params.cwd,
         breakpoints: params.breakpoints,
-        port: params.port
+        port: params.port,
+        exceptionBreakMode
       })
       return {
         ok: true,
@@ -97,6 +104,7 @@ export async function startUnifiedDebug(params: {
       cwd: params.cwd,
       breakpoints: params.breakpoints,
       port: launch.port,
+      exceptionBreakMode,
       onCreated: params.onCdpCreated
     })
     return { ok: true, port: launch.port, display: launch.display }

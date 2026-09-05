@@ -429,6 +429,16 @@ async function runCursorStream(
     return
   }
 
+  const runtimeRaw =
+    typeof requestBody.cursor_runtime === 'string'
+      ? requestBody.cursor_runtime.trim().toLowerCase()
+      : 'auto'
+  const runtime =
+    runtimeRaw === 'local' || runtimeRaw === 'cloud' || runtimeRaw === 'auto'
+      ? runtimeRaw
+      : 'auto'
+  const autoCreatePR = requestBody.cursor_auto_create_pr !== false
+
   try {
     const { runCursorAgent } = await import('./cursorAgent')
     const result = await runCursorAgent({
@@ -436,48 +446,57 @@ async function runCursorStream(
       model: decided.model,
       cwd,
       prompt,
+      runtime,
+      autoCreatePR,
       onDelta: (text) => {
         onEvent({ type: 'delta', text })
       }
     })
 
     // Post-run local verify so Cursor path also surfaces pass/fail.
+    // Cloud Agent edits remote VM / PR — skip local verify.
     let verifyAppendix = ''
-    try {
-      const { suggestVerifyCommand, toolRunShell } = await import('./workspaceTools')
-      const command = await suggestVerifyCommand(cwd)
-      if (command) {
-        const verifyId = `cursor-verify-${Date.now()}`
-        onEvent({ type: 'agent_phase', phase: 'verify', note: 'Cursor 完了後のローカル検証' })
-        onEvent({
-          type: 'tool_call',
-          id: verifyId,
-          name: 'run_shell',
-          args: { command }
-        })
-        const shell = await toolRunShell(cwd, command, { timeoutMs: 90_000 })
-        onEvent({
-          type: 'tool_result',
-          id: verifyId,
-          name: 'run_shell',
-          ok: shell.ok,
-          summary: shell.timedOut
-            ? `timeout: ${command}`
-            : `exit ${shell.exitCode ?? '?'} · ${command}`
-        })
-        verifyAppendix = shell.ok
-          ? `\n\n---\n✅ ローカル検証成功: \`${command}\``
-          : `\n\n---\n⚠ ローカル検証失敗: \`${command}\` (exit=${shell.exitCode ?? 'timeout'})\n` +
-            [shell.stderr, shell.stdout].filter(Boolean).join('\n').slice(0, 2500)
-        if (verifyAppendix) {
-          onEvent({ type: 'delta', text: verifyAppendix })
-        }
-      }
-    } catch (verifyError) {
+    if (result.runtime === 'cloud') {
       verifyAppendix =
-        `\n\n---\n⚠ ローカル検証を実行できませんでした: ` +
-        (verifyError instanceof Error ? verifyError.message : String(verifyError))
+        '\n\n---\n☁ Cloud Agent 完了。ローカル検証はスキップ（PR / Cursor ダッシュボードを確認）'
       onEvent({ type: 'delta', text: verifyAppendix })
+    } else {
+      try {
+        const { suggestVerifyCommand, toolRunShell } = await import('./workspaceTools')
+        const command = await suggestVerifyCommand(cwd)
+        if (command) {
+          const verifyId = `cursor-verify-${Date.now()}`
+          onEvent({ type: 'agent_phase', phase: 'verify', note: 'Cursor 完了後のローカル検証' })
+          onEvent({
+            type: 'tool_call',
+            id: verifyId,
+            name: 'run_shell',
+            args: { command }
+          })
+          const shell = await toolRunShell(cwd, command, { timeoutMs: 90_000 })
+          onEvent({
+            type: 'tool_result',
+            id: verifyId,
+            name: 'run_shell',
+            ok: shell.ok,
+            summary: shell.timedOut
+              ? `timeout: ${command}`
+              : `exit ${shell.exitCode ?? '?'} · ${command}`
+          })
+          verifyAppendix = shell.ok
+            ? `\n\n---\n✅ ローカル検証成功: \`${command}\``
+            : `\n\n---\n⚠ ローカル検証失敗: \`${command}\` (exit=${shell.exitCode ?? 'timeout'})\n` +
+              [shell.stderr, shell.stdout].filter(Boolean).join('\n').slice(0, 2500)
+          if (verifyAppendix) {
+            onEvent({ type: 'delta', text: verifyAppendix })
+          }
+        }
+      } catch (verifyError) {
+        verifyAppendix =
+          `\n\n---\n⚠ ローカル検証を実行できませんでした: ` +
+          (verifyError instanceof Error ? verifyError.message : String(verifyError))
+        onEvent({ type: 'delta', text: verifyAppendix })
+      }
     }
 
     const finalContent = `${result.text}${verifyAppendix}`.trim()

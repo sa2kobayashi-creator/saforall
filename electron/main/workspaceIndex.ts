@@ -146,6 +146,49 @@ export function invalidateWorkspaceIndex(workspaceRoot?: string): void {
   }
 }
 
+export type RankedHit = {
+  path: string
+  line: number
+  preview: string
+  score: number
+}
+
+/** Higher score = more relevant for @codebase / Search. */
+export function scoreContentHit(params: {
+  path: string
+  lineText: string
+  needle: string
+  symbolNames?: string[]
+}): number {
+  const needle = params.needle.toLowerCase()
+  const path = params.path.toLowerCase()
+  const line = params.lineText.toLowerCase()
+  let score = 0
+  if (!line.includes(needle)) return -1
+  score += 10
+  if (path.includes(needle)) score += 40
+  const base = path.split('/').pop() ?? ''
+  if (base.includes(needle)) score += 30
+  if (line.trim().startsWith(needle) || new RegExp(`\\b${escapeRegExp(needle)}\\b`).test(line)) {
+    score += 20
+  }
+  if (/^src\//.test(path) || /^electron\//.test(path) || /^server\//.test(path)) score += 8
+  if (/test|spec|mock|fixture/.test(path)) score -= 5
+  if (params.symbolNames?.some((name) => name.toLowerCase() === needle)) score += 50
+  if (params.symbolNames?.some((name) => name.toLowerCase().includes(needle))) score += 15
+  // Prefer denser signal lines (identifiers) over noise
+  if (/^(export|function|class|const|type|interface)\b/.test(line.trim())) score += 12
+  return score
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+export function formatRankedHit(hit: RankedHit): string {
+  return `${hit.path}:${hit.line}: ${hit.preview}`
+}
+
 export async function searchIndexedContent(
   workspaceRoot: string,
   query: string,
@@ -155,22 +198,34 @@ export async function searchIndexedContent(
   const needle = query.trim().toLowerCase()
   if (needle.length < 2) return []
   const index = await ensureWorkspaceIndex(workspaceRoot)
-  const hits: string[] = []
+  const symbolNames = index.symbols.map((row) => row.name)
+  const ranked: RankedHit[] = []
+
   for (const [rel, text] of Array.from(index.texts.entries())) {
-    if (hits.length >= limit) break
     if (globHint) {
       const hint = globHint.replace(/^\*\./, '.').toLowerCase()
       if (hint.startsWith('.') && !rel.toLowerCase().endsWith(hint)) continue
     }
     const lines = text.split(/\r?\n/)
     for (let i = 0; i < lines.length; i += 1) {
-      if (hits.length >= limit) break
-      if (lines[i].toLowerCase().includes(needle)) {
-        hits.push(`${rel}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
-      }
+      const score = scoreContentHit({
+        path: rel,
+        lineText: lines[i],
+        needle,
+        symbolNames
+      })
+      if (score < 0) continue
+      ranked.push({
+        path: rel,
+        line: i + 1,
+        preview: lines[i].trim().slice(0, 200),
+        score
+      })
     }
   }
-  return hits
+
+  ranked.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path) || a.line - b.line)
+  return ranked.slice(0, limit).map(formatRankedHit)
 }
 
 export async function searchIndexedSymbols(

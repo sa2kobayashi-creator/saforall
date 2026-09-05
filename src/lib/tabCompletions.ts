@@ -8,6 +8,8 @@ type InlineRequest = {
   nearby?: string
 }
 
+type RelatedFile = { path: string; content: string }
+
 let providerDisposable: { dispose: () => void } | null = null
 let seq = 0
 let lastKey = ''
@@ -28,7 +30,6 @@ function extractNearbyContext(full: string, offset: number): string {
   const end = Math.min(full.length, offset + 400)
   const window = full.slice(start, end)
   const lines = window.split(/\r?\n/)
-  // Prefer recent function/class headers for better completions
   const headers = lines
     .filter((line) =>
       /^\s*(export\s+)?(async\s+)?(function|class|const|let|type|interface|def)\b/.test(line)
@@ -38,11 +39,39 @@ function extractNearbyContext(full: string, offset: number): string {
   return headers.join('\n').slice(0, 600)
 }
 
+/** Build compact multi-file context for Tab (other open tabs). */
+export function buildMultiFileTabContext(
+  currentPath: string,
+  related: RelatedFile[],
+  maxChars = 1800
+): string {
+  const parts: string[] = []
+  let used = 0
+  for (const file of related) {
+    if (file.path === currentPath) continue
+    const name = file.path.replace(/\\/g, '/').split('/').slice(-2).join('/')
+    const lines = file.content.split(/\r?\n/)
+    const headers = lines
+      .filter((line) =>
+        /^\s*(export\s+)?(async\s+)?(function|class|const|type|interface|def)\b/.test(line)
+      )
+      .slice(0, 8)
+    if (headers.length === 0) continue
+    const block = `// file: ${name}\n${headers.join('\n')}`
+    if (used + block.length > maxChars) break
+    parts.push(block)
+    used += block.length
+    if (parts.length >= 4) break
+  }
+  return parts.join('\n\n')
+}
+
 export function registerTabCompletions(
   monaco: Monaco,
   getMeta: () => { path: string; language: string } | null,
   options?: {
     isBackendConnected?: () => boolean
+    getRelatedFiles?: () => RelatedFile[]
   }
 ): void {
   disposeTabCompletions()
@@ -69,8 +98,7 @@ export function registerTabCompletions(
         }
 
         const requestId = ++seq
-        // Adaptive debounce: faster when continuing to type in the same line.
-        const waitMs = context?.triggerKind === 1 ? 180 : 280
+        const waitMs = context?.triggerKind === 1 ? 160 : 240
         await delay(waitMs)
         if (token.isCancellationRequested || requestId !== seq) {
           return { items: [] }
@@ -81,7 +109,6 @@ export function registerTabCompletions(
         const line = model.getLineContent(position.lineNumber)
         const before = line.slice(0, Math.max(0, position.column - 1))
 
-        // Skip empty / comment-only / just-closed string contexts
         if (before.trim().length < 2) return { items: [] }
         if (/^\s*(\/\/|#)/.test(before) && !/[`'"({[]/.test(before.slice(-1))) {
           return { items: [] }
@@ -108,13 +135,17 @@ export function registerTabCompletions(
           }
         }
 
-        const nearby = extractNearbyContext(full, offset)
+        const nearbyLocal = extractNearbyContext(full, offset)
+        const related = options?.getRelatedFiles?.() ?? []
+        const multi = buildMultiFileTabContext(meta.path, related)
+        const nearby = [nearbyLocal, multi].filter(Boolean).join('\n\n').slice(0, 2400) || undefined
+
         const payload: InlineRequest = {
           path: meta.path,
           language: meta.language || model.getLanguageId(),
           prefix,
           suffix,
-          nearby: nearby || undefined
+          nearby
         }
 
         try {
@@ -135,12 +166,10 @@ export function registerTabCompletions(
           }
 
           let insertText = result.data.completion.replace(/\r\n/g, '\n')
-          // Avoid repeating the token the user already typed
           const typed = before.match(/[A-Za-z0-9_$]+$/)?.[0] ?? ''
           if (typed && insertText.startsWith(typed)) {
             insertText = insertText.slice(typed.length)
           }
-          // Prefer single-line continuations when the model dumps a huge block
           if (insertText.split('\n').length > 16) {
             insertText = insertText.split('\n').slice(0, 12).join('\n')
           }

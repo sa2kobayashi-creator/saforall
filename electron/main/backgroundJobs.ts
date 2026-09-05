@@ -1,14 +1,53 @@
+export type BackgroundJobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+
 export type BackgroundJob = {
   id: string
   kind: 'agent' | 'bugbot'
   title: string
-  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+  status: BackgroundJobStatus
   createdAt: number
   finishedAt?: number
   summary?: string
   error?: string
   prompt: string
   cwd: string | null
+  contextNote?: string
+}
+
+export type JobTransitionEvent =
+  | { type: 'start' }
+  | { type: 'complete'; ok: boolean; summary?: string; error?: string }
+  | { type: 'cancel' }
+
+/** Pure state transition for Background jobs (testable without Electron). */
+export function applyJobTransition(
+  job: BackgroundJob,
+  event: JobTransitionEvent,
+  now = Date.now()
+): BackgroundJob {
+  if (job.status === 'cancelled' || job.status === 'done' || job.status === 'error') {
+    return job
+  }
+  if (event.type === 'start') {
+    if (job.status !== 'queued' && job.status !== 'running') return job
+    return { ...job, status: 'running' }
+  }
+  if (event.type === 'cancel') {
+    return {
+      ...job,
+      status: 'cancelled',
+      finishedAt: now,
+      summary: 'cancelled'
+    }
+  }
+  // complete
+  return {
+    ...job,
+    status: event.ok ? 'done' : 'error',
+    finishedAt: now,
+    summary: event.summary,
+    error: event.error
+  }
 }
 
 const jobs = new Map<string, BackgroundJob>()
@@ -56,6 +95,7 @@ export function enqueueBackgroundJob(input: {
   title: string
   prompt: string
   cwd: string | null
+  contextNote?: string
 }): BackgroundJob {
   const id = `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
   const job: BackgroundJob = {
@@ -65,7 +105,8 @@ export function enqueueBackgroundJob(input: {
     status: 'queued',
     createdAt: Date.now(),
     prompt: input.prompt,
-    cwd: input.cwd
+    cwd: input.cwd,
+    contextNote: input.contextNote
   }
   jobs.set(id, job)
   prune()
@@ -74,34 +115,42 @@ export function enqueueBackgroundJob(input: {
 }
 
 export function markBackgroundJobRunning(id: string): BackgroundJob | null {
-  const job = jobs.get(id)
-  if (!job || job.status === 'cancelled') return job ?? null
-  job.status = 'running'
-  emit(job)
-  return job
+  const current = jobs.get(id)
+  if (!current) return null
+  const next = applyJobTransition(current, { type: 'start' })
+  jobs.set(id, next)
+  emit(next)
+  return next
 }
 
 export function completeBackgroundJob(
   id: string,
   result: { ok: boolean; summary?: string; error?: string }
 ): BackgroundJob | null {
-  const job = jobs.get(id)
-  if (!job || job.status === 'cancelled') return job ?? null
-  job.status = result.ok ? 'done' : 'error'
-  job.finishedAt = Date.now()
-  job.summary = result.summary
-  job.error = result.error
-  emit(job)
-  return job
+  const current = jobs.get(id)
+  if (!current) return null
+  const next = applyJobTransition(current, {
+    type: 'complete',
+    ok: result.ok,
+    summary: result.summary,
+    error: result.error
+  })
+  jobs.set(id, next)
+  emit(next)
+  return next
 }
 
 export function cancelBackgroundJob(id: string): BackgroundJob | null {
-  const job = jobs.get(id)
-  if (!job) return null
-  if (job.status === 'done' || job.status === 'error') return job
-  job.status = 'cancelled'
-  job.finishedAt = Date.now()
-  job.summary = 'cancelled'
-  emit(job)
-  return job
+  const current = jobs.get(id)
+  if (!current) return null
+  const next = applyJobTransition(current, { type: 'cancel' })
+  jobs.set(id, next)
+  emit(next)
+  return next
+}
+
+/** Extract job id from a Background Agent chat prompt prefix. */
+export function extractBackgroundJobId(prompt: string): string | null {
+  const match = prompt.match(/【Background Agent · (job-[a-z0-9-]+)】/i)
+  return match?.[1] ?? null
 }
