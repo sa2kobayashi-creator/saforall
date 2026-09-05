@@ -14,6 +14,7 @@ type MenuLabels = {
   search: string
   scm: string
   toggleTerminal: string
+  commandPalette: string
   problems: string
   toggleChat: string
   aiUsage: string
@@ -62,6 +63,7 @@ const ja: MenuLabels = {
   search: '検索',
   scm: 'ソース管理',
   toggleTerminal: 'ターミナルの表示切替',
+  commandPalette: 'コマンドパレット',
   problems: 'Problems',
   toggleChat: 'AI チャットの表示切替',
   aiUsage: 'AI 使用量',
@@ -110,6 +112,7 @@ const en: MenuLabels = {
   search: 'Search',
   scm: 'Source Control',
   toggleTerminal: 'Toggle Terminal',
+  commandPalette: 'Command Palette',
   problems: 'Problems',
   toggleChat: 'Toggle AI Chat',
   aiUsage: 'AI Usage',

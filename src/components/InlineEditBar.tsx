@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { ApplyDiffDialog } from './ApplyDiffDialog'
 import './InlineEditBar.css'
 
 export type InlineEditTarget = {
@@ -23,12 +24,14 @@ export function InlineEditBar({ target, onClose, onApplied }: Props) {
   const [instruction, setInstruction] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [preview, setPreview] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setInstruction('')
     setError(null)
     setBusy(false)
+    setPreview(null)
     if (target) {
       window.setTimeout(() => inputRef.current?.focus(), 30)
     }
@@ -61,7 +64,8 @@ export function InlineEditBar({ target, onClose, onApplied }: Props) {
         setBusy(false)
         return
       }
-      onApplied(result.data.edited.replace(/\r\n/g, '\n'))
+      setPreview(result.data.edited.replace(/\r\n/g, '\n'))
+      setBusy(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setBusy(false)
@@ -71,33 +75,61 @@ export function InlineEditBar({ target, onClose, onApplied }: Props) {
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault()
+      if (preview !== null) {
+        setPreview(null)
+        return
+      }
       onClose()
     }
   }
 
   return (
-    <div className="inline-edit-bar" role="dialog" aria-label="インライン編集">
-      <form className="inline-edit-form" onSubmit={(event) => void submit(event)}>
-        <span className="inline-edit-label">
-          Ctrl+K · L{target.startLine}
-          {target.endLine !== target.startLine ? `-${target.endLine}` : ''}
-        </span>
-        <input
-          ref={inputRef}
-          value={instruction}
-          onChange={(event) => setInstruction(event.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="選択範囲への指示（例: エラーハンドリングを追加）"
-          disabled={busy}
-        />
-        <button type="submit" disabled={busy || instruction.trim() === ''}>
-          {busy ? '生成中…' : '適用'}
-        </button>
-        <button type="button" className="ghost" onClick={onClose} disabled={busy}>
-          Esc
-        </button>
-      </form>
-      {error && <p className="inline-edit-error">{error}</p>}
-    </div>
+    <>
+      <div className="inline-edit-bar" role="dialog" aria-label="インライン編集">
+        <form className="inline-edit-form" onSubmit={(event) => void submit(event)}>
+          <span className="inline-edit-label">
+            Ctrl+K · L{target.startLine}
+            {target.endLine !== target.startLine ? `-${target.endLine}` : ''}
+          </span>
+          <input
+            ref={inputRef}
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="選択範囲への指示（例: エラーハンドリングを追加）"
+            disabled={busy || preview !== null}
+          />
+          <button type="submit" disabled={busy || instruction.trim() === '' || preview !== null}>
+            {busy ? '生成中…' : '生成'}
+          </button>
+          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
+            Esc
+          </button>
+        </form>
+        {error && <p className="inline-edit-error">{error}</p>}
+      </div>
+      <ApplyDiffDialog
+        open={preview !== null}
+        proposal={
+          preview === null
+            ? null
+            : {
+                targetPath: target.path,
+                original: target.selection,
+                modified: preview,
+                mode: 'replace',
+                language: target.language,
+                source: 'chat'
+              }
+        }
+        acceptLabel="適用する"
+        onAccept={() => {
+          if (preview === null) return
+          onApplied(preview)
+          setPreview(null)
+        }}
+        onReject={() => setPreview(null)}
+      />
+    </>
   )
 }

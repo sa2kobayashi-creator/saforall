@@ -61,6 +61,7 @@ type Props = {
   onCommandSent: () => void
   onClose: () => void
   onOpenFile: (path: string, line?: number) => void
+  newTerminalTrigger?: number
 }
 
 export function BottomPanel({
@@ -80,7 +81,8 @@ export function BottomPanel({
   onChangeTab,
   onCommandSent,
   onClose,
-  onOpenFile
+  onOpenFile,
+  newTerminalTrigger = 0
 }: Props) {
   const { t } = useI18n()
 
@@ -176,6 +178,7 @@ export function BottomPanel({
             cwd={cwd}
             pendingCommand={open && activeTab === 'terminal' ? pendingCommand : null}
             onCommandSent={onCommandSent}
+            newTerminalTrigger={newTerminalTrigger}
           />
         </div>
         <div

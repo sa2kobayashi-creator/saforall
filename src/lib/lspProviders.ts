@@ -391,6 +391,95 @@ export function registerLspProviders(
         }
       })
     )
+
+    disposables.push(
+      monaco.languages.registerCodeActionProvider(language, {
+        provideCodeActions: async (
+          _model: unknown,
+          range: {
+            startLineNumber: number
+            startColumn: number
+            endLineNumber: number
+            endColumn: number
+          },
+          _context: unknown,
+          token: CancellationToken
+        ) => {
+          const meta = getMeta()
+          if (!meta || typeof window.saforall.lspCodeActions !== 'function') {
+            return { actions: [], dispose: () => undefined }
+          }
+          try {
+            const rows = await window.saforall.lspCodeActions({
+              path: meta.path,
+              line: range.startLineNumber - 1,
+              character: range.startColumn - 1,
+              endLine: range.endLineNumber - 1,
+              endCharacter: range.endColumn - 1
+            })
+            if (token.isCancellationRequested) {
+              return { actions: [], dispose: () => undefined }
+            }
+            return {
+              actions: rows.map((row) => ({
+                title: row.title,
+                kind: row.kind?.includes('refactor')
+                  ? monaco.languages.CodeActionKind.Refactor
+                  : monaco.languages.CodeActionKind.QuickFix,
+                isPreferred: Boolean(row.kind?.includes('quickfix')),
+                edit: {
+                  edits: row.edits.map((edit) => ({
+                    resource: monaco.Uri.file(edit.path),
+                    textEdit: {
+                      range: new monaco.Range(
+                        edit.startLine,
+                        edit.startColumn,
+                        edit.endLine,
+                        edit.endColumn
+                      ),
+                      text: edit.newText
+                    },
+                    versionId: undefined
+                  }))
+                },
+                ...(onApplyEdits
+                  ? {
+                      command: {
+                        id: 'saforall.applyLspEdits',
+                        title: row.title,
+                        arguments: [row.edits]
+                      },
+                      // Prefer App-managed apply (tabs + disk); clear Monaco edit to avoid double-apply.
+                      edit: undefined
+                    }
+                  : {})
+              })),
+              dispose: () => undefined
+            }
+          } catch {
+            return { actions: [], dispose: () => undefined }
+          }
+        }
+      })
+    )
+  }
+
+  if (onApplyEdits) {
+    const editorApi = monaco.editor as typeof monaco.editor & {
+      registerCommand?: (
+        id: string,
+        handler: (accessor: unknown, ...args: unknown[]) => void
+      ) => { dispose: () => void }
+    }
+    if (typeof editorApi.registerCommand === 'function') {
+      disposables.push(
+        editorApi.registerCommand('saforall.applyLspEdits', (_accessor: unknown, edits: unknown) => {
+          if (Array.isArray(edits)) {
+            void onApplyEdits(edits as LspTextEdit[])
+          }
+        })
+      )
+    }
   }
 
     // Route Monaco go-to-definition / references into our tab opener

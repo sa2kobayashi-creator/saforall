@@ -21,6 +21,7 @@ import { ScmDiffDialog, type ScmDiffView } from './components/ScmDiffDialog'
 import { PendingEditsBar } from './components/PendingEditsBar'
 import { ComposerPanel } from './components/ComposerPanel'
 import { QuickOpenDialog } from './components/QuickOpenDialog'
+import { CommandPalette, BUILTIN_PALETTE_COMMANDS } from './components/CommandPalette'
 import { ExtensionsPanel } from './components/ExtensionsPanel'
 import { resolveProblemOpenPath } from './lib/problemPaths'
 import { buildBackendOfflineMessage } from './lib/backendGuide'
@@ -123,6 +124,9 @@ export default function App() {
   const [composerOpen, setComposerOpen] = useState(true)
   const [reviewIndex, setReviewIndex] = useState(0)
   const [quickOpen, setQuickOpen] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [newTerminalTrigger, setNewTerminalTrigger] = useState(0)
+  const runAppCommandRef = useRef<(command: string) => void>(() => undefined)
   const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null)
   const [monacoProblems, setMonacoProblems] = useState<ProblemItem[]>([])
   const [lspProblems, setLspProblems] = useState<ProblemItem[]>([])
@@ -614,6 +618,10 @@ export default function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
         event.preventDefault()
+        if (event.shiftKey) {
+          setCommandPaletteOpen(true)
+          return
+        }
         if (workspacePath) setQuickOpen(true)
       }
     }
@@ -1258,7 +1266,7 @@ export default function App() {
 
   useEffect(() => {
     if (typeof window.saforall.onMenuCommand !== 'function') return
-    const unsubscribe = window.saforall.onMenuCommand((command) => {
+    const run = (command: string) => {
       switch (command) {
         case 'workspace:open':
           void openWorkspace()
@@ -1282,6 +1290,14 @@ export default function App() {
         case 'view:terminal':
           setBottomTab('terminal')
           setTerminalOpen((open) => !open)
+          break
+        case 'terminal:new':
+          setBottomTab('terminal')
+          setTerminalOpen(true)
+          setNewTerminalTrigger((n) => n + 1)
+          break
+        case 'view:commands':
+          setCommandPaletteOpen(true)
           break
         case 'view:problems':
           setBottomTab('problems')
@@ -1463,6 +1479,10 @@ export default function App() {
           setAboutOpen(true)
           break
       }
+    }
+    runAppCommandRef.current = run
+    const unsubscribe = window.saforall.onMenuCommand((command) => {
+      run(command)
     })
     return () => {
       unsubscribe()
@@ -1529,6 +1549,10 @@ export default function App() {
               width={sidebarWidth}
               onOpenWorkspace={openWorkspace}
               onOpenFile={openFileAt}
+              onStatusMessage={(message) => {
+                setStatus(message)
+                showNotice(message)
+              }}
             />
           ) : sidebarView === 'search' ? (
             <SearchPanel
@@ -1750,6 +1774,7 @@ export default function App() {
                   activePath={activePath}
                   historyRefreshKey={historyRefreshKey}
                   pendingCommand={pendingCommand}
+                  newTerminalTrigger={newTerminalTrigger}
                   problems={problems}
                   references={{
                     hits: referenceHits,
@@ -2023,6 +2048,15 @@ export default function App() {
         onClose={() => setQuickOpen(false)}
         onOpenFile={(path) => {
           void openFileAt(path)
+        }}
+      />
+      <CommandPalette
+        open={commandPaletteOpen}
+        commands={BUILTIN_PALETTE_COMMANDS}
+        onClose={() => setCommandPaletteOpen(false)}
+        onRun={(commandId) => {
+          if (commandId === 'view:commands') return
+          runAppCommandRef.current(commandId)
         }}
       />
       <CloneDialog

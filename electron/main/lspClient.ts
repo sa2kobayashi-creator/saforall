@@ -293,6 +293,13 @@ export class LspClient extends EventEmitter {
           },
           references: {},
           rename: { prepareSupport: false },
+          codeAction: {
+            codeActionLiteralSupport: {
+              codeActionKind: {
+                valueSet: ['quickfix', 'refactor', 'source', 'source.organizeImports']
+              }
+            }
+          },
           formatting: { dynamicRegistration: false },
           documentSymbol: {
             hierarchicalDocumentSymbolSupport: true
@@ -514,6 +521,46 @@ export class LspClient extends EventEmitter {
       newName
     })
     return parseWorkspaceEdits(response.result)
+  }
+
+  async codeActions(
+    filePath: string,
+    line: number,
+    character: number,
+    endLine?: number,
+    endCharacter?: number
+  ): Promise<Array<{ title: string; kind?: string; edits: LspTextEdit[] }>> {
+    const response = await this.request('textDocument/codeAction', {
+      textDocument: { uri: toUri(filePath) },
+      range: {
+        start: { line, character },
+        end: {
+          line: endLine ?? line,
+          character: endCharacter ?? character
+        }
+      },
+      context: { diagnostics: [] }
+    })
+    const rows = Array.isArray(response.result) ? response.result : []
+    const out: Array<{ title: string; kind?: string; edits: LspTextEdit[] }> = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue
+      const rec = row as {
+        title?: string
+        kind?: string
+        edit?: unknown
+      }
+      const title = typeof rec.title === 'string' ? rec.title : ''
+      if (!title) continue
+      const edits = rec.edit ? parseWorkspaceEdits(rec.edit) : []
+      if (edits.length === 0) continue
+      out.push({
+        title,
+        kind: typeof rec.kind === 'string' ? rec.kind : undefined,
+        edits
+      })
+    }
+    return out.slice(0, 40)
   }
 
   async formatDocument(filePath: string): Promise<LspTextEdit[]> {
@@ -906,6 +953,22 @@ export class LspManager {
     if (!client) return []
     try {
       return await client.formatDocument(filePath)
+    } catch {
+      return []
+    }
+  }
+
+  async codeActions(
+    filePath: string,
+    line: number,
+    character: number,
+    endLine?: number,
+    endCharacter?: number
+  ): Promise<Array<{ title: string; kind?: string; edits: LspTextEdit[] }>> {
+    const client = this.clientForPath(filePath)
+    if (!client) return []
+    try {
+      return await client.codeActions(filePath, line, character, endLine, endCharacter)
     } catch {
       return []
     }

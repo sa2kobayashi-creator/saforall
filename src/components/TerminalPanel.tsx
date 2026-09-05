@@ -18,34 +18,50 @@ type Props = {
   embedded?: boolean
   /** タブ切替などで再フィットさせるトリガー */
   fitTrigger?: string | number
+  /** 増えるたびに新しいターミナルタブを開く */
+  newTerminalTrigger?: number
 }
 
-export function TerminalPanel({
-  open,
-  visible = true,
-  height,
+type TermTab = {
+  localId: string
+  title: string
+}
+
+function nextLocalId(): string {
+  return `term-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+type SessionProps = {
+  active: boolean
+  visible: boolean
+  cwd: string | null
+  height?: number
+  fitTrigger?: string | number
+  pendingCommand: string | null
+  onCommandSent: () => void
+  onBackend: (backend: 'node-pty' | 'child_process' | null) => void
+  onError: (message: string | null) => void
+}
+
+function TerminalSession({
+  active,
+  visible,
   cwd,
+  height,
+  fitTrigger,
   pendingCommand,
   onCommandSent,
-  onClose,
-  embedded = false,
-  fitTrigger
-}: Props) {
+  onBackend,
+  onError
+}: SessionProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const [sessionReady, setSessionReady] = useState(false)
-  const [backend, setBackend] = useState<'node-pty' | 'child_process' | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const show = open && visible
+  const show = visible && active
 
-  // セッションは open=true の間維持。パネルを畳んでも破棄しない。
   useEffect(() => {
-    if (!open) {
-      setSessionReady(false)
-      return
-    }
     const host = hostRef.current
     if (!host) return
 
@@ -86,24 +102,22 @@ export function TerminalPanel({
 
     const start = async () => {
       try {
-        const cols = term.cols
-        const rows = term.rows
         const session = await window.saforall.createTerminal({
           cwd: cwd ?? undefined,
-          cols,
-          rows
+          cols: term.cols,
+          rows: term.rows
         })
         if (disposed) {
           await window.saforall.killTerminal(session.id)
           return
         }
         sessionIdRef.current = session.id
-        setBackend(session.backend)
-        setError(null)
+        onBackend(session.backend)
+        onError(null)
         setSessionReady(true)
         if (show) term.focus()
       } catch (err) {
-        setError(String(err))
+        onError(String(err))
         term.writeln(`ターミナル起動に失敗しました: ${String(err)}`)
       }
     }
@@ -155,12 +169,11 @@ export function TerminalPanel({
       termRef.current = null
       fitRef.current = null
     }
-    // cwd 変更時のみ作り直す（表示の開閉では破棄しない）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, cwd])
+  }, [cwd])
 
   useEffect(() => {
-    if (!open || !show) return
+    if (!show) return
     const frame = window.requestAnimationFrame(() => {
       try {
         const host = hostRef.current
@@ -171,15 +184,16 @@ export function TerminalPanel({
         if (term && id) {
           void window.saforall.resizeTerminal(id, term.cols, term.rows)
         }
+        term?.focus()
       } catch {
         // ignore
       }
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [open, show, height, fitTrigger])
+  }, [show, height, fitTrigger])
 
   useEffect(() => {
-    if (!open || !show || !pendingCommand || !sessionReady) return
+    if (!show || !pendingCommand || !sessionReady) return
     const id = sessionIdRef.current
     if (!id) return
 
@@ -192,9 +206,106 @@ export function TerminalPanel({
     }, 250)
 
     return () => window.clearTimeout(timer)
-  }, [open, show, pendingCommand, sessionReady, onCommandSent])
+  }, [show, pendingCommand, sessionReady, onCommandSent])
+
+  const restart = () => {
+    const term = termRef.current
+    if (!term) return
+    const oldId = sessionIdRef.current
+    if (oldId) void window.saforall.killTerminal(oldId)
+    setSessionReady(false)
+    term.reset()
+    void window.saforall
+      .createTerminal({
+        cwd: cwd ?? undefined,
+        cols: term.cols,
+        rows: term.rows
+      })
+      .then((session) => {
+        sessionIdRef.current = session.id
+        onBackend(session.backend)
+        setSessionReady(true)
+        term.focus()
+      })
+      .catch((err) => onError(String(err)))
+  }
+
+  return (
+    <div
+      className={`terminal-session${show ? '' : ' is-hidden'}`}
+      hidden={!show}
+      aria-hidden={!show}
+    >
+      <div className="terminal-session-actions">
+        <button type="button" title="先頭へスクロール" onClick={() => termRef.current?.scrollToTop()}>
+          ↑履歴
+        </button>
+        <button type="button" title="末尾へスクロール" onClick={() => termRef.current?.scrollToBottom()}>
+          ↓最新
+        </button>
+        <button type="button" title="再起動（履歴はクリアされます）" onClick={restart}>
+          再起動
+        </button>
+      </div>
+      <div className="terminal-host" ref={hostRef} />
+    </div>
+  )
+}
+
+export function TerminalPanel({
+  open,
+  visible = true,
+  height,
+  cwd,
+  pendingCommand,
+  onCommandSent,
+  onClose,
+  embedded = false,
+  fitTrigger,
+  newTerminalTrigger = 0
+}: Props) {
+  const [tabs, setTabs] = useState<TermTab[]>(() => {
+    const localId = nextLocalId()
+    return [{ localId, title: 'ターミナル 1' }]
+  })
+  const [activeId, setActiveId] = useState(() => tabs[0]?.localId ?? '')
+  const [backend, setBackend] = useState<'node-pty' | 'child_process' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const lastTriggerRef = useRef(newTerminalTrigger)
+  const show = open && visible
+
+  useEffect(() => {
+    if (!activeId && tabs[0]) setActiveId(tabs[0].localId)
+  }, [activeId, tabs])
+
+  useEffect(() => {
+    if (newTerminalTrigger <= 0) return
+    if (newTerminalTrigger === lastTriggerRef.current) return
+    lastTriggerRef.current = newTerminalTrigger
+    const localId = nextLocalId()
+    const title = `ターミナル ${tabs.length + 1}`
+    setTabs((current) => [...current, { localId, title }])
+    setActiveId(localId)
+  }, [newTerminalTrigger, tabs.length])
 
   if (!open) return null
+
+  const addTab = () => {
+    const localId = nextLocalId()
+    setTabs((current) => [...current, { localId, title: `ターミナル ${current.length + 1}` }])
+    setActiveId(localId)
+  }
+
+  const closeTab = (localId: string) => {
+    setTabs((current) => {
+      if (current.length <= 1) return current
+      const next = current.filter((tab) => tab.localId !== localId)
+      if (activeId === localId) {
+        setActiveId(next[next.length - 1]?.localId ?? '')
+      }
+      return next
+    })
+  }
 
   return (
     <section
@@ -215,47 +326,6 @@ export function TerminalPanel({
             </span>
           </div>
           <div className="terminal-actions">
-            <button
-              type="button"
-              title="先頭へスクロール"
-              onClick={() => termRef.current?.scrollToTop()}
-            >
-              ↑履歴
-            </button>
-            <button
-              type="button"
-              title="末尾へスクロール"
-              onClick={() => termRef.current?.scrollToBottom()}
-            >
-              ↓最新
-            </button>
-            <button
-              type="button"
-              title="再起動（履歴はクリアされます）"
-              onClick={() => {
-                const term = termRef.current
-                if (!term) return
-                const oldId = sessionIdRef.current
-                if (oldId) void window.saforall.killTerminal(oldId)
-                setSessionReady(false)
-                term.reset()
-                void window.saforall
-                  .createTerminal({
-                    cwd: cwd ?? undefined,
-                    cols: term.cols,
-                    rows: term.rows
-                  })
-                  .then((session) => {
-                    sessionIdRef.current = session.id
-                    setBackend(session.backend)
-                    setSessionReady(true)
-                    term.focus()
-                  })
-                  .catch((err) => setError(String(err)))
-              }}
-            >
-              再起動
-            </button>
             {onClose && (
               <button type="button" title="閉じる" onClick={onClose}>
                 ×
@@ -264,8 +334,59 @@ export function TerminalPanel({
           </div>
         </div>
       )}
+      <div className="terminal-tabs" role="tablist" aria-label="ターミナルタブ">
+        {tabs.map((tab) => (
+          <div
+            key={tab.localId}
+            className={`terminal-tab${tab.localId === activeId ? ' active' : ''}`}
+            role="tab"
+            aria-selected={tab.localId === activeId}
+          >
+            <button type="button" className="terminal-tab-label" onClick={() => setActiveId(tab.localId)}>
+              {tab.title}
+            </button>
+            {tabs.length > 1 && (
+              <button
+                type="button"
+                className="terminal-tab-close"
+                title="タブを閉じる"
+                onClick={() => closeTab(tab.localId)}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        <button type="button" className="terminal-tab-add" title="新しいターミナル" onClick={addTab}>
+          ＋
+        </button>
+        {embedded && (
+          <span className="terminal-tab-meta">
+            {backend ? backend : ''}
+          </span>
+        )}
+      </div>
       {error && <div className="terminal-error">{error}</div>}
-      <div className="terminal-host" ref={hostRef} />
+      <div className="terminal-sessions">
+        {tabs.map((tab) => (
+          <TerminalSession
+            key={tab.localId}
+            active={tab.localId === activeId}
+            visible={show}
+            cwd={cwd}
+            height={height}
+            fitTrigger={fitTrigger}
+            pendingCommand={tab.localId === activeId ? pendingCommand : null}
+            onCommandSent={onCommandSent}
+            onBackend={(value) => {
+              if (tab.localId === activeId) setBackend(value)
+            }}
+            onError={(message) => {
+              if (tab.localId === activeId) setError(message)
+            }}
+          />
+        ))}
+      </div>
     </section>
   )
 }

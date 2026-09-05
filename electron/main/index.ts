@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { dirname, join } from 'path'
 import { watch, type FSWatcher } from 'fs'
-import { mkdir, readFile, writeFile, readdir, stat } from 'fs/promises'
+import { mkdir, readFile, writeFile, readdir, stat, unlink, rename, rm } from 'fs/promises'
 import { apiRequest, checkHealth, streamChat } from './api'
 import {
   cloneRepository,
@@ -144,6 +144,30 @@ ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string)
   await writeFile(filePath, content, 'utf-8')
   return true
 })
+
+ipcMain.handle('fs:mkdir', async (_event, dirPath: string) => {
+  await mkdir(dirPath, { recursive: true })
+  return true
+})
+
+ipcMain.handle('fs:delete', async (_event, targetPath: string) => {
+  const info = await stat(targetPath)
+  if (info.isDirectory()) {
+    await rm(targetPath, { recursive: true, force: true })
+  } else {
+    await unlink(targetPath)
+  }
+  return true
+})
+
+ipcMain.handle(
+  'fs:rename',
+  async (_event, params: { from: string; to: string }) => {
+    await mkdir(dirname(params.to), { recursive: true })
+    await rename(params.from, params.to)
+    return true
+  }
+)
 
 ipcMain.handle('fs:readDir', async (_event, dirPath: string) => {
   const entries = await readdir(dirPath, { withFileTypes: true })
@@ -557,6 +581,27 @@ ipcMain.handle(
 ipcMain.handle(
   'lsp:format',
   async (_event, params: { path: string }) => lspManager.formatDocument(params.path)
+)
+
+ipcMain.handle(
+  'lsp:codeActions',
+  async (
+    _event,
+    params: {
+      path: string
+      line: number
+      character: number
+      endLine?: number
+      endCharacter?: number
+    }
+  ) =>
+    lspManager.codeActions(
+      params.path,
+      params.line,
+      params.character,
+      params.endLine,
+      params.endCharacter
+    )
 )
 
 ipcMain.handle(

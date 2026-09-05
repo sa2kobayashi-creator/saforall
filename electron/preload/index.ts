@@ -98,6 +98,11 @@ const api = {
     ipcRenderer.invoke('fs:readFile', filePath),
   writeFile: (filePath: string, content: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:writeFile', filePath, content),
+  mkdir: (dirPath: string): Promise<boolean> => ipcRenderer.invoke('fs:mkdir', dirPath),
+  deletePath: (targetPath: string): Promise<boolean> =>
+    ipcRenderer.invoke('fs:delete', targetPath),
+  renamePath: (params: { from: string; to: string }): Promise<boolean> =>
+    ipcRenderer.invoke('fs:rename', params),
   readDir: (dirPath: string): Promise<DirEntry[]> =>
     ipcRenderer.invoke('fs:readDir', dirPath),
   searchFiles: (cwd: string, query: string): Promise<string[]> =>
@@ -252,6 +257,26 @@ const api = {
       newText: string
     }>
   > => ipcRenderer.invoke('lsp:format', params),
+  lspCodeActions: (params: {
+    path: string
+    line: number
+    character: number
+    endLine?: number
+    endCharacter?: number
+  }): Promise<
+    Array<{
+      title: string
+      kind?: string
+      edits: Array<{
+        path: string
+        startLine: number
+        startColumn: number
+        endLine: number
+        endColumn: number
+        newText: string
+      }>
+    }>
+  > => ipcRenderer.invoke('lsp:codeActions', params),
   lspDocumentSymbols: (params: {
     path: string
   }): Promise<

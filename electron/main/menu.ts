@@ -28,6 +28,8 @@ export type MenuCommand =
   | 'debug:stop'
   | 'view:debug'
   | 'view:extensions'
+  | 'view:commands'
+  | 'terminal:new'
   | 'edit:inline'
   | 'agent:bugbot'
   | 'agent:background'
@@ -137,6 +139,11 @@ export function setupApplicationMenu(locale: MenuLocale = currentLocale): void {
           click: () => send('view:terminal')
         },
         {
+          label: L.commandPalette,
+          accelerator: 'CmdOrCtrl+Shift+P',
+          click: () => send('view:commands')
+        },
+        {
           label: L.problems,
           accelerator: 'CmdOrCtrl+Shift+M',
           click: () => send('view:problems')
@@ -230,7 +237,7 @@ export function setupApplicationMenu(locale: MenuLocale = currentLocale): void {
         {
           label: L.newTerminal,
           accelerator: 'Ctrl+Shift+`',
-          click: () => send('view:terminal')
+          click: () => send('terminal:new')
         }
       ]
     },
