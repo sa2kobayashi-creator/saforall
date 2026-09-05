@@ -24,6 +24,8 @@ export type ApplyCodeOptions = {
    * auto と併用する。
    */
   review?: boolean
+  /** Agent edit_proposal: prefer full-file replace over patch/append heuristics */
+  forceReplace?: boolean
 }
 
 export type EditorSelection = {

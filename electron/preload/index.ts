@@ -102,6 +102,8 @@ const api = {
     ipcRenderer.invoke('fs:readDir', dirPath),
   searchFiles: (cwd: string, query: string): Promise<string[]> =>
     ipcRenderer.invoke('fs:searchFiles', cwd, query),
+  searchCode: (cwd: string, query: string): Promise<string> =>
+    ipcRenderer.invoke('fs:searchCode', cwd, query),
   watchWorkspace: (cwd: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:watchWorkspace', cwd),
   unwatchWorkspace: (): Promise<boolean> => ipcRenderer.invoke('fs:unwatchWorkspace'),
@@ -454,6 +456,66 @@ const api = {
     ipcRenderer.invoke('git:push', cwd),
   gitPull: (cwd: string): Promise<{ ok: boolean; stdout?: string; error?: string }> =>
     ipcRenderer.invoke('git:pull', cwd),
+  listJobs: (): Promise<
+    Array<{
+      id: string
+      kind: 'agent' | 'bugbot'
+      title: string
+      status: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+      createdAt: number
+      finishedAt?: number
+      summary?: string
+      error?: string
+      prompt: string
+      cwd: string | null
+    }>
+  > => ipcRenderer.invoke('jobs:list'),
+  enqueueJob: (params: {
+    kind?: 'agent' | 'bugbot'
+    title: string
+    prompt: string
+    cwd?: string | null
+  }): Promise<{
+    id: string
+    kind: 'agent' | 'bugbot'
+    title: string
+    status: string
+    createdAt: number
+    prompt: string
+    cwd: string | null
+  }> => ipcRenderer.invoke('jobs:enqueue', params),
+  cancelJob: (
+    id: string
+  ): Promise<{
+    id: string
+    status: string
+  } | null> => ipcRenderer.invoke('jobs:cancel', id),
+  onJobRun: (
+    callback: (payload: {
+      id: string
+      kind: 'agent' | 'bugbot'
+      title: string
+      prompt: string
+      cwd: string | null
+    }) => void
+  ) => {
+    const listener = (
+      _event: unknown,
+      payload: {
+        id: string
+        kind: 'agent' | 'bugbot'
+        title: string
+        prompt: string
+        cwd: string | null
+      }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('jobs:run', listener)
+    return () => {
+      ipcRenderer.removeListener('jobs:run', listener)
+    }
+  },
   getRuntimeInfo: (): {
     appVersion: string
     electron?: string

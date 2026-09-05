@@ -17,6 +17,7 @@ import type {
 import type { ProblemItem } from './ProblemsPanel'
 import {
   activeMentionQuery,
+  extractCodebaseNeedles,
   fileMentionSuggestion,
   filterSpecialMentions,
   hasSpecialMention,
@@ -265,8 +266,27 @@ export function ChatPanel({
     if (wantCodebase && workspacePath && typeof window.saforall.ensureIndex === 'function') {
       try {
         const summary = await window.saforall.ensureIndex(workspacePath)
+        const needles = extractCodebaseNeedles(input)
+        const hitBlocks: string[] = []
+        if (typeof window.saforall.searchCode === 'function') {
+          for (const needle of needles.slice(0, 4)) {
+            try {
+              const hits = await window.saforall.searchCode(workspacePath, needle)
+              if (hits && hits !== '一致なし') {
+                hitBlocks.push(`## ${needle}\n${hits.split('\n').slice(0, 12).join('\n')}`)
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
         if (summary.ok) {
-          indexSummary = `codebase index: files=${summary.files ?? 0}, symbols=${summary.symbols ?? 0}`
+          indexSummary = [
+            `codebase index: files=${summary.files ?? 0}, symbols=${summary.symbols ?? 0}`,
+            hitBlocks.length > 0 ? hitBlocks.join('\n\n').slice(0, 6000) : null
+          ]
+            .filter(Boolean)
+            .join('\n\n')
         }
       } catch {
         indexSummary = null
@@ -1003,7 +1023,8 @@ export function ChatPanel({
             setBusy({ phase: 'applying', detail: `変更候補: ${event.path}` })
             void onApplyCode(event.content, event.path, languageFromPath(event.path), {
               auto: true,
-              review: true
+              review: true,
+              forceReplace: true
             })
             return
           }

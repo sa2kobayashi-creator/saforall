@@ -609,7 +609,11 @@ export default function App() {
   )
 
   const buildProposal = useCallback(
-    async (targetPath: string, code: string): Promise<ApplyDiffProposal> => {
+    async (
+      targetPath: string,
+      code: string,
+      options?: { forceReplace?: boolean; source?: ApplyDiffProposal['source'] }
+    ): Promise<ApplyDiffProposal> => {
       let existing = ''
       try {
         const open = tabs.find((tab) => tab.path === targetPath)
@@ -617,13 +621,16 @@ export default function App() {
       } catch {
         existing = ''
       }
-      const plan = planAppliedContent(existing, code)
+      const plan = planAppliedContent(existing, code, {
+        preferReplace: options?.forceReplace === true
+      })
       return {
         targetPath,
         original: plan.original,
         modified: plan.modified,
         mode: plan.mode,
-        language: languageFromPath(targetPath)
+        language: languageFromPath(targetPath),
+        source: options?.source
       }
     },
     [tabs]
@@ -632,9 +639,12 @@ export default function App() {
   const enqueueOrShowProposal = useCallback(
     (proposal: ApplyDiffProposal, review: boolean) => {
       if (review) {
-        setApplyQueue((current) => [...current, proposal])
+        setApplyQueue((current) => {
+          const without = current.filter((row) => row.targetPath !== proposal.targetPath)
+          return [...without, proposal]
+        })
         setComposerOpen(true)
-        showNotice(`変更候補を追加: ${proposal.targetPath}`)
+        showNotice(`変更候補を更新: ${proposal.targetPath}`)
         return
       }
       setApplyQueue([proposal])
@@ -691,7 +701,10 @@ export default function App() {
             await writeCodeToFile(targetPath, code)
             return
           }
-          const proposal = await buildProposal(targetPath, code)
+          const proposal = await buildProposal(targetPath, code, {
+            forceReplace: options?.forceReplace === true,
+            source: options?.forceReplace ? 'agent' : 'chat'
+          })
           enqueueOrShowProposal(proposal, review)
         } catch (error) {
           showNotice(`適用失敗: ${String(error)}`)
@@ -1062,16 +1075,24 @@ export default function App() {
 
   const acceptAllProposals = useCallback(async () => {
     const queue = [...applyQueue]
+    if (queue.length === 0) return
     setApplyQueue([])
     setReviewIndex(0)
-    for (const proposal of queue) {
+    const applied: string[] = []
+    for (let i = 0; i < queue.length; i += 1) {
+      const proposal = queue[i]
       try {
         await commitProposal(proposal)
+        applied.push(proposal.targetPath)
       } catch (error) {
-        showNotice(`適用失敗: ${String(error)}`)
+        setApplyQueue(queue.slice(i))
+        showNotice(
+          `適用失敗（${applied.length}/${queue.length} 完了）: ${String(error)}`
+        )
         return
       }
     }
+    showNotice(`${applied.length} 件の変更を適用しました`)
   }, [applyQueue, commitProposal, showNotice])
 
   const rejectAllProposals = useCallback(() => {
@@ -1263,13 +1284,37 @@ export default function App() {
           })()
           break
         case 'agent:background': {
-          const prompt = window.prompt('Background Agent に依頼する内容')
-          if (!prompt?.trim()) break
-          setChatOpen(true)
-          setPendingChatPrompt(
-            `【Background Agent】以下を Agent モードで実行してください。\n\n${prompt.trim()}`
-          )
-          showNotice('Background Agent をチャットで開始します')
+          void (async () => {
+            const prompt = window.prompt('Background Agent に依頼する内容')
+            if (!prompt?.trim()) return
+            if (!workspacePath) {
+              showNotice('先にフォルダを開いてください')
+              return
+            }
+            if (typeof window.saforall.enqueueJob === 'function') {
+              try {
+                const job = await window.saforall.enqueueJob({
+                  kind: 'agent',
+                  title: prompt.trim().slice(0, 60),
+                  prompt: prompt.trim(),
+                  cwd: workspacePath
+                })
+                setChatOpen(true)
+                setPendingChatPrompt(
+                  `【Background Agent · ${job.id}】Agent モードで実行してください。\n\n${prompt.trim()}`
+                )
+                showNotice(`Background Job を開始: ${job.id}`)
+                return
+              } catch (error) {
+                showNotice(`Job 開始失敗: ${String(error)}`)
+              }
+            }
+            setChatOpen(true)
+            setPendingChatPrompt(
+              `【Background Agent】以下を Agent モードで実行してください。\n\n${prompt.trim()}`
+            )
+            showNotice('Background Agent をチャットで開始します')
+          })()
           break
         }
         case 'help:welcome':

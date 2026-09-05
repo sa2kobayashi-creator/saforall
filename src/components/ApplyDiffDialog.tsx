@@ -8,6 +8,7 @@ export type ApplyDiffProposal = {
   modified: string
   mode: 'create' | 'replace' | 'append' | 'patch'
   language?: string
+  source?: 'agent' | 'chat'
 }
 
 type Props = {

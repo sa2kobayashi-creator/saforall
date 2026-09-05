@@ -124,6 +124,16 @@
   border-color: #8a6a2a;
 }
 
+.composer-source {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #8fd4ff;
+  border: 1px solid #2a5a7a;
+  border-radius: 4px;
+  padding: 0 4px;
+  line-height: 16px;
+}
+
 .composer-item.is-conflict {
   border-color: #8a6a2a;
   background: #2a2418;

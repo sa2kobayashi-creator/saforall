@@ -36,12 +36,24 @@ export function findReplaceableBlock(
   return { start, end }
 }
 
-export function planAppliedContent(existing: string, code: string): AppliedContentPlan {
+export function planAppliedContent(
+  existing: string,
+  code: string,
+  options?: { preferReplace?: boolean }
+): AppliedContentPlan {
   if (!existing.trim()) {
     return {
       original: existing,
       modified: code.endsWith('\n') ? code : `${code}\n`,
       mode: 'create'
+    }
+  }
+
+  if (options?.preferReplace) {
+    return {
+      original: existing,
+      modified: code.endsWith('\n') ? code : `${code}\n`,
+      mode: 'replace'
     }
   }
 

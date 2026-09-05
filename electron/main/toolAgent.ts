@@ -9,6 +9,8 @@ import {
   toolSearch,
   withMaterializedEdits
 } from './workspaceTools'
+import { mkdir, writeFile } from 'fs/promises'
+import { join } from 'path'
 
 type ProviderMessage =
   | { role: 'system' | 'user' | 'assistant'; content: string | null; tool_calls?: ToolCall[] }
@@ -366,7 +368,7 @@ async function runTool(
   readCache: Map<string, string>,
   editSummaries: Map<string, string>,
   pendingEdits: Map<string, string>,
-  shellState: { attempts: number; passed: boolean; lastExit: number | null }
+  shellState: { attempts: number; passed: boolean; lastExit: number | null; editRecoveries: number }
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
   const repaired = repairToolArguments(argsJson)
   let args: Record<string, unknown> = {}
@@ -592,6 +594,24 @@ async function runTool(
           ? `timeout: ${command}`
           : `exit ${result.exitCode ?? '?'} · ${command}`
       })
+      if (!result.ok && shellState.editRecoveries < 3) {
+        shellState.editRecoveries += 1
+        onEvent({
+          type: 'agent_phase',
+          phase: 'edit',
+          note: `verify 失敗 → edit へ自動復帰 (${shellState.editRecoveries}/3)`
+        })
+        return {
+          content: JSON.stringify({
+            ...payload,
+            autoRecoveredPhase: 'edit',
+            recoveries: shellState.editRecoveries,
+            failureHint: [result.stderr, result.stdout].filter(Boolean).join('\n').slice(0, 1500)
+          }),
+          ok: false,
+          nextPhase: 'edit'
+        }
+      }
       return { content: JSON.stringify(payload), ok: result.ok }
     }
 
@@ -784,7 +804,12 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   const editSummaries = new Map<string, string>()
   const pendingEdits = new Map<string, string>()
   const readCache = new Map<string, string>()
-  const shellState = { attempts: 0, passed: false, lastExit: null as number | null }
+  const shellState = {
+    attempts: 0,
+    passed: false,
+    lastExit: null as number | null,
+    editRecoveries: 0
+  }
   let lastShellFailure = ''
   let exploreReads = 0
   let verifyNudgeCount = 0
@@ -1010,6 +1035,34 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           role: 'user',
           content: `システムチェックポイント: ${summary}。必要なら続行、十分なら最終回答へ。`
         })
+        try {
+          const dir = join(workspacePath, '.saforall')
+          await mkdir(dir, { recursive: true })
+          await writeFile(
+            join(dir, 'agent-state.json'),
+            JSON.stringify(
+              {
+                updatedAt: new Date().toISOString(),
+                step: step + 1,
+                phase,
+                editedPaths: Array.from(editedPaths).slice(0, 40),
+                shell: {
+                  attempts: shellState.attempts,
+                  passed: shellState.passed,
+                  lastExit: shellState.lastExit,
+                  editRecoveries: shellState.editRecoveries
+                },
+                summary,
+                lastShellFailure: lastShellFailure?.slice(0, 2000) ?? null
+              },
+              null,
+              2
+            ),
+            'utf-8'
+          )
+        } catch {
+          // ignore checkpoint write failures
+        }
       }
 
       if (phase === 'explore' && exploreReads >= 10) {
@@ -1090,13 +1143,15 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         !shellState.passed &&
         shellState.attempts >= 1 &&
         phase !== 'edit' &&
-        recoverNudgeCount < 2
+        recoverNudgeCount < 2 &&
+        shellState.editRecoveries === 0
       ) {
         recoverNudgeCount += 1
         messages.push({
           role: 'user',
           content:
-            'システム: シェル検証失敗からのリカバリです。set_phase edit で失敗箇所を修正し、verify で run_shell を再実行してください。'
+            'システム: シェル検証失敗からのリカバリです。set_phase edit で失敗箇所を修正し、verify で run_shell を再実行してください。\n--- failure ---\n' +
+            lastShellFailure
         })
       }
 

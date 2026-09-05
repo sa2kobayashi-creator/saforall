@@ -88,7 +88,7 @@ export function ComposerPanel({
             (path) => path.toLowerCase() === row.targetPath.toLowerCase()
           )
           return (
-            <li key={`${row.targetPath}-${index}`}>
+            <li key={row.targetPath}>
               <button
                 type="button"
                 className={`composer-item${index === activeIndex ? ' is-active' : ''}${
@@ -104,6 +104,7 @@ export function ComposerPanel({
                 <span className={`composer-mode composer-mode--${row.mode}`}>
                   {modeLabel(row.mode)}
                 </span>
+                {row.source === 'agent' && <span className="composer-source">Agent</span>}
                 <span className="composer-name">
                   {conflict ? '! ' : ''}
                   {name}

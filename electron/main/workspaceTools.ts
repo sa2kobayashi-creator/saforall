@@ -108,26 +108,76 @@ export async function toolSearch(workspaceRoot: string, query: string, globHint?
 }
 
 export async function loadProjectRules(workspaceRoot: string): Promise<string | null> {
+  const maxTotal = 12_000
+  const parts: string[] = []
+  let used = 0
+
+  const readBounded = async (absolute: string, budget: number): Promise<string | null> => {
+    try {
+      const content = await readFile(absolute, 'utf-8')
+      if (!content.trim()) return null
+      return content.length > budget ? `${content.slice(0, budget)}\n\n... (truncated)` : content
+    } catch {
+      return null
+    }
+  }
+
   const candidates = [
     '.saforall/rules',
     '.saforall/rules.md',
     'SAFORALL.md',
     'AGENTS.md',
-    '.cursorrules'
+    '.cursorrules',
+    '.cursor/rules.md'
   ]
   for (const rel of candidates) {
+    if (used >= maxTotal) break
     try {
       const absolute = resolveWorkspacePath(workspaceRoot, rel)
-      const content = await readFile(absolute, 'utf-8')
-      if (content.trim()) {
-        const max = 12_000
-        return content.length > max ? content.slice(0, max) + '\n\n... (truncated)' : content
-      }
+      const content = await readBounded(absolute, maxTotal - used)
+      if (!content) continue
+      parts.push(`### ${rel}\n${content}`)
+      used += content.length
     } catch {
       // try next
     }
   }
-  return null
+
+  try {
+    const rulesDir = resolveWorkspacePath(workspaceRoot, '.cursor/rules')
+    const entries = await readdir(rulesDir, { withFileTypes: true })
+    const files = entries
+      .filter((row) => row.isFile() && /\.(mdc|md|txt)$/i.test(row.name))
+      .map((row) => row.name)
+      .sort((a, b) => a.localeCompare(b))
+    for (const name of files) {
+      if (used >= maxTotal) break
+      const content = await readBounded(join(rulesDir, name), Math.min(6_000, maxTotal - used))
+      if (!content) continue
+      parts.push(`### .cursor/rules/${name}\n${content}`)
+      used += content.length
+    }
+  } catch {
+    // no .cursor/rules
+  }
+
+  for (const rel of ['.saforall/memories.md', '.saforall/memories']) {
+    if (used >= maxTotal) break
+    try {
+      const absolute = resolveWorkspacePath(workspaceRoot, rel)
+      const content = await readBounded(absolute, Math.min(4_000, maxTotal - used))
+      if (!content) continue
+      parts.push(`### memories\n${content}`)
+      used += content.length
+      break
+    } catch {
+      // try next
+    }
+  }
+
+  if (parts.length === 0) return null
+  const merged = parts.join('\n\n')
+  return merged.length > maxTotal ? `${merged.slice(0, maxTotal)}\n\n... (truncated)` : merged
 }
 
 export async function searchFilesByName(

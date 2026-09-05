@@ -23,7 +23,7 @@ import {
   resizeTerminal,
   writeTerminal
 } from './terminal'
-import { loadProjectRules, searchFilesByName } from './workspaceTools'
+import { loadProjectRules, searchFilesByName, toolSearch } from './workspaceTools'
 import { loadWorkspaceExtensions } from './extensions'
 import { type DebugBreakpoint, type DebugSession } from './debugSession'
 import {
@@ -40,7 +40,14 @@ import {
 } from './workspaceIndex'
 import { listWorkspaceMcpTools, mcpManager } from './mcpClient'
 import { lspManager, type LspDiagnostic } from './lspClient'
-import { listBackgroundJobs } from './backgroundJobs'
+import {
+  cancelBackgroundJob,
+  completeBackgroundJob,
+  enqueueBackgroundJob,
+  listBackgroundJobs,
+  markBackgroundJobRunning,
+  onBackgroundJobChange
+} from './backgroundJobs'
 import { searchOpenVsx } from './marketplace'
 import { readTextFile } from './textEncoding'
 
@@ -145,6 +152,10 @@ ipcMain.handle('fs:stat', async (_event, filePath: string) => {
 
 ipcMain.handle('fs:searchFiles', async (_event, cwd: string, query: string) => {
   return searchFilesByName(cwd, query, 50)
+})
+
+ipcMain.handle('fs:searchCode', async (_event, cwd: string, query: string) => {
+  return toolSearch(cwd, query)
 })
 
 ipcMain.handle('fs:searchSymbols', async (_event, cwd: string, query: string) => {
@@ -449,6 +460,45 @@ lspManager.setDiagnosticsHandler((items: LspDiagnostic[]) => {
 ipcMain.handle('marketplace:search', async (_event, query: string) => searchOpenVsx(query))
 
 ipcMain.handle('jobs:list', async () => listBackgroundJobs())
+
+ipcMain.handle(
+  'jobs:enqueue',
+  async (
+    _event,
+    params: { kind?: 'agent' | 'bugbot'; title: string; prompt: string; cwd?: string | null }
+  ) => {
+    const job = enqueueBackgroundJob({
+      kind: params.kind === 'bugbot' ? 'bugbot' : 'agent',
+      title: params.title,
+      prompt: params.prompt,
+      cwd: params.cwd ?? null
+    })
+    markBackgroundJobRunning(job.id)
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('jobs:run', {
+        id: job.id,
+        kind: job.kind,
+        title: job.title,
+        prompt: job.prompt,
+        cwd: job.cwd
+      })
+    }
+    // Chat-driven jobs complete when the renderer acknowledges start.
+    completeBackgroundJob(job.id, {
+      ok: true,
+      summary: 'チャットで開始しました（Composer で差分を確認）'
+    })
+    return job
+  }
+)
+
+ipcMain.handle('jobs:cancel', async (_event, id: string) => cancelBackgroundJob(id))
+
+onBackgroundJobChange((job) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('jobs:updated', job)
+  }
+})
 
 ipcMain.handle(
   'bugbot:prepare',
