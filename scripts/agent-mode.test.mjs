@@ -71,6 +71,9 @@ test('normalizeToolCalls skips sparse / flat / missing function', async () => {
   assert.match(src, /export function normalizeToolCalls/)
   assert.match(src, /const toolCalls = normalizeToolCalls\(message\.tool_calls\)/)
   assert.match(src, /!next\?\.function\?\.name/)
+  assert.match(src, /export function parseRetryAfterMs/)
+  assert.match(src, /response\.status === 429/)
+  assert.match(src, /分間トークン上限/)
 })
 
 test('ChatService asks model to tolerate typos', async () => {

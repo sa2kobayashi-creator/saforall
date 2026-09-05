@@ -826,10 +826,29 @@ function formatLlmHttpError(status: number, bodyText: string): string {
       json.message ||
       raw
     const code = json.error?.code || json.error?.type
-    return code ? `LLM HTTP ${status}: ${msg} (${code})` : `LLM HTTP ${status}: ${msg}`
+    let text = code ? `LLM HTTP ${status}: ${msg} (${code})` : `LLM HTTP ${status}: ${msg}`
+    if (status === 429 || /rate[_ ]?limit/i.test(text)) {
+      text +=
+        '。OpenAI の分間トークン上限です。数秒待って再試行するか、しばらく空けてから送ってください。' +
+        ' Auto なら Gemini / Claude へ切り替えるのも有効です。'
+    }
+    return text
   } catch {
     return `LLM HTTP ${status}: ${raw.slice(0, 600)}`
   }
+}
+
+/** Parse "try again in 607ms" / "1.2s" from provider messages. */
+export function parseRetryAfterMs(message: string, attempt: number): number {
+  const ms = message.match(/try again in\s+(\d+(?:\.\d+)?)\s*ms/i)
+  if (ms) return Math.max(400, Math.ceil(Number(ms[1])) + 200)
+  const sec = message.match(/try again in\s+(\d+(?:\.\d+)?)\s*s/i)
+  if (sec) return Math.max(400, Math.ceil(Number(sec[1]) * 1000) + 200)
+  return Math.min(8_000, 700 * (attempt + 1))
+}
+
+function isRateLimitError(message: string): boolean {
+  return /LLM HTTP 429|rate[_ ]?limit|tokens per min|TPM/i.test(message)
 }
 
 async function callChatCompletions(params: {
@@ -853,7 +872,7 @@ async function callChatCompletions(params: {
 
   const timeoutMs = params.timeoutMs ?? 45_000
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     const body: Record<string, unknown> = {
       model: params.model,
       messages: normalizeMessagesForLlm(params.messages)
@@ -889,6 +908,11 @@ async function callChatCompletions(params: {
       if (!response.ok) {
         const err = new Error(formatLlmHttpError(response.status, bodyText))
         const lower = err.message.toLowerCase()
+        if (response.status === 429 && attempt < 5) {
+          lastError = err
+          await sleep(parseRetryAfterMs(err.message, attempt))
+          continue
+        }
         // Retry ladder for common 400s
         if (response.status === 400) {
           if (toolChoice === 'required') {
@@ -915,6 +939,10 @@ async function callChatCompletions(params: {
       return json
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
+      if (attempt < 5 && isRateLimitError(lastError.message)) {
+        await sleep(parseRetryAfterMs(lastError.message, attempt))
+        continue
+      }
       if (attempt < 3 && /LLM HTTP 400/i.test(lastError.message) && toolChoice === 'required') {
         toolChoice = 'auto'
         continue

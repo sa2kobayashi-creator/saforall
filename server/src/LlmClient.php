@@ -190,45 +190,71 @@ final class LlmClient
             throw new RuntimeException('リクエスト JSON の生成に失敗しました');
         }
 
-        $ch = curl_init($url);
-        if ($ch === false) {
-            throw new RuntimeException('curl の初期化に失敗しました');
-        }
+        $lastError = null;
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $ch = curl_init($url);
+            if ($ch === false) {
+                throw new RuntimeException('curl の初期化に失敗しました');
+            }
 
-        $headers = array_merge(
-            [
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . $apiKey,
-            ],
-            $extraHeaders
-        );
-
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 90,
-            CURLOPT_CONNECTTIMEOUT => 10,
-        ] + self::sslOptions());
-
-        $raw = curl_exec($ch);
-        $errno = curl_errno($ch);
-        $error = curl_error($ch);
-        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($raw === false || $errno !== 0) {
-            throw new RuntimeException('LLM API 通信エラー: ' . ($error !== '' ? $error : 'unknown'));
-        }
-
-        if ($status < 200 || $status >= 300) {
-            throw new RuntimeException(
-                self::formatHttpError($status, $model, $url, is_string($raw) ? $raw : '')
+            $headers = array_merge(
+                [
+                    'Content-Type: application/json',
+                    'Authorization: Bearer ' . $apiKey,
+                ],
+                $extraHeaders
             );
+
+            curl_setopt_array($ch, [
+                CURLOPT_POST => true,
+                CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_POSTFIELDS => $payload,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 90,
+                CURLOPT_CONNECTTIMEOUT => 10,
+            ] + self::sslOptions());
+
+            $raw = curl_exec($ch);
+            $errno = curl_errno($ch);
+            $error = curl_error($ch);
+            $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($raw === false || $errno !== 0) {
+                $lastError = new RuntimeException(
+                    'LLM API 通信エラー: ' . ($error !== '' ? $error : 'unknown')
+                );
+                usleep(400_000 * ($attempt + 1));
+                continue;
+            }
+
+            if ($status === 429 && $attempt < 4) {
+                $waitMs = self::retryAfterMs(is_string($raw) ? $raw : '', $attempt);
+                usleep($waitMs * 1000);
+                continue;
+            }
+
+            if ($status < 200 || $status >= 300) {
+                throw new RuntimeException(
+                    self::formatHttpError($status, $model, $url, is_string($raw) ? $raw : '')
+                );
+            }
+
+            return $raw;
         }
 
-        return $raw;
+        throw $lastError ?? new RuntimeException('LLM API リクエストに失敗しました');
+    }
+
+    private static function retryAfterMs(string $rawBody, int $attempt): int
+    {
+        if (preg_match('/try again in\s+(\d+(?:\.\d+)?)\s*ms/i', $rawBody, $m) === 1) {
+            return max(400, (int) ceil((float) $m[1]) + 200);
+        }
+        if (preg_match('/try again in\s+(\d+(?:\.\d+)?)\s*s/i', $rawBody, $m) === 1) {
+            return max(400, (int) ceil(((float) $m[1]) * 1000) + 200);
+        }
+        return min(8000, 700 * ($attempt + 1));
     }
 
     private static function endpointHost(string $url): string
@@ -275,6 +301,10 @@ final class LlmClient
             } else {
                 $message .= '。Base URL（' . $host . '）とそのホスト向けのモデル ID が一致しているか確認してください。';
             }
+        }
+
+        if ($status === 429) {
+            $message .= '。API のレート制限です。数秒待って再送するか、Auto で Gemini / Claude を使うと回避しやすいです。';
         }
 
         return $message;
