@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { access } from 'fs/promises'
+import { access, readFile } from 'fs/promises'
 import { join } from 'path'
 
 export type GitFileStatus = {
@@ -366,4 +366,124 @@ export async function getGitDiff(
     ok: true,
     stdout: text.length > max ? `${text.slice(0, max)}\n... (truncated)` : text
   }
+}
+
+async function gitShowText(cwd: string, spec: string): Promise<string | null> {
+  const result = await runGit(['show', spec], cwd, 20_000)
+  if (result.code !== 0) return null
+  return result.stdout
+}
+
+/** Left/right sides for Monaco DiffEditor (HEAD/index vs working tree or staged). */
+export async function getGitFileSides(
+  cwd: string,
+  relativePath: string,
+  options?: { staged?: boolean }
+): Promise<{
+  ok: boolean
+  path: string
+  original: string
+  modified: string
+  error?: string
+}> {
+  const guard = await ensureRepo(cwd)
+  if (guard) {
+    return {
+      ok: false,
+      path: relativePath,
+      original: '',
+      modified: '',
+      error: guard.error
+    }
+  }
+  const rel = relativePath.replace(/\\/g, '/').replace(/^\.\//, '')
+  const head = await gitShowText(cwd, `HEAD:${rel}`)
+
+  if (options?.staged) {
+    const index = (await gitShowText(cwd, `:${rel}`)) ?? (await gitShowText(cwd, `:0:${rel}`))
+    return {
+      ok: true,
+      path: rel,
+      original: head ?? '',
+      modified: index ?? ''
+    }
+  }
+
+  const absolute = join(cwd, ...rel.split('/'))
+  let work = ''
+  try {
+    work = await readFile(absolute, 'utf-8')
+  } catch {
+    work = ''
+  }
+  return {
+    ok: true,
+    path: rel,
+    original: head ?? '',
+    modified: work
+  }
+}
+
+export type GitBlameLine = {
+  line: number
+  commit: string
+  author: string
+  summary: string
+  time?: number
+}
+
+/** Parse `git blame --line-porcelain` output into per-line annotations. */
+export function parseGitBlamePorcelain(raw: string): GitBlameLine[] {
+  const lines = raw.split(/\r?\n/)
+  const out: GitBlameLine[] = []
+  let commit = ''
+  let author = ''
+  let summary = ''
+  let time: number | undefined
+  let lineNo = 0
+  for (const row of lines) {
+    const header = row.match(/^([0-9a-f]{7,40})\s+(\d+)\s+(\d+)(?:\s+(\d+))?$/i)
+    if (header) {
+      commit = header[1]
+      lineNo = Number(header[3])
+      continue
+    }
+    if (row.startsWith('author ')) {
+      author = row.slice(7)
+      continue
+    }
+    if (row.startsWith('author-time ')) {
+      time = Number(row.slice(12)) || undefined
+      continue
+    }
+    if (row.startsWith('summary ')) {
+      summary = row.slice(8)
+      continue
+    }
+    if (row.startsWith('\t') && lineNo > 0) {
+      out.push({
+        line: lineNo,
+        commit: commit.slice(0, 8),
+        author: author || 'unknown',
+        summary: summary || '',
+        time
+      })
+      lineNo = 0
+    }
+  }
+  return out
+}
+
+export async function getGitBlame(
+  cwd: string,
+  relativePath: string
+): Promise<{ ok: boolean; lines: GitBlameLine[]; error?: string }> {
+  const guard = await ensureRepo(cwd)
+  if (guard) return { ok: false, lines: [], error: guard.error }
+  const rel = relativePath.replace(/\\/g, '/').replace(/^\.\//, '')
+  const result = await runGit(['blame', '--line-porcelain', '--', rel], cwd, 30_000)
+  if (result.code !== 0) {
+    return { ok: false, lines: [], error: result.stderr || 'git blame failed' }
+  }
+  return { ok: true, lines: parseGitBlamePorcelain(result.stdout) }
 }

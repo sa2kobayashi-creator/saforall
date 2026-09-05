@@ -40,6 +40,35 @@
   padding-right: 8px;
 }
 
+.editor-extra-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.editor-extra-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.editor-extra-actions button.active,
+.editor-extra-actions button:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+:global(.saforall-blame-gutter),
+.saforall-blame-gutter {
+  background: rgba(122, 162, 247, 0.25);
+  width: 4px !important;
+  margin-left: 3px;
+}
+
 .editor-tab-list {
   display: flex;
   align-items: stretch;

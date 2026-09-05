@@ -112,6 +112,114 @@ export async function toolSearch(
   return hits.length > 0 ? hits.join('\n') : '一致なし'
 }
 
+export type ReplaceInFilesResult = {
+  ok: boolean
+  dryRun: boolean
+  query: string
+  replacement: string
+  filesChanged: number
+  replacements: number
+  files: Array<{ path: string; count: number }>
+  error?: string
+}
+
+/** Workspace-wide literal replace (case-insensitive search, preserves match casing via exact substring). */
+export async function replaceInWorkspace(
+  workspaceRoot: string,
+  query: string,
+  replacement: string,
+  options?: { dryRun?: boolean; maxFiles?: number; caseSensitive?: boolean }
+): Promise<ReplaceInFilesResult> {
+  const needle = query
+  if (needle.length < 2) {
+    return {
+      ok: false,
+      dryRun: Boolean(options?.dryRun),
+      query,
+      replacement,
+      filesChanged: 0,
+      replacements: 0,
+      files: [],
+      error: '検索語は 2 文字以上にしてください'
+    }
+  }
+  const dryRun = Boolean(options?.dryRun)
+  const maxFiles = options?.maxFiles ?? 80
+  const caseSensitive = Boolean(options?.caseSensitive)
+  const root = resolve(workspaceRoot)
+  const files: Array<{ path: string; count: number }> = []
+  let replacements = 0
+  let filesChanged = 0
+
+  async function walk(dir: string, depth: number): Promise<void> {
+    if (filesChanged >= maxFiles || depth > 8) return
+    let entries
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (filesChanged >= maxFiles) break
+      if (entry.name.startsWith('.')) continue
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue
+        await walk(full, depth + 1)
+        continue
+      }
+      const st = await stat(full).catch(() => null)
+      if (!st || !st.isFile() || st.size > 400_000) continue
+      let text = ''
+      try {
+        text = await readFile(full, 'utf-8')
+      } catch {
+        continue
+      }
+      if (caseSensitive) {
+        if (!text.includes(needle)) continue
+      } else if (!text.toLowerCase().includes(needle.toLowerCase())) {
+        continue
+      }
+
+      let count = 0
+      let next = text
+      if (caseSensitive) {
+        const parts = text.split(needle)
+        count = parts.length - 1
+        if (count <= 0) continue
+        next = parts.join(replacement)
+      } else {
+        const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const re = new RegExp(escaped, 'gi')
+        next = text.replace(re, () => {
+          count += 1
+          return replacement
+        })
+      }
+      if (count <= 0) continue
+      const rel = relative(root, full).split(/[/\\]/).join('/')
+      files.push({ path: rel, count })
+      replacements += count
+      filesChanged += 1
+      if (!dryRun) {
+        await writeFile(full, next, 'utf-8')
+      }
+    }
+  }
+
+  await walk(root, 0)
+  return {
+    ok: true,
+    dryRun,
+    query,
+    replacement,
+    filesChanged,
+    replacements,
+    files
+  }
+}
+
 export async function loadProjectRules(workspaceRoot: string): Promise<string | null> {
   const maxTotal = 12_000
   const parts: string[] = []

@@ -5,6 +5,7 @@ import {
   removeRecentWorkspace,
   type RecentWorkspace
 } from '../lib/recentWorkspaces'
+import { formatXamppHealthUrl } from '../lib/backendGuide'
 import { useI18n } from '../i18n'
 import './WelcomeScreen.css'
 
@@ -67,12 +68,10 @@ export function WelcomeScreen({
                 <strong>Apache</strong> と <strong>MySQL</strong> を Start
               </li>
               <li>
-                確認 URL:{' '}
-                <code>
-                  {(backendBaseUrl || 'http://localhost:8081/saforall/api').replace(/\/$/, '')}
-                  /health
-                </code>
+                ブラウザで確認:{' '}
+                <code>{formatXamppHealthUrl(backendBaseUrl)}</code>
               </li>
+              <li>この画面の「再確認」でステータスを更新</li>
             </ol>
             <p className="welcome-xampp-note">
               既定は <code>http://localhost:8081/saforall/api</code> です。ポートが違う場合は環境変数{' '}

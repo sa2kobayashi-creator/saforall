@@ -1,0 +1,88 @@
+.outline-panel {
+  padding: 8px 10px;
+  overflow: auto;
+  max-height: 220px;
+  border-top: 1px solid #333;
+  background: #1e1e1e;
+}
+
+.outline-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9d9d9d;
+  margin-bottom: 6px;
+}
+
+.outline-empty {
+  padding: 8px 10px;
+  color: #888;
+  font-size: 12px;
+  border-top: 1px solid #333;
+}
+
+.outline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.outline-item {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: #ddd;
+  font-size: 12px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.outline-item:hover {
+  background: #2a2d2e;
+}
+
+.outline-kind {
+  color: #7aa2f7;
+  min-width: 42px;
+  font-size: 10px;
+}
+
+.outline-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #bbb;
+  background: #252526;
+  border-bottom: 1px solid #333;
+}
+
+.editor-breadcrumb button {
+  background: transparent;
+  border: 0;
+  color: #9cdcfe;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.editor-breadcrumb button:hover {
+  text-decoration: underline;
+}
+
+.editor-breadcrumb-sep {
+  color: #666;
+  margin: 0 2px;
+}

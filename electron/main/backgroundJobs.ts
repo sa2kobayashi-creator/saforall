@@ -1,3 +1,6 @@
+import { mkdir, writeFile, readFile } from 'fs/promises'
+import { dirname } from 'path'
+
 export type BackgroundJobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
 
 export type BackgroundJob = {
@@ -50,11 +53,76 @@ export function applyJobTransition(
   }
 }
 
+/** Mark in-flight jobs as cancelled for disk restore after restart. */
+export function normalizeJobsAfterLoad(
+  jobsList: BackgroundJob[],
+  now = Date.now()
+): BackgroundJob[] {
+  return jobsList.map((job) => {
+    if (job.status !== 'queued' && job.status !== 'running') return job
+    return {
+      ...job,
+      status: 'cancelled' as const,
+      finishedAt: job.finishedAt ?? now,
+      summary: job.summary || 'interrupted (app restart)'
+    }
+  })
+}
+
+export function serializeJobsForPersist(jobsList: BackgroundJob[], now = Date.now()): string {
+  return JSON.stringify({ version: 1, savedAt: now, jobs: jobsList }, null, 2)
+}
+
 const jobs = new Map<string, BackgroundJob>()
 const MAX_JOBS = 40
 
 type JobListener = (job: BackgroundJob) => void
 const listeners = new Set<JobListener>()
+
+let persistPath: string | null = null
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+
+export function configureJobsPersistence(filePath: string): void {
+  persistPath = filePath
+}
+
+function schedulePersist(): void {
+  if (!persistPath) return
+  if (persistTimer) clearTimeout(persistTimer)
+  persistTimer = setTimeout(() => {
+    void flushJobsPersist()
+  }, 200)
+}
+
+export async function flushJobsPersist(): Promise<void> {
+  if (!persistPath) return
+  const path = persistPath
+  try {
+    await mkdir(dirname(path), { recursive: true })
+    const payload = serializeJobsForPersist(listBackgroundJobs())
+    await writeFile(path, payload, 'utf-8')
+  } catch {
+    // ignore disk errors
+  }
+}
+
+export async function loadPersistedJobs(): Promise<number> {
+  if (!persistPath) return 0
+  try {
+    const raw = await readFile(persistPath, 'utf-8')
+    const parsed = JSON.parse(raw) as { jobs?: BackgroundJob[] }
+    const rows = Array.isArray(parsed.jobs) ? parsed.jobs : []
+    jobs.clear()
+    for (const job of normalizeJobsAfterLoad(rows)) {
+      if (!job?.id) continue
+      jobs.set(job.id, job)
+    }
+    prune()
+    return jobs.size
+  } catch {
+    return 0
+  }
+}
 
 export function onBackgroundJobChange(listener: JobListener): () => void {
   listeners.add(listener)
@@ -71,6 +139,7 @@ function emit(job: BackgroundJob): void {
       // ignore
     }
   }
+  schedulePersist()
 }
 
 function prune(): void {

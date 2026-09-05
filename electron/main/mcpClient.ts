@@ -22,6 +22,62 @@ export type McpToolInfo = {
   inputSchema?: Record<string, unknown>
 }
 
+export type McpResourceInfo = {
+  uri: string
+  name?: string
+  description?: string
+  mimeType?: string
+  serverId: string
+}
+
+export type McpPromptInfo = {
+  name: string
+  description?: string
+  serverId: string
+}
+
+export function parseMcpResourceRows(
+  serverId: string,
+  result: { resources?: unknown } | null | undefined
+): McpResourceInfo[] {
+  const rows = Array.isArray(result?.resources) ? result!.resources! : []
+  const out: McpResourceInfo[] = []
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    const rec = row as Record<string, unknown>
+    const uri = typeof rec.uri === 'string' ? rec.uri : ''
+    if (!uri) continue
+    out.push({
+      uri,
+      name: typeof rec.name === 'string' ? rec.name : undefined,
+      description: typeof rec.description === 'string' ? rec.description : undefined,
+      mimeType: typeof rec.mimeType === 'string' ? rec.mimeType : undefined,
+      serverId
+    })
+  }
+  return out
+}
+
+export function parseMcpPromptRows(
+  serverId: string,
+  result: { prompts?: unknown } | null | undefined
+): McpPromptInfo[] {
+  const rows = Array.isArray(result?.prompts) ? result!.prompts! : []
+  const out: McpPromptInfo[] = []
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    const rec = row as Record<string, unknown>
+    const name = typeof rec.name === 'string' ? rec.name : ''
+    if (!name) continue
+    out.push({
+      name,
+      description: typeof rec.description === 'string' ? rec.description : undefined,
+      serverId
+    })
+  }
+  return out
+}
+
 type McpJson = {
   servers?: Array<{
     id?: string
@@ -289,6 +345,8 @@ export class McpSession {
   private nextId = 1
   private waiters = new Map<number, Waiter>()
   private tools: McpToolInfo[] = []
+  private resources: McpResourceInfo[] = []
+  private prompts: McpPromptInfo[] = []
   private ready = false
   private stderrTail = ''
 
@@ -301,6 +359,14 @@ export class McpSession {
 
   get listedTools(): McpToolInfo[] {
     return this.tools
+  }
+
+  get listedResources(): McpResourceInfo[] {
+    return this.resources
+  }
+
+  get listedPrompts(): McpPromptInfo[] {
+    return this.prompts
   }
 
   get isAlive(): boolean {
@@ -409,6 +475,61 @@ export class McpSession {
       }
     }
     this.ready = true
+    await this.refreshExtras(timeoutMs)
+  }
+
+  private async refreshExtras(timeoutMs: number): Promise<void> {
+    try {
+      const listed = await this.request('resources/list', {}, Math.min(timeoutMs, 20_000))
+      this.resources = parseMcpResourceRows(
+        this.server.id,
+        listed.result as { resources?: unknown } | undefined
+      )
+    } catch {
+      this.resources = []
+    }
+    try {
+      const listed = await this.request('prompts/list', {}, Math.min(timeoutMs, 20_000))
+      this.prompts = parseMcpPromptRows(
+        this.server.id,
+        listed.result as { prompts?: unknown } | undefined
+      )
+    } catch {
+      this.prompts = []
+    }
+  }
+
+  async readResource(
+    uri: string,
+    timeoutMs = 30_000
+  ): Promise<{ ok: boolean; content: string }> {
+    if (!this.ready) throw new Error('MCP session not ready')
+    const response = await this.request('resources/read', { uri }, timeoutMs)
+    if (response.error) {
+      return {
+        ok: false,
+        content: String((response.error as { message?: string }).message ?? 'resource read failed')
+      }
+    }
+    const contents = (response.result as { contents?: unknown } | undefined)?.contents
+    return { ok: true, content: formatMcpContent(contents).slice(0, 24_000) }
+  }
+
+  async getPrompt(
+    name: string,
+    args: Record<string, string> = {},
+    timeoutMs = 30_000
+  ): Promise<{ ok: boolean; content: string }> {
+    if (!this.ready) throw new Error('MCP session not ready')
+    const response = await this.request('prompts/get', { name, arguments: args }, timeoutMs)
+    if (response.error) {
+      return {
+        ok: false,
+        content: String((response.error as { message?: string }).message ?? 'prompt get failed')
+      }
+    }
+    const messages = (response.result as { messages?: unknown } | undefined)?.messages
+    return { ok: true, content: formatMcpContent(messages).slice(0, 24_000) }
   }
 
   async callTool(
@@ -587,6 +708,8 @@ export class McpHttpSession {
   readonly server: McpServerConfig
   private nextId = 1
   private tools: McpToolInfo[] = []
+  private resources: McpResourceInfo[] = []
+  private prompts: McpPromptInfo[] = []
   private ready = false
   private sessionId: string | null = null
 
@@ -597,6 +720,14 @@ export class McpHttpSession {
 
   get listedTools(): McpToolInfo[] {
     return this.tools
+  }
+
+  get listedResources(): McpResourceInfo[] {
+    return this.resources
+  }
+
+  get listedPrompts(): McpPromptInfo[] {
+    return this.prompts
   }
 
   get isAlive(): boolean {
@@ -637,6 +768,61 @@ export class McpHttpSession {
       }
     }
     this.ready = true
+    await this.refreshExtras(timeoutMs)
+  }
+
+  private async refreshExtras(timeoutMs: number): Promise<void> {
+    try {
+      const listed = await this.request('resources/list', {}, Math.min(timeoutMs, 20_000))
+      this.resources = parseMcpResourceRows(
+        this.server.id,
+        listed.result as { resources?: unknown } | undefined
+      )
+    } catch {
+      this.resources = []
+    }
+    try {
+      const listed = await this.request('prompts/list', {}, Math.min(timeoutMs, 20_000))
+      this.prompts = parseMcpPromptRows(
+        this.server.id,
+        listed.result as { prompts?: unknown } | undefined
+      )
+    } catch {
+      this.prompts = []
+    }
+  }
+
+  async readResource(
+    uri: string,
+    timeoutMs = 30_000
+  ): Promise<{ ok: boolean; content: string }> {
+    if (!this.ready) throw new Error('MCP HTTP session not ready')
+    const response = await this.request('resources/read', { uri }, timeoutMs)
+    if (response.error) {
+      return {
+        ok: false,
+        content: String((response.error as { message?: string }).message ?? 'resource read failed')
+      }
+    }
+    const contents = (response.result as { contents?: unknown } | undefined)?.contents
+    return { ok: true, content: formatMcpContent(contents).slice(0, 24_000) }
+  }
+
+  async getPrompt(
+    name: string,
+    args: Record<string, string> = {},
+    timeoutMs = 30_000
+  ): Promise<{ ok: boolean; content: string }> {
+    if (!this.ready) throw new Error('MCP HTTP session not ready')
+    const response = await this.request('prompts/get', { name, arguments: args }, timeoutMs)
+    if (response.error) {
+      return {
+        ok: false,
+        content: String((response.error as { message?: string }).message ?? 'prompt get failed')
+      }
+    }
+    const messages = (response.result as { messages?: unknown } | undefined)?.messages
+    return { ok: true, content: formatMcpContent(messages).slice(0, 24_000) }
   }
 
   async callTool(
@@ -666,6 +852,8 @@ export class McpHttpSession {
     this.ready = false
     this.sessionId = null
     this.tools = []
+    this.resources = []
+    this.prompts = []
   }
 
   private async notify(method: string, params: Record<string, unknown>): Promise<void> {
@@ -742,19 +930,38 @@ export class McpManager {
   async listWorkspaceTools(workspaceRoot: string): Promise<{
     servers: McpServerConfig[]
     tools: McpToolInfo[]
-    statuses: Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }>
+    resources: McpResourceInfo[]
+    prompts: McpPromptInfo[]
+    statuses: Array<{
+      serverId: string
+      ok: boolean
+      toolCount: number
+      resourceCount: number
+      promptCount: number
+      error?: string
+    }>
     summary: string
   }> {
     await this.ensureWorkspace(workspaceRoot)
     const servers = await loadMcpConfig(workspaceRoot)
     const tools: McpToolInfo[] = []
-    const statuses: Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }> =
-      []
+    const resources: McpResourceInfo[] = []
+    const prompts: McpPromptInfo[] = []
+    const statuses: Array<{
+      serverId: string
+      ok: boolean
+      toolCount: number
+      resourceCount: number
+      promptCount: number
+      error?: string
+    }> = []
 
     if (servers.length === 0) {
       return {
         servers,
         tools,
+        resources,
+        prompts,
         statuses,
         summary: 'mcp.json が見つからないか、サーバー定義が空です'
       }
@@ -765,16 +972,22 @@ export class McpManager {
         const session = await this.getOrStart(server, workspaceRoot)
         const listed = session.listedTools
         tools.push(...listed)
+        resources.push(...session.listedResources)
+        prompts.push(...session.listedPrompts)
         statuses.push({
           serverId: server.id,
           ok: true,
-          toolCount: listed.length
+          toolCount: listed.length,
+          resourceCount: session.listedResources.length,
+          promptCount: session.listedPrompts.length
         })
       } catch (error) {
         statuses.push({
           serverId: server.id,
           ok: false,
           toolCount: 0,
+          resourceCount: 0,
+          promptCount: 0,
           error: error instanceof Error ? error.message : String(error)
         })
       }
@@ -784,10 +997,91 @@ export class McpManager {
     const failCount = statuses.length - okCount
     const summary =
       failCount === 0
-        ? `読込完了: サーバー ${okCount} / ツール ${tools.length} 件`
-        : `読込完了（一部失敗）: 成功 ${okCount} · 失敗 ${failCount} · ツール ${tools.length} 件`
+        ? `読込完了: サーバー ${okCount} / ツール ${tools.length} · リソース ${resources.length} · プロンプト ${prompts.length}`
+        : `読込完了（一部失敗）: 成功 ${okCount} · 失敗 ${failCount} · ツール ${tools.length}`
 
-    return { servers, tools, statuses, summary }
+    return { servers, tools, resources, prompts, statuses, summary }
+  }
+
+  async readResource(
+    workspaceRoot: string,
+    params: { serverId?: string; uri: string; timeoutMs?: number }
+  ): Promise<{ ok: boolean; content: string; serverId?: string; error?: string }> {
+    await this.ensureWorkspace(workspaceRoot)
+    const servers = await loadMcpConfig(workspaceRoot)
+    let server = params.serverId ? servers.find((row) => row.id === params.serverId) : undefined
+    if (!server) {
+      for (const candidate of servers.slice(0, 6)) {
+        try {
+          const session = await this.getOrStart(candidate, workspaceRoot)
+          if (session.listedResources.some((row) => row.uri === params.uri)) {
+            server = candidate
+            break
+          }
+        } catch {
+          // continue
+        }
+      }
+    }
+    if (!server) server = servers[0]
+    if (!server) return { ok: false, content: '', error: 'MCP server not found' }
+    try {
+      const session = await this.getOrStart(server, workspaceRoot)
+      const result = await session.readResource(params.uri, params.timeoutMs ?? 30_000)
+      return { ...result, serverId: server.id, error: result.ok ? undefined : result.content }
+    } catch (error) {
+      return {
+        ok: false,
+        content: '',
+        serverId: server.id,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
+
+  async getPrompt(
+    workspaceRoot: string,
+    params: {
+      serverId?: string
+      name: string
+      arguments?: Record<string, string>
+      timeoutMs?: number
+    }
+  ): Promise<{ ok: boolean; content: string; serverId?: string; error?: string }> {
+    await this.ensureWorkspace(workspaceRoot)
+    const servers = await loadMcpConfig(workspaceRoot)
+    let server = params.serverId ? servers.find((row) => row.id === params.serverId) : undefined
+    if (!server) {
+      for (const candidate of servers.slice(0, 6)) {
+        try {
+          const session = await this.getOrStart(candidate, workspaceRoot)
+          if (session.listedPrompts.some((row) => row.name === params.name)) {
+            server = candidate
+            break
+          }
+        } catch {
+          // continue
+        }
+      }
+    }
+    if (!server) server = servers[0]
+    if (!server) return { ok: false, content: '', error: 'MCP server not found' }
+    try {
+      const session = await this.getOrStart(server, workspaceRoot)
+      const result = await session.getPrompt(
+        params.name,
+        params.arguments ?? {},
+        params.timeoutMs ?? 30_000
+      )
+      return { ...result, serverId: server.id, error: result.ok ? undefined : result.content }
+    } catch (error) {
+      return {
+        ok: false,
+        content: '',
+        serverId: server.id,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
   }
 
   async callTool(

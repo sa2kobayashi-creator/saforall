@@ -54,11 +54,24 @@ export function ExtensionsPanel({
   const [mcpTools, setMcpTools] = useState<
     Array<{ name: string; description?: string; serverId: string }>
   >([])
+  const [mcpResources, setMcpResources] = useState<
+    Array<{ uri: string; name?: string; serverId: string }>
+  >([])
+  const [mcpPrompts, setMcpPrompts] = useState<
+    Array<{ name: string; description?: string; serverId: string }>
+  >([])
   const [mcpServers, setMcpServers] = useState<
     Array<{ id: string; command?: string; url?: string }>
   >([])
   const [mcpStatuses, setMcpStatuses] = useState<
-    Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }>
+    Array<{
+      serverId: string
+      ok: boolean
+      toolCount: number
+      resourceCount?: number
+      promptCount?: number
+      error?: string
+    }>
   >([])
   const [mcpSummary, setMcpSummary] = useState<string | null>(null)
   const [mcpBusy, setMcpBusy] = useState(false)
@@ -79,9 +92,13 @@ export function ExtensionsPanel({
         }))
       )
       setMcpTools(result.tools)
+      setMcpResources(result.resources ?? [])
+      setMcpPrompts(result.prompts ?? [])
       setMcpStatuses(result.statuses ?? [])
       const fails = (result.statuses ?? []).filter((row) => !row.ok).length
       const oks = (result.statuses ?? []).filter((row) => row.ok).length
+      const resourceCount = (result.resources ?? []).length
+      const promptCount = (result.prompts ?? []).length
       const summary =
         fails > 0
           ? t('ext.mcp.summaryPartial', {
@@ -89,10 +106,10 @@ export function ExtensionsPanel({
               fail: fails,
               tools: result.tools.length
             })
-          : t('ext.mcp.summary', {
+          : `${t('ext.mcp.summary', {
               servers: result.servers.length,
               tools: result.tools.length
-            })
+            })} · リソース ${resourceCount} · プロンプト ${promptCount}`
       setMcpSummary(summary)
       if (result.servers.length === 0) {
         setMcpError(t('ext.mcp.noServers'))
@@ -165,7 +182,7 @@ export function ExtensionsPanel({
             {mcpStatuses.map((row) => (
               <li key={row.serverId} className={row.ok ? 'ok' : 'fail'}>
                 {row.ok
-                  ? t('ext.mcp.serverOk', { id: row.serverId, count: row.toolCount })
+                  ? `${t('ext.mcp.serverOk', { id: row.serverId, count: row.toolCount })} · R${row.resourceCount ?? 0} · P${row.promptCount ?? 0}`
                   : t('ext.mcp.serverFail', {
                       id: row.serverId,
                       error: row.error ?? '失敗'
@@ -196,6 +213,32 @@ export function ExtensionsPanel({
                 </li>
               )
             })}
+          </ul>
+        )}
+        {mcpResources.length > 0 && (
+          <ul className="extensions-list">
+            {mcpResources.slice(0, 20).map((row) => (
+              <li key={`${row.serverId}:${row.uri}`} className="extensions-card">
+                <div className="extensions-card-title">
+                  resource: {row.name || row.uri}{' '}
+                  <span className="extensions-perms">@{row.serverId}</span>
+                </div>
+                <p className="extensions-perms">{row.uri}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+        {mcpPrompts.length > 0 && (
+          <ul className="extensions-list">
+            {mcpPrompts.slice(0, 20).map((row) => (
+              <li key={`${row.serverId}:${row.name}`} className="extensions-card">
+                <div className="extensions-card-title">
+                  prompt: {row.name}{' '}
+                  <span className="extensions-perms">@{row.serverId}</span>
+                </div>
+                {row.description && <p>{row.description}</p>}
+              </li>
+            ))}
           </ul>
         )}
         {!mcpBusy && mcpSummary && mcpTools.length === 0 && !mcpError && (

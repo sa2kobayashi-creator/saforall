@@ -48,6 +48,17 @@ export type LspTextEdit = {
   newText: string
 }
 
+export type LspDocumentSymbol = {
+  name: string
+  kind: number
+  detail?: string
+  line: number
+  column: number
+  endLine?: number
+  endColumn?: number
+  children?: LspDocumentSymbol[]
+}
+
 type LspMessage = {
   jsonrpc?: string
   id?: number
@@ -150,13 +161,10 @@ function parseWorkspaceEdits(result: unknown): LspTextEdit[] {
   if (Array.isArray(documentChanges)) {
     for (const change of documentChanges) {
       if (!change || typeof change !== 'object') continue
-      const doc = change as {
-        textDocument?: { uri?: string }
-        edits?: unknown[]
-      }
-      const uri = doc.textDocument?.uri
-      if (!uri || !Array.isArray(doc.edits)) continue
-      for (const row of doc.edits) {
+      const uri = String((change as { textDocument?: { uri?: string } }).textDocument?.uri ?? '')
+      const rows = (change as { edits?: unknown[] }).edits
+      if (!uri || !Array.isArray(rows)) continue
+      for (const row of rows) {
         const edit = row as {
           newText?: string
           range?: {
@@ -175,7 +183,44 @@ function parseWorkspaceEdits(result: unknown): LspTextEdit[] {
       }
     }
   }
-  return edits.slice(0, 200)
+  return edits
+}
+
+function parseDocumentSymbols(result: unknown, filePath: string): LspDocumentSymbol[] {
+  if (!Array.isArray(result)) return []
+  const mapOne = (row: unknown): LspDocumentSymbol | null => {
+    if (!row || typeof row !== 'object') return null
+    const rec = row as Record<string, unknown>
+    const name = typeof rec.name === 'string' ? rec.name : ''
+    if (!name) return null
+    const range =
+      (rec.selectionRange as { start?: { line?: number; character?: number }; end?: { line?: number; character?: number } } | undefined) ||
+      (rec.range as { start?: { line?: number; character?: number }; end?: { line?: number; character?: number } } | undefined) ||
+      (rec.location as { range?: { start?: { line?: number; character?: number }; end?: { line?: number; character?: number } } } | undefined)
+        ?.range
+    const childrenRaw = Array.isArray(rec.children) ? rec.children : []
+    const children = childrenRaw
+      .map(mapOne)
+      .filter((item): item is LspDocumentSymbol => Boolean(item))
+    return {
+      name,
+      kind: typeof rec.kind === 'number' ? rec.kind : 0,
+      detail: typeof rec.detail === 'string' ? rec.detail : undefined,
+      line: Number(range?.start?.line ?? 0) + 1,
+      column: Number(range?.start?.character ?? 0) + 1,
+      endLine: range?.end?.line != null ? Number(range.end.line) + 1 : undefined,
+      endColumn: range?.end?.character != null ? Number(range.end.character) + 1 : undefined,
+      children: children.length > 0 ? children : undefined
+    }
+  }
+  const out: LspDocumentSymbol[] = []
+  for (const row of result) {
+    const mapped = mapOne(row)
+    if (mapped) out.push(mapped)
+  }
+  // DocumentSymbol vs SymbolInformation — keep path unused but stable API
+  void filePath
+  return out.slice(0, 400)
 }
 
 function languageIdForPath(filePath: string, fallback: string): string {
@@ -248,6 +293,10 @@ export class LspClient extends EventEmitter {
           },
           references: {},
           rename: { prepareSupport: false },
+          formatting: { dynamicRegistration: false },
+          documentSymbol: {
+            hierarchicalDocumentSymbolSupport: true
+          },
           inlayHint: {
             resolveSupport: { properties: [] }
           }
@@ -465,6 +514,42 @@ export class LspClient extends EventEmitter {
       newName
     })
     return parseWorkspaceEdits(response.result)
+  }
+
+  async formatDocument(filePath: string): Promise<LspTextEdit[]> {
+    const response = await this.request('textDocument/formatting', {
+      textDocument: { uri: toUri(filePath) },
+      options: { tabSize: 2, insertSpaces: true }
+    })
+    const result = response.result
+    if (!Array.isArray(result)) return []
+    const edits: LspTextEdit[] = []
+    for (const row of result) {
+      if (!row || typeof row !== 'object') continue
+      const edit = row as {
+        newText?: string
+        range?: {
+          start?: { line?: number; character?: number }
+          end?: { line?: number; character?: number }
+        }
+      }
+      edits.push({
+        path: filePath,
+        startLine: Number(edit.range?.start?.line ?? 0) + 1,
+        startColumn: Number(edit.range?.start?.character ?? 0) + 1,
+        endLine: Number(edit.range?.end?.line ?? 0) + 1,
+        endColumn: Number(edit.range?.end?.character ?? 0) + 1,
+        newText: String(edit.newText ?? '')
+      })
+    }
+    return edits
+  }
+
+  async documentSymbols(filePath: string): Promise<LspDocumentSymbol[]> {
+    const response = await this.request('textDocument/documentSymbol', {
+      textDocument: { uri: toUri(filePath) }
+    })
+    return parseDocumentSymbols(response.result, filePath)
   }
 
   async stop(): Promise<void> {
@@ -811,6 +896,26 @@ export class LspManager {
     if (!client) return []
     try {
       return await client.rename(filePath, line, character, newName)
+    } catch {
+      return []
+    }
+  }
+
+  async formatDocument(filePath: string): Promise<LspTextEdit[]> {
+    const client = this.clientForPath(filePath)
+    if (!client) return []
+    try {
+      return await client.formatDocument(filePath)
+    } catch {
+      return []
+    }
+  }
+
+  async documentSymbols(filePath: string): Promise<LspDocumentSymbol[]> {
+    const client = this.clientForPath(filePath)
+    if (!client) return []
+    try {
+      return await client.documentSymbols(filePath)
     } catch {
       return []
     }

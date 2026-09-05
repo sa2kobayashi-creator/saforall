@@ -7,6 +7,11 @@ import { disposeTabCompletions, registerTabCompletions } from '../lib/tabComplet
 import { disposeLspProviders, registerLspProviders } from '../lib/lspProviders'
 import { InlineEditBar, type InlineEditTarget } from './InlineEditBar'
 import { PreviewPane, supportsPreview } from './PreviewPane'
+import {
+  EditorBreadcrumbs,
+  OutlinePanel,
+  useDocumentSymbols
+} from './OutlinePanel'
 import './EditorPane.css'
 import './PreviewPane.css'
 
@@ -17,6 +22,7 @@ type Props = {
   activePath: string | null
   tabWidths: Record<string, number>
   backendConnected?: boolean
+  workspacePath?: string | null
   onSelectTab: (path: string) => void
   onCloseTab: (path: string) => void
   onResizeTab: (path: string, width: number) => void
@@ -48,6 +54,7 @@ type Props = {
   pausedLine?: { path: string; line: number } | null
   /** Increment to open Ctrl+K from outside (menu) */
   inlineEditTrigger?: number
+  onStatusMessage?: (message: string) => void
 }
 
 const DEFAULT_TAB_WIDTH = 160
@@ -59,6 +66,7 @@ export function EditorPane({
   activePath,
   tabWidths,
   backendConnected = false,
+  workspacePath = null,
   onSelectTab,
   onCloseTab,
   onResizeTab,
@@ -73,12 +81,20 @@ export function EditorPane({
   breakpoints = {},
   onToggleBreakpoint,
   pausedLine = null,
-  inlineEditTrigger = 0
+  inlineEditTrigger = 0,
+  onStatusMessage
 }: Props) {
   const file = tabs.find((tab) => tab.path === activePath) ?? null
   const dragRef = useRef<{ path: string; startX: number; startWidth: number } | null>(
     null
   )
+  const symbols = useDocumentSymbols(activePath)
+  const [cursorLine, setCursorLine] = useState(1)
+  const [blameOn, setBlameOn] = useState(false)
+  const blameDecorationsRef = useRef<string[]>([])
+  const blameMapRef = useRef<
+    Map<number, { author: string; commit: string; summary: string }>
+  >(new Map())
   const backendConnectedRef = useRef(backendConnected)
   backendConnectedRef.current = backendConnected
   const selectionHandlerRef = useRef(onSelectionChange)
@@ -91,6 +107,10 @@ export function EditorPane({
   findReferencesRef.current = onFindReferences
   const applyLspEditsRef = useRef(onApplyLspEdits)
   applyLspEditsRef.current = onApplyLspEdits
+  const statusMessageRef = useRef(onStatusMessage)
+  statusMessageRef.current = onStatusMessage
+  const workspacePathRef = useRef(workspacePath)
+  workspacePathRef.current = workspacePath
   const toggleBpRef = useRef(onToggleBreakpoint)
   toggleBpRef.current = onToggleBreakpoint
   const breakpointsRef = useRef(breakpoints)
@@ -221,6 +241,65 @@ export function EditorPane({
     )
   }, [breakpoints, pausedLine, activePath, file?.content])
 
+  useEffect(() => {
+    const editor = editorRef.current
+    const monaco = monacoRef.current
+    if (!editor || !monaco || !blameOn || !activePath || !workspacePath) {
+      if (editor) {
+        blameDecorationsRef.current = editor.deltaDecorations(blameDecorationsRef.current, [])
+      }
+      blameMapRef.current = new Map()
+      return
+    }
+    const root = workspacePath.replace(/[/\\]+$/, '')
+    const unifiedRoot = root.replace(/\\/g, '/').toLowerCase()
+    const unifiedPath = activePath.replace(/\\/g, '/')
+    let rel = unifiedPath
+    const lower = unifiedPath.toLowerCase()
+    if (lower.startsWith(unifiedRoot + '/')) {
+      rel = unifiedPath.slice(root.length).replace(/^[/\\]+/, '')
+    } else if (lower.startsWith(unifiedRoot)) {
+      rel = unifiedPath.slice(root.length).replace(/^[/\\]+/, '')
+    }
+    let cancelled = false
+    void window.saforall
+      .gitBlame({ cwd: workspacePath, path: rel })
+      .then((result) => {
+        if (cancelled || !result.ok) {
+          statusMessageRef.current?.(result.error ?? 'Blame を取得できません')
+          return
+        }
+        const map = new Map<number, { author: string; commit: string; summary: string }>()
+        const decorations: unknown[] = []
+        for (const row of result.lines) {
+          map.set(row.line, {
+            author: row.author,
+            commit: row.commit,
+            summary: row.summary
+          })
+          decorations.push({
+            range: new monaco.Range(row.line, 1, row.line, 1),
+            options: {
+              isWholeLine: false,
+              linesDecorationsClassName: 'saforall-blame-gutter',
+              hoverMessage: {
+                value: `${row.author} · ${row.commit}\n${row.summary}`
+              }
+            }
+          })
+        }
+        blameMapRef.current = map
+        blameDecorationsRef.current = editor.deltaDecorations(
+          blameDecorationsRef.current,
+          decorations as never
+        )
+      })
+      .catch((error) => statusMessageRef.current?.(`Blame 失敗: ${String(error)}`))
+    return () => {
+      cancelled = true
+    }
+  }, [blameOn, activePath, workspacePath, file?.content])
+
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
@@ -273,6 +352,31 @@ export function EditorPane({
           findReferencesRef.current?.([], symbolLabel)
         }
       }
+    })
+
+    editor.addAction({
+      id: 'saforall.formatDocument',
+      label: 'Format Document',
+      keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF],
+      run: async () => {
+        const meta = fileMetaRef.current
+        if (!meta || typeof window.saforall.lspFormat !== 'function') return
+        try {
+          const edits = await window.saforall.lspFormat({ path: meta.path })
+          if (edits.length === 0) {
+            statusMessageRef.current?.('整形できる変更はありません（LSP）')
+            return
+          }
+          await applyLspEditsRef.current?.(edits)
+          statusMessageRef.current?.(`Format: ${edits.length} edits`)
+        } catch (error) {
+          statusMessageRef.current?.(`Format 失敗: ${String(error)}`)
+        }
+      }
+    })
+
+    editor.onDidChangeCursorPosition((event) => {
+      setCursorLine(event.position.lineNumber)
     })
 
     try {
@@ -472,6 +576,29 @@ export function EditorPane({
             )
           })}
         </div>
+        <div className="editor-extra-actions">
+          <button
+            type="button"
+            className={blameOn ? 'active' : ''}
+            title="Git Blame"
+            disabled={!workspacePath || !activePath}
+            onClick={() => setBlameOn((value) => !value)}
+          >
+            Blame
+          </button>
+          <button
+            type="button"
+            title="Format Document (Shift+Alt+F)"
+            disabled={!activePath}
+            onClick={() => {
+              const ed = editorRef.current
+              if (!ed) return
+              void ed.getAction('saforall.formatDocument')?.run()
+            }}
+          >
+            Format
+          </button>
+        </div>
         {supportsPreview(file.language, file.path) && (
           <div className="preview-mode-group" role="group" aria-label="プレビュー表示">
             {(
@@ -496,6 +623,18 @@ export function EditorPane({
           保存
         </button>
       </div>
+      <EditorBreadcrumbs
+        path={activePath}
+        symbols={symbols}
+        cursorLine={cursorLine}
+        onJump={(line, column) => {
+          const editor = editorRef.current
+          if (!editor) return
+          editor.revealLineInCenter(line)
+          editor.setPosition({ lineNumber: line, column: column ?? 1 })
+          editor.focus()
+        }}
+      />
       <InlineEditBar
         target={inlineTarget}
         onClose={() => setInlineTarget(null)}
@@ -566,6 +705,17 @@ export function EditorPane({
           />
         )}
       </div>
+      <OutlinePanel
+        symbols={symbols}
+        activePath={activePath}
+        onJump={(line, column) => {
+          const editor = editorRef.current
+          if (!editor) return
+          editor.revealLineInCenter(line)
+          editor.setPosition({ lineNumber: line, column: column ?? 1 })
+          editor.focus()
+        }}
+      />
     </div>
   )
 }

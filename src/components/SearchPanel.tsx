@@ -7,6 +7,8 @@ type Props = {
   width: number
   onOpenWorkspace: () => void
   onOpenFile: (path: string, line?: number) => void
+  onStatusMessage?: (message: string) => void
+  onFilesReplaced?: () => void
 }
 
 type Mode = 'content' | 'files'
@@ -35,11 +37,20 @@ function parseContentHits(raw: string): ContentHit[] {
   return rows
 }
 
-export function SearchPanel({ workspacePath, width, onOpenWorkspace, onOpenFile }: Props) {
+export function SearchPanel({
+  workspacePath,
+  width,
+  onOpenWorkspace,
+  onOpenFile,
+  onStatusMessage,
+  onFilesReplaced
+}: Props) {
   const { t } = useI18n()
   const [mode, setMode] = useState<Mode>('content')
   const [query, setQuery] = useState('')
+  const [replacement, setReplacement] = useState('')
   const [busy, setBusy] = useState(false)
+  const [replaceBusy, setReplaceBusy] = useState(false)
   const [fileHits, setFileHits] = useState<string[]>([])
   const [contentHits, setContentHits] = useState<ContentHit[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -144,6 +155,50 @@ export function SearchPanel({ workspacePath, width, onOpenWorkspace, onOpenFile 
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
+          {mode === 'content' && (
+            <div className="search-input-wrap search-replace-row">
+              <input
+                value={replacement}
+                placeholder="置換後の文字列"
+                onChange={(event) => setReplacement(event.target.value)}
+              />
+              <button
+                type="button"
+                disabled={
+                  replaceBusy ||
+                  !workspacePath ||
+                  query.trim().length < 2 ||
+                  typeof window.saforall.replaceInFiles !== 'function'
+                }
+                onClick={() => {
+                  if (!workspacePath) return
+                  setReplaceBusy(true)
+                  void window.saforall
+                    .replaceInFiles({
+                      cwd: workspacePath,
+                      query: query.trim(),
+                      replacement,
+                      dryRun: false
+                    })
+                    .then((result) => {
+                      if (!result.ok) {
+                        setError(result.error ?? '置換に失敗しました')
+                        onStatusMessage?.(result.error ?? '置換に失敗しました')
+                        return
+                      }
+                      const msg = `置換: ${result.replacements} 箇所 / ${result.filesChanged} ファイル`
+                      onStatusMessage?.(msg)
+                      onFilesReplaced?.()
+                      setContentHits([])
+                    })
+                    .catch((err) => setError(String(err)))
+                    .finally(() => setReplaceBusy(false))
+                }}
+              >
+                {replaceBusy ? '置換中…' : 'すべて置換'}
+              </button>
+            </div>
+          )}
           {error && <div className="search-error">{error}</div>}
           <div className="search-results">
             {busy && <p className="search-hint">{t('search.searching')}</p>}

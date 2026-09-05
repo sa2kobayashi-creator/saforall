@@ -16,8 +16,10 @@ import {
   toolReadFile,
   toolRunShell,
   toolSearch,
-  withMaterializedEdits
+  withMaterializedEdits,
+  appendProjectMemory
 } from './workspaceTools'
+import { buildAgentSuccessMemoryNote } from './lib/agentMemory'
 import { mkdir, writeFile } from 'fs/promises'
 import { join, relative, resolve } from 'path'
 
@@ -168,8 +170,58 @@ const TOOLS = [
     function: {
       name: 'list_mcp_tools',
       description:
-        'List MCP tools from .saforall/mcp.json (stdio servers). Use before call_mcp_tool.',
+        'List MCP tools from .saforall/mcp.json (stdio / HTTP). Use before call_mcp_tool.',
       parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_mcp_resources',
+      description: 'List MCP resources (resources/list) from configured servers.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_mcp_resource',
+      description: 'Read an MCP resource by uri (resources/read).',
+      parameters: {
+        type: 'object',
+        properties: {
+          uri: { type: 'string' },
+          serverId: { type: 'string' }
+        },
+        required: ['uri']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_mcp_prompts',
+      description: 'List MCP prompts (prompts/list) from configured servers.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_mcp_prompt',
+      description: 'Fetch an MCP prompt template by name (prompts/get).',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          serverId: { type: 'string' },
+          arguments: {
+            type: 'object',
+            additionalProperties: { type: 'string' }
+          }
+        },
+        required: ['name']
+      }
     }
   },
   {
@@ -196,13 +248,26 @@ const TOOLS = [
 ]
 
 const PHASE_TOOLS: Record<AgentPhase, Set<string>> = {
-  plan: new Set(['set_phase', 'list_dir', 'search_code', 'read_file', 'list_mcp_tools', 'get_problems']),
+  plan: new Set([
+    'set_phase',
+    'list_dir',
+    'search_code',
+    'read_file',
+    'list_mcp_tools',
+    'list_mcp_resources',
+    'list_mcp_prompts',
+    'get_problems'
+  ]),
   explore: new Set([
     'set_phase',
     'list_dir',
     'search_code',
     'read_file',
     'list_mcp_tools',
+    'list_mcp_resources',
+    'read_mcp_resource',
+    'list_mcp_prompts',
+    'get_mcp_prompt',
     'call_mcp_tool',
     'get_problems'
   ]),
@@ -214,6 +279,10 @@ const PHASE_TOOLS: Record<AgentPhase, Set<string>> = {
     'edit_file',
     'run_shell',
     'list_mcp_tools',
+    'list_mcp_resources',
+    'read_mcp_resource',
+    'list_mcp_prompts',
+    'get_mcp_prompt',
     'call_mcp_tool',
     'get_problems'
   ]),
@@ -225,6 +294,10 @@ const PHASE_TOOLS: Record<AgentPhase, Set<string>> = {
     'run_shell',
     'edit_file',
     'list_mcp_tools',
+    'list_mcp_resources',
+    'read_mcp_resource',
+    'list_mcp_prompts',
+    'get_mcp_prompt',
     'call_mcp_tool',
     'get_problems'
   ])
@@ -281,6 +354,10 @@ export function looksLikeFakeToolProse(text: string): boolean {
     'search_code',
     'list_dir',
     'list_mcp_tools',
+    'list_mcp_resources',
+    'read_mcp_resource',
+    'list_mcp_prompts',
+    'get_mcp_prompt',
     'call_mcp_tool'
   ]
   const hitCount = names.filter((name) => lower.includes(name)).length
@@ -1038,13 +1115,16 @@ async function runTool(
         servers: listed.servers.map((row) => ({
           id: row.id,
           command: row.command,
-          args: row.args
+          args: row.args,
+          url: row.url
         })),
         tools: listed.tools.map((row) => ({
           name: row.name,
           serverId: row.serverId,
           description: row.description
         })),
+        resourceCount: listed.resources.length,
+        promptCount: listed.prompts.length,
         note:
           listed.tools.length === 0
             ? 'No MCP tools. Add .saforall/mcp.json (Cursor-compatible mcpServers map is OK).'
@@ -1055,9 +1135,113 @@ async function runTool(
         id: callId,
         name,
         ok: true,
-        summary: `mcp tools ${listed.tools.length} · servers ${listed.servers.length}`
+        summary: `mcp tools ${listed.tools.length} · resources ${listed.resources.length} · prompts ${listed.prompts.length}`
       })
       return { content: JSON.stringify(payload), ok: true }
+    }
+
+    if (name === 'list_mcp_resources') {
+      const listed = await mcpManager.listWorkspaceTools(workspacePath)
+      const payload = {
+        ok: true,
+        resources: listed.resources.map((row) => ({
+          uri: row.uri,
+          name: row.name,
+          description: row.description,
+          serverId: row.serverId,
+          mimeType: row.mimeType
+        }))
+      }
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: true,
+        summary: `mcp resources ${listed.resources.length}`
+      })
+      return { content: JSON.stringify(payload), ok: true }
+    }
+
+    if (name === 'read_mcp_resource') {
+      const uri = String(args.uri ?? '')
+      if (!uri) {
+        onEvent({ type: 'tool_result', id: callId, name, ok: false, summary: 'uri required' })
+        return { content: JSON.stringify({ ok: false, error: 'uri required' }), ok: false }
+      }
+      const serverId = typeof args.serverId === 'string' ? args.serverId : undefined
+      const result = await mcpManager.readResource(workspacePath, { uri, serverId })
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: result.ok,
+        summary: result.ok ? `resource ${uri.slice(0, 60)}` : `resource fail: ${result.error ?? ''}`
+      })
+      return {
+        content: JSON.stringify({
+          ok: result.ok,
+          serverId: result.serverId,
+          content: result.content,
+          error: result.error
+        }),
+        ok: result.ok
+      }
+    }
+
+    if (name === 'list_mcp_prompts') {
+      const listed = await mcpManager.listWorkspaceTools(workspacePath)
+      const payload = {
+        ok: true,
+        prompts: listed.prompts.map((row) => ({
+          name: row.name,
+          description: row.description,
+          serverId: row.serverId
+        }))
+      }
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: true,
+        summary: `mcp prompts ${listed.prompts.length}`
+      })
+      return { content: JSON.stringify(payload), ok: true }
+    }
+
+    if (name === 'get_mcp_prompt') {
+      const promptName = String(args.name ?? '')
+      if (!promptName) {
+        onEvent({ type: 'tool_result', id: callId, name, ok: false, summary: 'name required' })
+        return { content: JSON.stringify({ ok: false, error: 'name required' }), ok: false }
+      }
+      const serverId = typeof args.serverId === 'string' ? args.serverId : undefined
+      const promptArgs =
+        args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments)
+          ? (args.arguments as Record<string, string>)
+          : {}
+      const result = await mcpManager.getPrompt(workspacePath, {
+        name: promptName,
+        serverId,
+        arguments: promptArgs
+      })
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: result.ok,
+        summary: result.ok
+          ? `prompt ${promptName}`
+          : `prompt fail: ${result.error ?? ''}`
+      })
+      return {
+        content: JSON.stringify({
+          ok: result.ok,
+          serverId: result.serverId,
+          content: result.content,
+          error: result.error
+        }),
+        ok: result.ok
+      }
     }
 
     if (name === 'call_mcp_tool') {
@@ -1184,7 +1368,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）と、依頼が修正なら edit_file + run_shell を行う。',
     '禁止: set_phase / edit_file / read_file / run_shell を文章・bash・手順リストとして書くこと。必ず function/tool_calls で呼ぶ。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
-    'MCP: list_mcp_tools / call_mcp_tool で外部ツールを使える（.saforall/mcp.json）。',
+    'MCP: list_mcp_tools / list_mcp_resources / list_mcp_prompts / call_mcp_tool / read_mcp_resource / get_mcp_prompt を使える（.saforall/mcp.json）。',
     `編集リカバリ上限: ${MAX_EDIT_RECOVERIES} 回まで verify 失敗→edit 自動復帰。`,
     '破壊的コマンドは禁止。まず短い検証（typecheck）を通し、必要なら test を追加。',
     'ツール失敗時は別パス/クエリ/コマンドで自己修正。同じ呼び出しを繰り返さない。失敗理由を読み、仮説を変える。',
@@ -1335,7 +1519,9 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         name === 'read_file' ||
         name === 'list_dir' ||
         name === 'search_code' ||
-        name === 'list_mcp_tools'
+        name === 'list_mcp_tools' ||
+        name === 'list_mcp_resources' ||
+        name === 'list_mcp_prompts'
       const maxParallel = phase === 'explore' ? 8 : phase === 'verify' ? 4 : 5
 
       type OrderedRow = {
@@ -1799,6 +1985,26 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   if (editedPaths.size > 0 && shellState.passed && !finalText.includes('Composer')) {
     finalText +=
       '\n\n✅ シェル検証は成功しています。Composer で「すべて適用」すると変更がディスクに残ります。'
+  }
+
+  if (
+    editedPaths.size > 0 &&
+    shellState.passed &&
+    !verifyIncomplete &&
+    !shellIncomplete
+  ) {
+    try {
+      await appendProjectMemory(
+        workspacePath,
+        buildAgentSuccessMemoryNote({
+          editedPaths: Array.from(editedPaths),
+          verifyCommand: suggestedVerify,
+          summary: finalText.slice(0, 280)
+        })
+      )
+    } catch {
+      // memory write is best-effort
+    }
   }
 
   const chunkSize = 120

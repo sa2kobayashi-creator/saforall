@@ -19,6 +19,7 @@ type Props = {
   onOpenWorkspace: () => void
   onClone: () => void
   onOpenFile: (path: string) => void
+  onOpenDiff?: (path: string, staged: boolean) => void
   onStatusMessage?: (message: string) => void
 }
 
@@ -31,6 +32,7 @@ export function SourceControlPanel({
   onOpenWorkspace,
   onClone,
   onOpenFile,
+  onOpenDiff,
   onStatusMessage
 }: Props) {
   const [loading, setLoading] = useState(false)
@@ -337,6 +339,16 @@ export function SourceControlPanel({
                           <span className="scm-file-status">{file.status}</span>
                           <span className="scm-file-path">{file.path}</span>
                         </button>
+                        {onOpenDiff && (
+                          <button
+                            type="button"
+                            className="scm-file-action"
+                            title="Diff"
+                            onClick={() => onOpenDiff(file.path, true)}
+                          >
+                            ⧉
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="scm-file-action"
@@ -378,6 +390,16 @@ export function SourceControlPanel({
                           <span className="scm-file-status">{file.status}</span>
                           <span className="scm-file-path">{file.path}</span>
                         </button>
+                        {onOpenDiff && (
+                          <button
+                            type="button"
+                            className="scm-file-action"
+                            title="Diff"
+                            onClick={() => onOpenDiff(file.path, false)}
+                          >
+                            ⧉
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="scm-file-action"

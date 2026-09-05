@@ -104,6 +104,22 @@ const api = {
     ipcRenderer.invoke('fs:searchFiles', cwd, query),
   searchCode: (cwd: string, query: string, anchorPaths?: string[]): Promise<string> =>
     ipcRenderer.invoke('fs:searchCode', cwd, query, anchorPaths),
+  replaceInFiles: (params: {
+    cwd: string
+    query: string
+    replacement: string
+    dryRun?: boolean
+    caseSensitive?: boolean
+  }): Promise<{
+    ok: boolean
+    dryRun: boolean
+    query: string
+    replacement: string
+    filesChanged: number
+    replacements: number
+    files: Array<{ path: string; count: number }>
+    error?: string
+  }> => ipcRenderer.invoke('fs:replaceInFiles', params),
   watchWorkspace: (cwd: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:watchWorkspace', cwd),
   unwatchWorkspace: (): Promise<boolean> => ipcRenderer.invoke('fs:unwatchWorkspace'),
@@ -224,6 +240,32 @@ const api = {
       newText: string
     }>
   > => ipcRenderer.invoke('lsp:rename', params),
+  lspFormat: (params: {
+    path: string
+  }): Promise<
+    Array<{
+      path: string
+      startLine: number
+      startColumn: number
+      endLine: number
+      endColumn: number
+      newText: string
+    }>
+  > => ipcRenderer.invoke('lsp:format', params),
+  lspDocumentSymbols: (params: {
+    path: string
+  }): Promise<
+    Array<{
+      name: string
+      kind: number
+      detail?: string
+      line: number
+      column: number
+      endLine?: number
+      endColumn?: number
+      children?: unknown[]
+    }>
+  > => ipcRenderer.invoke('lsp:documentSymbols', params),
   onLspDiagnostics: (
     callback: (payload: {
       items: Array<{
@@ -316,6 +358,31 @@ const api = {
     options?: { staged?: boolean }
   ): Promise<{ ok: boolean; stdout?: string; error?: string }> =>
     ipcRenderer.invoke('git:diff', cwd, options),
+  gitFileDiff: (params: {
+    cwd: string
+    path: string
+    staged?: boolean
+  }): Promise<{
+    ok: boolean
+    path: string
+    original: string
+    modified: string
+    error?: string
+  }> => ipcRenderer.invoke('git:fileDiff', params),
+  gitBlame: (params: {
+    cwd: string
+    path: string
+  }): Promise<{
+    ok: boolean
+    lines: Array<{
+      line: number
+      commit: string
+      author: string
+      summary: string
+      time?: number
+    }>
+    error?: string
+  }> => ipcRenderer.invoke('git:blame', params),
   searchSymbols: (
     cwd: string,
     query: string
@@ -330,7 +397,22 @@ const api = {
   ): Promise<{
     servers: Array<{ id: string; command?: string; url?: string; args?: string[] }>
     tools: Array<{ name: string; description?: string; serverId: string }>
-    statuses?: Array<{ serverId: string; ok: boolean; toolCount: number; error?: string }>
+    resources?: Array<{
+      uri: string
+      name?: string
+      description?: string
+      mimeType?: string
+      serverId: string
+    }>
+    prompts?: Array<{ name: string; description?: string; serverId: string }>
+    statuses?: Array<{
+      serverId: string
+      ok: boolean
+      toolCount: number
+      resourceCount?: number
+      promptCount?: number
+      error?: string
+    }>
     summary?: string
   }> => ipcRenderer.invoke('mcp:list', cwd),
   callMcp: (params: {

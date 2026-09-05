@@ -6,7 +6,9 @@ import { apiRequest, checkHealth, streamChat } from './api'
 import {
   cloneRepository,
   commitChanges,
+  getGitBlame,
   getGitDiff,
+  getGitFileSides,
   getGitStatus,
   initRepository,
   pullRepository,
@@ -24,7 +26,7 @@ import {
   resizeTerminal,
   writeTerminal
 } from './terminal'
-import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch, listProjectRuleFiles, readProjectMemory, appendProjectMemory, saveProjectMemory, readProjectRuleFile } from './workspaceTools'
+import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch, listProjectRuleFiles, readProjectMemory, appendProjectMemory, saveProjectMemory, readProjectRuleFile, replaceInWorkspace } from './workspaceTools'
 import { loadWorkspaceExtensions, scaffoldExtensionFromMarketplace } from './extensions'
 import { type DebugBreakpoint, type DebugSession } from './debugSession'
 import {
@@ -49,8 +51,10 @@ import { lspManager, type LspDiagnostic } from './lspClient'
 import {
   cancelBackgroundJob,
   completeBackgroundJob,
+  configureJobsPersistence,
   enqueueBackgroundJob,
   listBackgroundJobs,
+  loadPersistedJobs,
   markBackgroundJobRunning,
   onBackgroundJobChange
 } from './backgroundJobs'
@@ -85,6 +89,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  configureJobsPersistence(join(app.getPath('userData'), 'background-jobs.json'))
+  void loadPersistedJobs()
   setupApplicationMenu('ja')
   createWindow()
 
@@ -165,6 +171,24 @@ ipcMain.handle(
   async (_event, cwd: string, query: string, anchorPaths?: string[]) => {
     return toolSearch(cwd, query, undefined, anchorPaths)
   }
+)
+
+ipcMain.handle(
+  'fs:replaceInFiles',
+  async (
+    _event,
+    params: {
+      cwd: string
+      query: string
+      replacement: string
+      dryRun?: boolean
+      caseSensitive?: boolean
+    }
+  ) =>
+    replaceInWorkspace(params.cwd, params.query, params.replacement, {
+      dryRun: params.dryRun,
+      caseSensitive: params.caseSensitive
+    })
 )
 
 ipcMain.handle('fs:searchSymbols', async (_event, cwd: string, query: string) => {
@@ -309,6 +333,20 @@ ipcMain.handle('git:pull', async (_event, cwd: string) => pullRepository(cwd))
 ipcMain.handle(
   'git:diff',
   async (_event, cwd: string, options?: { staged?: boolean }) => getGitDiff(cwd, options)
+)
+
+ipcMain.handle(
+  'git:fileDiff',
+  async (
+    _event,
+    params: { cwd: string; path: string; staged?: boolean }
+  ) => getGitFileSides(params.cwd, params.path, { staged: params.staged })
+)
+
+ipcMain.handle(
+  'git:blame',
+  async (_event, params: { cwd: string; path: string }) =>
+    getGitBlame(params.cwd, params.path)
 )
 
 ipcMain.handle(
@@ -507,6 +545,16 @@ ipcMain.handle(
       newText: string
     }>
   > => lspManager.rename(params.path, params.line, params.character, params.newName)
+)
+
+ipcMain.handle(
+  'lsp:format',
+  async (_event, params: { path: string }) => lspManager.formatDocument(params.path)
+)
+
+ipcMain.handle(
+  'lsp:documentSymbols',
+  async (_event, params: { path: string }) => lspManager.documentSymbols(params.path)
 )
 
 lspManager.setDiagnosticsHandler((items: LspDiagnostic[]) => {

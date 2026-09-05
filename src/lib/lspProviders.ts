@@ -188,14 +188,36 @@ export function registerLspProviders(
           const meta = getMeta()
           if (!meta || typeof window.saforall.lspHover !== 'function') return null
           try {
-            const hover = await window.saforall.lspHover({
-              path: meta.path,
-              line: position.lineNumber - 1,
-              character: position.column - 1
-            })
+            const hover = await Promise.race([
+              window.saforall.lspHover({
+                path: meta.path,
+                line: position.lineNumber - 1,
+                character: position.column - 1
+              }),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
+            ])
             if (token.isCancellationRequested || !hover?.contents) return null
+            const word =
+              typeof (_model as { getWordAtPosition?: (p: Position) => { startColumn: number; endColumn: number } | null })
+                .getWordAtPosition === 'function'
+                ? (_model as {
+                    getWordAtPosition: (p: Position) => {
+                      startColumn: number
+                      endColumn: number
+                      word?: string
+                    } | null
+                  }).getWordAtPosition(position)
+                : null
             return {
-              contents: [{ value: hover.contents }]
+              contents: [{ value: hover.contents }],
+              range: word
+                ? {
+                    startLineNumber: position.lineNumber,
+                    startColumn: word.startColumn,
+                    endLineNumber: position.lineNumber,
+                    endColumn: word.endColumn
+                  }
+                : undefined
             }
           } catch {
             return null

@@ -17,10 +17,13 @@ import {
 import type { ProblemItem } from './components/ProblemsPanel'
 import { ApplyPathDialog } from './components/ApplyPathDialog'
 import { ApplyDiffDialog, type ApplyDiffProposal } from './components/ApplyDiffDialog'
+import { ScmDiffDialog, type ScmDiffView } from './components/ScmDiffDialog'
 import { PendingEditsBar } from './components/PendingEditsBar'
 import { ComposerPanel } from './components/ComposerPanel'
 import { QuickOpenDialog } from './components/QuickOpenDialog'
 import { ExtensionsPanel } from './components/ExtensionsPanel'
+import { resolveProblemOpenPath } from './lib/problemPaths'
+import { buildBackendOfflineMessage } from './lib/backendGuide'
 import { buildNpmScriptCommand, buildRunFileCommand } from './lib/runCommands'
 import type { DebugBreakpointMap, DebugCallFrame } from './lib/debugTypes'
 import { loadWorkspaceKeybindings, matchKeybinding } from './lib/keybindings'
@@ -112,6 +115,7 @@ export default function App() {
     review?: boolean
   } | null>(null)
   const [applyQueue, setApplyQueue] = useState<ApplyDiffProposal[]>([])
+  const [scmDiff, setScmDiff] = useState<ScmDiffView | null>(null)
   const [composerOpen, setComposerOpen] = useState(true)
   const [reviewIndex, setReviewIndex] = useState(0)
   const [quickOpen, setQuickOpen] = useState(false)
@@ -174,7 +178,7 @@ export default function App() {
         source: 'Backend',
         message:
           backend.message ||
-          'バックエンドに接続できません。XAMPP で Apache と MySQL を Start してください。'
+          buildBackendOfflineMessage(backend.baseUrl)
       })
     }
     items.push(...monacoProblems)
@@ -391,31 +395,32 @@ export default function App() {
   }, [openWorkspaceAt])
 
   const openFileAt = useCallback(async (filePath: string, line?: number) => {
-    if (tabsRef.current.some((tab) => tab.path === filePath)) {
-      setActivePath(filePath)
-      setStatus(filePath)
+    const absolute = resolveProblemOpenPath(workspacePath, filePath)
+    if (tabsRef.current.some((tab) => tab.path === absolute)) {
+      setActivePath(absolute)
+      setStatus(absolute)
       setRevealLine(typeof line === 'number' ? line : null)
       return
     }
 
     try {
-      const content = await window.saforall.readFile(filePath)
+      const content = await window.saforall.readFile(absolute)
       const next: OpenFile = {
-        path: filePath,
+        path: absolute,
         content,
-        language: languageFromPath(filePath),
+        language: languageFromPath(absolute),
         dirty: false
       }
       setTabs((current) =>
-        current.some((tab) => tab.path === filePath) ? current : [...current, next]
+        current.some((tab) => tab.path === absolute) ? current : [...current, next]
       )
-      setActivePath(filePath)
-      setStatus(filePath)
+      setActivePath(absolute)
+      setStatus(absolute)
       setRevealLine(typeof line === 'number' ? line : null)
     } catch (error) {
       setStatus(`読み込み失敗: ${String(error)}`)
     }
-  }, [])
+  }, [workspacePath])
 
   const updateContent = useCallback(
     (content: string) => {
@@ -1497,6 +1502,28 @@ export default function App() {
               width={sidebarWidth}
               onOpenWorkspace={openWorkspace}
               onOpenFile={openFileAt}
+              onStatusMessage={(message) => {
+                setStatus(message)
+                showNotice(message)
+              }}
+              onFilesReplaced={() => {
+                void (async () => {
+                  for (const tab of tabsRef.current) {
+                    try {
+                      const content = await window.saforall.readFile(tab.path)
+                      setTabs((current) =>
+                        current.map((row) =>
+                          row.path === tab.path
+                            ? { ...row, content, dirty: false }
+                            : row
+                        )
+                      )
+                    } catch {
+                      // ignore
+                    }
+                  }
+                })()
+              }}
             />
           ) : sidebarView === 'scm' ? (
             <SourceControlPanel
@@ -1508,6 +1535,29 @@ export default function App() {
               onOpenWorkspace={openWorkspace}
               onClone={() => setCloneOpen(true)}
               onOpenFile={openFileAt}
+              onOpenDiff={(relative, staged) => {
+                if (!workspacePath) return
+                void window.saforall
+                  .gitFileDiff({ cwd: workspacePath, path: relative, staged })
+                  .then((result) => {
+                    if (!result.ok) {
+                      setStatus(result.error ?? 'Diff を取得できません')
+                      showNotice(result.error ?? 'Diff を取得できません')
+                      return
+                    }
+                    setScmDiff({
+                      path: relative,
+                      original: result.original,
+                      modified: result.modified,
+                      staged,
+                      language: languageFromPath(relative)
+                    })
+                  })
+                  .catch((error) => {
+                    setStatus(String(error))
+                    showNotice(String(error))
+                  })
+              }}
               onStatusMessage={(message) => {
                 setStatus(message)
                 showNotice(message)
@@ -1579,6 +1629,7 @@ export default function App() {
                   activePath={activePath}
                   tabWidths={tabWidths}
                   backendConnected={backend.connected}
+                  workspacePath={workspacePath}
                   onSelectTab={(path) => {
                     setActivePath(path)
                     setStatus(path)
@@ -1613,6 +1664,10 @@ export default function App() {
                   onToggleBreakpoint={toggleBreakpoint}
                   pausedLine={pausedLine}
                   inlineEditTrigger={inlineEditTrigger}
+                  onStatusMessage={(message) => {
+                    setStatus(message)
+                    showNotice(message)
+                  }}
                 />
                 {composerOpen && (
                   <ComposerPanel
@@ -1874,6 +1929,17 @@ export default function App() {
         onReject={rejectCurrentProposal}
         onAcceptAll={applyQueue.length > 1 ? () => void acceptAllProposals() : undefined}
         onRejectAll={applyQueue.length > 1 ? rejectAllProposals : undefined}
+      />
+      <ScmDiffDialog
+        open={scmDiff !== null}
+        view={scmDiff}
+        onClose={() => setScmDiff(null)}
+        onOpenFile={(relative) => {
+          if (!workspacePath) return
+          const sep = workspacePath.includes('\\') ? '\\' : '/'
+          setScmDiff(null)
+          void openFileAt(`${workspacePath}${sep}${relative}`)
+        }}
       />
       <QuickOpenDialog
         open={quickOpen}
