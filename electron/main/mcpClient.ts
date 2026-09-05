@@ -69,8 +69,8 @@ function writeMessage(
   child: ChildProcessWithoutNullStreams,
   payload: Record<string, unknown>
 ): void {
-  const body = JSON.stringify(payload)
-  child.stdin.write(`Content-Length: ${Buffer.byteLength(body, 'utf-8')}\r\n\r\n${body}`)
+  // Modern MCP stdio transport is newline-delimited JSON (not LSP Content-Length).
+  child.stdin.write(`${JSON.stringify(payload)}\n`)
 }
 
 function windowsNodeDirs(): string[] {
@@ -131,10 +131,51 @@ type SpawnSpec = { command: string; args: string[]; shell: boolean }
 /**
  * Build a spawn-safe command. Avoid `shell:true` with paths that contain spaces
  * (breaks on Windows: C:\\Program Files\\...). Prefer node + npx-cli.js for npx.
+ * If @modelcontextprotocol/server-filesystem is available locally, run it directly.
  */
-export function resolveMcpSpawn(command: string, args: string[] = []): SpawnSpec {
+export function resolveMcpSpawn(
+  command: string,
+  args: string[] = [],
+  cwd = process.cwd()
+): SpawnSpec {
   const trimmed = command.trim()
   const lower = trimmed.toLowerCase()
+
+  const fsPkgIdx = args.findIndex((arg) =>
+    /@modelcontextprotocol\/server-filesystem/.test(arg)
+  )
+  if (fsPkgIdx >= 0) {
+    const allowedDirs = args.slice(fsPkgIdx + 1)
+    const entryCandidates = [
+      join(cwd, 'node_modules', '@modelcontextprotocol', 'server-filesystem', 'dist', 'index.js'),
+      join(
+        process.cwd(),
+        'node_modules',
+        '@modelcontextprotocol',
+        'server-filesystem',
+        'dist',
+        'index.js'
+      )
+    ]
+    for (const entry of entryCandidates) {
+      if (!existsSync(entry)) continue
+      for (const dir of [...windowsNodeDirs(), 'C:\\Program Files\\nodejs']) {
+        const nodeExe = join(dir, process.platform === 'win32' ? 'node.exe' : 'node')
+        if (existsSync(nodeExe)) {
+          return {
+            command: nodeExe,
+            args: [entry, ...(allowedDirs.length > 0 ? allowedDirs : [cwd])],
+            shell: false
+          }
+        }
+      }
+      return {
+        command: process.platform === 'win32' ? 'node.exe' : 'node',
+        args: [entry, ...(allowedDirs.length > 0 ? allowedDirs : [cwd])],
+        shell: false
+      }
+    }
+  }
 
   if (lower === 'npx' || lower.endsWith('\\npx') || lower.endsWith('\\npx.cmd') || lower === 'npx.cmd') {
     const nodeDirs = [
@@ -166,8 +207,14 @@ export function resolveMcpSpawn(command: string, args: string[] = []): SpawnSpec
     }
   }
 
+  if (lower === 'node' || lower === 'node.exe') {
+    for (const dir of [...windowsNodeDirs(), 'C:\\Program Files\\nodejs']) {
+      const nodeExe = join(dir, 'node.exe')
+      if (existsSync(nodeExe)) return { command: nodeExe, args, shell: false }
+    }
+  }
+
   const resolved = resolveMcpCommand(trimmed)
-  // If shell would be needed for .cmd with spaces in path, wrap via cmd /c with quotes
   if (resolved.shell && /\s/.test(resolved.command)) {
     const comspec = process.env.ComSpec || 'cmd.exe'
     const quotedCmd = `"${resolved.command}"`
@@ -208,7 +255,7 @@ export class McpSession {
   async start(cwd: string, timeoutMs = 45_000): Promise<void> {
     await this.dispose()
     this.stderrTail = ''
-    const spec = resolveMcpSpawn(this.server.command, this.server.args ?? [])
+    const spec = resolveMcpSpawn(this.server.command, this.server.args ?? [], cwd)
     const env = enrichPath({ ...process.env, ...(this.server.env ?? {}) })
 
     await new Promise<void>((resolve, reject) => {
@@ -271,6 +318,9 @@ export class McpSession {
       }
       this.waiters.clear()
     })
+
+    // npx may print "running on stdio" only after download; wait briefly before handshake
+    await this.waitUntilServerBanner(12_000)
 
     const init = await this.request(
       'initialize',
@@ -356,6 +406,24 @@ export class McpSession {
     this.tools = []
   }
 
+  private async waitUntilServerBanner(timeoutMs: number): Promise<void> {
+    const readyRe = /running on stdio|MCP Server|started/i
+    if (readyRe.test(this.stderrTail)) {
+      await sleep(80)
+      return
+    }
+    await new Promise<void>((resolve) => {
+      const started = Date.now()
+      const timer = setInterval(() => {
+        if (readyRe.test(this.stderrTail) || Date.now() - started >= timeoutMs) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 50)
+    })
+    await sleep(80)
+  }
+
   private notify(method: string, params: Record<string, unknown>): void {
     if (!this.child) return
     writeMessage(this.child, { jsonrpc: '2.0', method, params })
@@ -383,31 +451,33 @@ export class McpSession {
   private onData(chunk: string): void {
     this.buffer += chunk
     while (true) {
-      const headerEnd = this.buffer.indexOf('\r\n\r\n')
-      if (headerEnd < 0) return
-      const header = this.buffer.slice(0, headerEnd)
-      const lengthMatch = header.match(/Content-Length:\s*(\d+)/i)
-      if (!lengthMatch) {
-        this.buffer = this.buffer.slice(headerEnd + 4)
-        continue
-      }
-      const len = Number(lengthMatch[1])
-      const bodyStart = headerEnd + 4
-      if (this.buffer.length < bodyStart + len) return
-      const body = this.buffer.slice(bodyStart, bodyStart + len)
-      this.buffer = this.buffer.slice(bodyStart + len)
-      try {
-        const msg = JSON.parse(body) as Record<string, unknown>
-        if (typeof msg.id === 'number' && this.waiters.has(msg.id)) {
-          const waiter = this.waiters.get(msg.id)!
-          this.waiters.delete(msg.id)
-          waiter.resolve(msg)
-        }
-      } catch {
-        // ignore
-      }
+      // Modern MCP stdio transport is newline-delimited JSON
+      const nl = this.buffer.indexOf('\n')
+      if (nl < 0) return
+      const line = this.buffer.slice(0, nl).replace(/\r$/, '')
+      this.buffer = this.buffer.slice(nl + 1)
+      if (!line.trim()) continue
+      if (/^Content-Length:/i.test(line)) continue
+      this.handleIncoming(line)
     }
   }
+
+  private handleIncoming(raw: string): void {
+    try {
+      const msg = JSON.parse(raw) as Record<string, unknown>
+      if (typeof msg.id === 'number' && this.waiters.has(msg.id)) {
+        const waiter = this.waiters.get(msg.id)!
+        this.waiters.delete(msg.id)
+        waiter.resolve(msg)
+      }
+    } catch {
+      // ignore non-JSON noise
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function formatMcpContent(content: unknown): string {
