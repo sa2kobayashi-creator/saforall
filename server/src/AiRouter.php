@@ -3,13 +3,18 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/RouterPolicy.php';
+require_once __DIR__ . '/UsageService.php';
 
 final class AiRouter
 {
-    public const ENGINES = ['auto', 'cursor', 'openai', 'gemini', 'workers'];
+    public const ENGINES = ['auto', 'openai', 'gemini', 'claude', 'cursor', 'workers'];
+
+    /** Product Auto defaults: OpenAI / Gemini / Claude. Cursor & Workers remain opt-in. */
+    /** @var list<string> */
+    public const PROVIDER_ENGINES = ['openai', 'gemini', 'claude', 'cursor', 'workers'];
 
     /** @var list<string> */
-    public const PROVIDER_ENGINES = ['workers', 'gemini', 'openai', 'cursor'];
+    public const DEFAULT_ENABLED = ['openai', 'gemini', 'claude'];
 
     /**
      * @param array<string, mixed> $settings
@@ -19,6 +24,8 @@ final class AiRouter
      *   task_type:string,
      *   fallback_from:?string,
      *   fallback_reason:?string,
+     *   budget_warning:?string,
+     *   estimated_usd:float,
      *   mode:string,
      *   policy_profile:string
      * }
@@ -57,6 +64,14 @@ final class AiRouter
                 );
             }
 
+            if (!UsageService::userCanAfford($pdo, $settings, 0.0001)) {
+                Response::error(
+                    'USER_BUDGET_EXCEEDED',
+                    'ユーザープランの月額 AI 利用上限に達しています。プランを上げるか翌月までお待ちください。',
+                    429
+                );
+            }
+
             $preferred = self::engineForTask($taskType, $policy, $mode);
             // Ask で Cursor 回避など、ポリシーで希望を再調整
             $preferred = self::applyModeGuards($preferred, $taskType, $policy, $mode);
@@ -70,28 +85,52 @@ final class AiRouter
                 $pdo,
                 $settings,
                 $policy,
-                $mode
+                $mode,
+                $message,
+                $taskType
             );
 
             if ($engine === null) {
+                $userLeft = UsageService::userRemaining($pdo, $settings);
                 Response::error(
                     'LLM_NOT_CONFIGURED',
                     $mode === 'agent'
                         ? 'Agent モードには OpenAI（function calling 対応）が必要です。設定で OpenAI API キーを保存してください。Workers / Gemini ではツール Agent を実行できません。'
-                        : 'Auto で有効な AI のうち、キー設定済みかつ月額上限内のものがありません。',
+                        : ($userLeft <= 0
+                            ? 'ユーザープランの月額上限に達しているか、推定コストを賄える Provider がありません。'
+                            : 'Auto で有効な AI のうち、キー設定済みかつ月額上限・推定コスト内のものがありません。'),
                     400
                 );
             }
 
+            $estimated = UsageService::estimateRequestUsd($engine, $message, $taskType);
+
             if ($engine !== $preferred && in_array($preferred, $enabled, true)) {
                 $fallbackFrom = $preferred;
-                $fallbackReason = self::label($preferred) . ' が使えないため '
-                    . self::label($engine) . ' に切り替えました';
+                $level = self::budgetLevelFor($pdo, $settings, $preferred);
+                $prefEst = UsageService::estimateRequestUsd($preferred, $message, $taskType);
+                if (!UsageService::canAffordRequest($pdo, $settings, $preferred, $prefEst)
+                    || !UsageService::userCanAfford($pdo, $settings, $prefEst)) {
+                    $fallbackReason = self::label($preferred) . ' の推定コスト（約 $'
+                        . number_format($prefEst, 4) . '）が残予算を超えるため '
+                        . self::label($engine) . ' に切り替えました';
+                } elseif (in_array($level, ['warn85', 'warn95', 'exceeded'], true)) {
+                    $fallbackReason = self::label($preferred) . ' の予算しきい値（'
+                        . $level . '）のため ' . self::label($engine) . ' に切り替えました';
+                } elseif (!($ready[$preferred] ?? false)) {
+                    $fallbackReason = self::label($preferred) . ' が未設定のため '
+                        . self::label($engine) . ' に切り替えました';
+                } else {
+                    $fallbackReason = self::label($preferred) . ' が使えないため '
+                        . self::label($engine) . ' に切り替えました';
+                }
             } elseif ($engine !== $preferred && !in_array($preferred, $enabled, true)) {
                 $fallbackFrom = $preferred;
                 $fallbackReason = self::label($preferred) . ' は Auto で無効のため '
                     . self::label($engine) . ' を使います';
             }
+
+            $budgetWarning = self::composeBudgetWarning($pdo, $settings, $engine, $estimated);
 
             return [
                 'requested' => $requested,
@@ -99,6 +138,8 @@ final class AiRouter
                 'task_type' => $taskType,
                 'fallback_from' => $fallbackFrom,
                 'fallback_reason' => $fallbackReason,
+                'budget_warning' => $budgetWarning,
+                'estimated_usd' => $estimated,
                 'mode' => $mode,
                 'policy_profile' => (string) $policy['profile'],
             ];
@@ -106,7 +147,7 @@ final class AiRouter
 
         // 固定エンジン: Auto の有効リストとは独立（明示選択を優先）
         $engine = $requested;
-        if ($mode === 'agent' && in_array($engine, ['workers', 'gemini'], true)) {
+        if ($mode === 'agent' && in_array($engine, ['workers', 'gemini', 'claude'], true)) {
             Response::error(
                 'AGENT_ENGINE_UNSUPPORTED',
                 self::label($engine) . ' は Agent（ツール実行）に未対応です。OpenAI（api.openai.com）を選択してください。',
@@ -128,12 +169,36 @@ final class AiRouter
             );
         }
 
+        $estimated = UsageService::estimateRequestUsd($engine, $message, $taskType);
+        if (!UsageService::userCanAfford($pdo, $settings, $estimated)) {
+            Response::error(
+                'USER_BUDGET_EXCEEDED',
+                'ユーザープランの残予算（$'
+                    . number_format(UsageService::userRemaining($pdo, $settings), 4)
+                    . '）では推定コスト（約 $' . number_format($estimated, 4) . '）を実行できません。',
+                429
+            );
+        }
+        if (!UsageService::canAffordRequest($pdo, $settings, $engine, $estimated)) {
+            Response::error(
+                'BUDGET_EXCEEDED',
+                self::label($engine) . ' の残予算（$'
+                    . number_format(UsageService::remainingBudget($pdo, $settings, $engine), 4)
+                    . '）では推定コスト（約 $' . number_format($estimated, 4) . '）を実行できません。',
+                429
+            );
+        }
+
+        $budgetWarning = self::composeBudgetWarning($pdo, $settings, $engine, $estimated);
+
         return [
             'requested' => $requested,
             'engine' => $engine,
             'task_type' => $taskType,
             'fallback_from' => null,
             'fallback_reason' => null,
+            'budget_warning' => $budgetWarning,
+            'estimated_usd' => $estimated,
             'mode' => $mode,
             'policy_profile' => (string) $policy['profile'],
         ];
@@ -146,7 +211,7 @@ final class AiRouter
     public static function enabledEngines(array $settings): array
     {
         $raw = AppSettings::str($settings, 'router.enabled_engines');
-        $defaults = self::PROVIDER_ENGINES;
+        $defaults = self::DEFAULT_ENABLED;
 
         if ($raw === '') {
             return $defaults;
@@ -183,6 +248,7 @@ final class AiRouter
             $openaiKey = AppSettings::secret($settings, 'llm.api_key', 'SAFORALL_API_KEY');
         }
         $geminiKey = AppSettings::secret($settings, 'llm.gemini.api_key', 'GEMINI_API_KEY');
+        $claudeKey = AppSettings::secret($settings, 'llm.claude.api_key', 'ANTHROPIC_API_KEY');
         $cursorKey = AppSettings::secret($settings, 'llm.cursor.api_key', 'CURSOR_API_KEY');
         $workersToken = AppSettings::secret($settings, 'llm.workers.api_token', 'CLOUDFLARE_API_TOKEN');
         if ($workersToken === '') {
@@ -196,6 +262,7 @@ final class AiRouter
         return [
             'openai' => $openaiKey !== '',
             'gemini' => $geminiKey !== '',
+            'claude' => $claudeKey !== '',
             'cursor' => $cursorKey !== '',
             'workers' => $workersToken !== '' && $workersAccount !== '',
         ];
@@ -207,23 +274,24 @@ final class AiRouter
      */
     private static function preferenceChain(string $preferred, array $policy, string $mode = 'ask'): array
     {
-        // Agent は OpenAI function calling（Composer / edit_file）が必要。Workers へ落とさない。
+        // Agent は OpenAI function calling（Composer / edit_file）が必要。
         if ($mode === 'agent') {
-            return ['openai', 'cursor'];
+            return ['openai'];
         }
 
         $cheapMid = !empty($policy['gemini_for_mid_tasks']);
         $chains = [
-            'workers' => $cheapMid
-                ? ['workers', 'gemini', 'openai', 'cursor']
-                : ['workers', 'openai', 'gemini', 'cursor'],
-            'gemini' => ['gemini', 'workers', 'openai', 'cursor'],
+            'gemini' => ['gemini', 'openai', 'claude', 'workers', 'cursor'],
             'openai' => $cheapMid
-                ? ['openai', 'gemini', 'workers', 'cursor']
-                : ['openai', 'workers', 'gemini', 'cursor'],
-            'cursor' => ['cursor', 'openai', 'gemini', 'workers'],
+                ? ['openai', 'gemini', 'claude', 'workers', 'cursor']
+                : ['openai', 'claude', 'gemini', 'workers', 'cursor'],
+            'claude' => ['claude', 'openai', 'gemini', 'workers', 'cursor'],
+            'workers' => $cheapMid
+                ? ['workers', 'gemini', 'openai', 'claude', 'cursor']
+                : ['workers', 'openai', 'gemini', 'claude', 'cursor'],
+            'cursor' => ['cursor', 'claude', 'openai', 'gemini', 'workers'],
         ];
-        return $chains[$preferred] ?? ['openai', 'gemini', 'workers', 'cursor'];
+        return $chains[$preferred] ?? ['openai', 'gemini', 'claude', 'workers', 'cursor'];
     }
 
     /**
@@ -240,38 +308,137 @@ final class AiRouter
         PDO $pdo,
         array $settings,
         array $policy,
-        string $mode
+        string $mode,
+        string $message,
+        string $taskType
     ): ?string {
+        // Pass 1: normal / warn70 only（85%+ はスキップ）
         foreach ($chain as $engine) {
-            if (!in_array($engine, $enabled, true)) {
+            if (!self::candidateOk(
+                $engine,
+                $enabled,
+                $ready,
+                $policy,
+                $mode,
+                $pdo,
+                $settings,
+                false,
+                $message,
+                $taskType
+            )) {
                 continue;
             }
-            if (!($ready[$engine] ?? false)) {
-                continue;
-            }
-            if (!self::engineAllowedByPolicy($engine, $policy, $mode)) {
-                continue;
-            }
-            if (!self::withinBudget($pdo, $settings, $engine)) {
+            return $engine;
+        }
+
+        // Pass 2: allow warn85（まだ 95% 未満）
+        foreach ($chain as $engine) {
+            if (!self::candidateOk(
+                $engine,
+                $enabled,
+                $ready,
+                $policy,
+                $mode,
+                $pdo,
+                $settings,
+                true,
+                $message,
+                $taskType
+            )) {
                 continue;
             }
             return $engine;
         }
 
         foreach ($enabled as $engine) {
-            if (!($ready[$engine] ?? false)) {
-                continue;
-            }
-            if (!self::engineAllowedByPolicy($engine, $policy, $mode)) {
-                continue;
-            }
-            if (!self::withinBudget($pdo, $settings, $engine)) {
+            if (!self::candidateOk(
+                $engine,
+                $enabled,
+                $ready,
+                $policy,
+                $mode,
+                $pdo,
+                $settings,
+                true,
+                $message,
+                $taskType
+            )) {
                 continue;
             }
             return $engine;
         }
 
         return null;
+    }
+
+    /**
+     * @param list<string> $enabled
+     * @param array<string, bool> $ready
+     * @param array<string, mixed> $policy
+     * @param array<string, mixed> $settings
+     */
+    private static function candidateOk(
+        string $engine,
+        array $enabled,
+        array $ready,
+        array $policy,
+        string $mode,
+        PDO $pdo,
+        array $settings,
+        bool $allowWarn85,
+        string $message,
+        string $taskType
+    ): bool {
+        if (!in_array($engine, $enabled, true)) {
+            return false;
+        }
+        if (!($ready[$engine] ?? false)) {
+            return false;
+        }
+        if (!self::engineAllowedByPolicy($engine, $policy, $mode)) {
+            return false;
+        }
+        $level = self::budgetLevelFor($pdo, $settings, $engine);
+        if ($level === 'exceeded' || $level === 'warn95') {
+            return false;
+        }
+        if ($level === 'warn85' && !$allowWarn85) {
+            return false;
+        }
+        $estimated = UsageService::estimateRequestUsd($engine, $message, $taskType);
+        if (!UsageService::canAffordRequest($pdo, $settings, $engine, $estimated)) {
+            return false;
+        }
+        if (!UsageService::userCanAfford($pdo, $settings, $estimated)) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     */
+    private static function composeBudgetWarning(
+        PDO $pdo,
+        array $settings,
+        string $engine,
+        float $estimated
+    ): ?string {
+        $parts = [];
+        $chosenLevel = self::budgetLevelFor($pdo, $settings, $engine);
+        if ($chosenLevel === 'warn70' || $chosenLevel === 'warn85') {
+            $parts[] = self::label($engine) . ' の月額使用率が警告ラインです（' . $chosenLevel . '）';
+        }
+        $user = UsageService::userBudgetSummary($pdo, $settings);
+        if ($user['level'] === 'warn70' || $user['level'] === 'warn85') {
+            $parts[] = 'ユーザープラン（' . $user['plan'] . '）の使用率が警告ラインです';
+        }
+        $remaining = UsageService::remainingBudget($pdo, $settings, $engine);
+        if ($estimated > 0 && $remaining > 0 && $estimated >= $remaining * 0.5) {
+            $parts[] = '今回の推定コスト約 $' . number_format($estimated, 4)
+                . '（' . self::label($engine) . ' 残 $' . number_format($remaining, 4) . '）';
+        }
+        return $parts !== [] ? implode(' / ', $parts) : null;
     }
 
     /**
@@ -297,6 +464,7 @@ final class AiRouter
             'cursor' => 'Cursor',
             'openai' => 'OpenAI',
             'gemini' => 'Gemini',
+            'claude' => 'Claude',
             'workers' => 'Workers AI',
             default => $engine,
         };
@@ -364,14 +532,14 @@ final class AiRouter
         $strongOnly = !empty($policy['cursor_strong_signals_only']);
 
         return match ($taskType) {
-            'light_qa' => 'workers',
-            'summarize' => $geminiMid ? 'gemini' : 'workers',
+            'light_qa' => $geminiMid ? 'gemini' : 'gemini',
+            'summarize' => 'gemini',
             'explain' => $geminiMid ? 'gemini' : 'openai',
             'codegen' => 'openai',
-            'design' => 'openai',
-            // 強いシグナルのみ Cursor（標準）
-            'patch_multi', 'repo_analysis', 'test_fix', 'long_dev' => 'cursor',
-            'patch_small' => ($strongOnly && $mode === 'agent') ? 'cursor' : 'openai',
+            'design' => 'claude',
+            // 重い作業は製品 API では Claude（Cursor は明示選択 / オプトイン）
+            'patch_multi', 'repo_analysis', 'test_fix', 'long_dev' => 'claude',
+            'patch_small' => ($strongOnly && $mode === 'agent') ? 'openai' : 'openai',
             default => $geminiMid ? 'gemini' : 'openai',
         };
     }
@@ -386,7 +554,7 @@ final class AiRouter
             return $preferred;
         }
 
-        if ($preferred === 'gemini' || $preferred === 'cursor' || $preferred === 'workers') {
+        if ($preferred === 'gemini' || $preferred === 'cursor' || $preferred === 'workers' || $preferred === 'claude') {
             return 'openai';
         }
 
@@ -429,11 +597,15 @@ final class AiRouter
      */
     public static function withinBudget(PDO $pdo, array $settings, string $engine): bool
     {
+        return self::budgetLevelFor($pdo, $settings, $engine) !== 'exceeded';
+    }
+
+    /** @return 'ok'|'warn70'|'warn85'|'warn95'|'exceeded' */
+    private static function budgetLevelFor(PDO $pdo, array $settings, string $engine): string
+    {
         $limit = UsageService::monthlyLimit($settings, $engine);
-        if ($limit <= 0) {
-            return false;
-        }
-        return UsageService::spentThisMonth($pdo, $engine) < $limit;
+        $spent = UsageService::spentThisMonth($pdo, $engine);
+        return UsageService::budgetLevel($spent, $limit);
     }
 
     /**

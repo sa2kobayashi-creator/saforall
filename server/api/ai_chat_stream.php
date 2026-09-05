@@ -8,6 +8,7 @@ require_once dirname(__DIR__) . '/src/UsageService.php';
 require_once dirname(__DIR__) . '/src/AiRouter.php';
 require_once dirname(__DIR__) . '/src/LlmClient.php';
 require_once dirname(__DIR__) . '/src/GeminiClient.php';
+require_once dirname(__DIR__) . '/src/ClaudeClient.php';
 require_once dirname(__DIR__) . '/src/ChatService.php';
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
@@ -52,10 +53,12 @@ try {
         'task_type' => $prepared['task_type'],
         'model' => $prepared['model'],
         'fallback_reason' => $prepared['fallback_reason'],
+        'budget_warning' => $prepared['budget_warning'] ?? null,
+        'estimated_usd' => $prepared['estimated_usd'] ?? 0,
     ]);
 
-    $assistantText = $prepared['engine'] === 'gemini'
-        ? GeminiClient::chatStream(
+    if ($prepared['engine'] === 'gemini') {
+        $assistantText = GeminiClient::chatStream(
             $prepared['api_key'],
             $prepared['model'],
             $prepared['messages'],
@@ -65,8 +68,22 @@ try {
                     'text' => $delta,
                 ]);
             }
-        )
-        : LlmClient::chatStream(
+        );
+    } elseif ($prepared['engine'] === 'claude') {
+        $assistantText = ClaudeClient::chatStream(
+            $prepared['api_key'],
+            $prepared['model'],
+            $prepared['messages'],
+            static function (string $delta) use ($send): void {
+                $send([
+                    'type' => 'delta',
+                    'text' => $delta,
+                ]);
+            },
+            (string) ($prepared['base_url'] ?? '')
+        );
+    } else {
+        $assistantText = LlmClient::chatStream(
             $prepared['base_url'],
             $prepared['api_key'],
             $prepared['model'],
@@ -79,6 +96,7 @@ try {
             },
             $prepared['extra_headers']
         );
+    }
 
     $assistantMessage = ChatService::saveAssistant($pdo, $prepared['session_id'], $assistantText);
     $inputTokens = UsageService::tokensFromText($prepared['messages'][count($prepared['messages']) - 1]['content'] ?? '');

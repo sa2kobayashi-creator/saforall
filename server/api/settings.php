@@ -11,6 +11,7 @@ $secretKeys = [
     'llm.api_key',
     'llm.openai.api_key',
     'llm.gemini.api_key',
+    'llm.claude.api_key',
     'llm.cursor.api_key',
     'llm.workers.api_token',
     'llm.simple.api_token',
@@ -23,6 +24,7 @@ if ($method === 'GET') {
         'llm.api_key_set' => false,
         'llm.openai.api_key_set' => false,
         'llm.gemini.api_key_set' => false,
+        'llm.claude.api_key_set' => false,
         'llm.cursor.api_key_set' => false,
         'llm.workers.api_token_set' => false,
         'llm.simple.api_token_set' => false,
@@ -44,6 +46,10 @@ if ($method === 'GET') {
         }
         if ($key === 'llm.gemini.api_key') {
             $flags['llm.gemini.api_key_set'] = $isSet;
+            continue;
+        }
+        if ($key === 'llm.claude.api_key') {
+            $flags['llm.claude.api_key_set'] = $isSet;
             continue;
         }
         if ($key === 'llm.cursor.api_key') {

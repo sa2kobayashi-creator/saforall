@@ -25,6 +25,11 @@ final class ModelCatalog
             ['id' => 'gemini-2.5-flash', 'tier' => 'standard', 'cost' => 3],
             ['id' => 'gemini-2.5-pro', 'tier' => 'strong', 'cost' => 4],
         ],
+        'claude' => [
+            ['id' => 'claude-haiku-4-20250414', 'tier' => 'cheap', 'cost' => 1],
+            ['id' => 'claude-sonnet-4-20250514', 'tier' => 'standard', 'cost' => 2],
+            ['id' => 'claude-opus-4-20250514', 'tier' => 'strong', 'cost' => 3],
+        ],
         'workers' => [
             ['id' => '@cf/meta/llama-3.1-8b-instruct-fp8', 'tier' => 'cheap', 'cost' => 1],
             ['id' => '@cf/meta/llama-3.1-8b-instruct-fast', 'tier' => 'cheap', 'cost' => 2],
@@ -47,6 +52,7 @@ final class ModelCatalog
     private const DEFAULT_ENABLED = [
         'openai' => ['gpt-4.1-mini', 'gpt-4.1'],
         'gemini' => ['gemini-flash-latest', 'gemini-2.5-flash'],
+        'claude' => ['claude-sonnet-4-20250514', 'claude-haiku-4-20250414'],
         'workers' => [
             '@cf/meta/llama-3.1-8b-instruct-fp8',
             '@cf/qwen/qwen2.5-coder-32b-instruct',

@@ -1,4 +1,4 @@
-export type AiEngine = 'auto' | 'cursor' | 'openai' | 'gemini' | 'workers'
+export type AiEngine = 'auto' | 'cursor' | 'openai' | 'gemini' | 'claude' | 'workers'
 export type ProviderEngine = Exclude<AiEngine, 'auto'>
 export type ModelTier = 'cheap' | 'standard' | 'strong'
 
@@ -55,6 +55,12 @@ export const WORKERS_MODEL_CATALOG: ModelOption[] = [
   }
 ]
 
+export const CLAUDE_MODEL_CATALOG: ModelOption[] = [
+  { id: 'claude-haiku-4-20250414', label: 'Claude Haiku 4（安価）', tier: 'cheap', costRank: 1 },
+  { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4（標準・推奨）', tier: 'standard', costRank: 2 },
+  { id: 'claude-opus-4-20250514', label: 'Claude Opus 4（強）', tier: 'strong', costRank: 3 }
+]
+
 export const CURSOR_MODEL_CATALOG: ModelOption[] = [
   { id: 'auto', label: 'Auto（サーバ側選択）', tier: 'cheap', costRank: 1 },
   { id: 'auto-smart', label: 'Cursor Router auto-smart', tier: 'cheap', costRank: 2 },
@@ -85,6 +91,7 @@ export function optionsForEngine(engine: ProviderEngine, enabled: string[]): Mod
 
 export const DEFAULT_LLM_MODEL = 'gpt-4.1-mini'
 export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest'
+export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-20250514'
 export const DEFAULT_CURSOR_MODEL = 'grok-4.6'
 export const DEFAULT_WORKERS_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8'
 
@@ -98,6 +105,7 @@ export const WORKERS_AI_MODEL_OPTIONS = WORKERS_MODEL_CATALOG.map((m) => m.id)
 export const ENGINE_MODEL_CATALOG: Record<ProviderEngine, ModelOption[]> = {
   openai: OPENAI_MODEL_CATALOG,
   gemini: GEMINI_MODEL_CATALOG,
+  claude: CLAUDE_MODEL_CATALOG,
   workers: WORKERS_MODEL_CATALOG,
   cursor: CURSOR_MODEL_CATALOG
 }
@@ -105,6 +113,7 @@ export const ENGINE_MODEL_CATALOG: Record<ProviderEngine, ModelOption[]> = {
 export const DEFAULT_ENABLED_MODELS: Record<ProviderEngine, string[]> = {
   openai: ['gpt-4.1-mini', 'gpt-4.1'],
   gemini: ['gemini-flash-latest', 'gemini-2.5-flash'],
+  claude: ['claude-sonnet-4-20250514', 'claude-haiku-4-20250414'],
   workers: ['@cf/meta/llama-3.1-8b-instruct-fp8', '@cf/qwen/qwen2.5-coder-32b-instruct'],
   cursor: [
     'auto',
@@ -184,24 +193,50 @@ export const DEFAULT_COST_LIMITS = {
   cursor: 70,
   openai: 20,
   gemini: 10,
+  claude: 10,
   workers: 5
 } as const
 
-export const USAGE_ENGINE_KEYS = ['cursor', 'openai', 'gemini', 'workers'] as const
+export type UserPlan = 'free' | 'light' | 'standard' | 'unlimited'
+
+export const USER_PLAN_LIMITS: Record<UserPlan, number> = {
+  free: 0.5,
+  light: 2,
+  standard: 5,
+  unlimited: 9999
+}
+
+export const USER_PLAN_LABELS: Record<UserPlan, string> = {
+  free: 'Free（月 $0.50）',
+  light: 'Light（月 $2）',
+  standard: 'Standard（月 $5）',
+  unlimited: 'Unlimited（開発用・実質無制限）'
+}
+
+export const DEFAULT_USER_PLAN: UserPlan = 'unlimited'
+
+export function parseUserPlan(raw: unknown): UserPlan {
+  if (raw === 'free' || raw === 'light' || raw === 'standard' || raw === 'unlimited') {
+    return raw
+  }
+  return DEFAULT_USER_PLAN
+}
+
+export const USAGE_ENGINE_KEYS = ['openai', 'gemini', 'claude', 'cursor', 'workers'] as const
 
 export const ENGINE_LABELS: Record<(typeof USAGE_ENGINE_KEYS)[number], string> = {
-  cursor: 'Cursor',
   openai: 'OpenAI',
   gemini: 'Gemini',
+  claude: 'Claude',
+  cursor: 'Cursor',
   workers: 'Workers AI'
 }
 
-/** Auto パイプライン既定（すべて有効） */
+/** Auto パイプライン既定（製品 V1: OpenAI / Gemini / Claude） */
 export const DEFAULT_ROUTER_ENGINES: Array<(typeof USAGE_ENGINE_KEYS)[number]> = [
-  'workers',
-  'gemini',
   'openai',
-  'cursor'
+  'gemini',
+  'claude'
 ]
 
 export type RouterProfile = 'balanced' | 'cheapest' | 'quality'

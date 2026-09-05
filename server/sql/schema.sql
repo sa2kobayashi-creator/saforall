@@ -93,8 +93,14 @@ INSERT INTO `settings` (`setting_key`, `setting_value`) VALUES
   ('cost.cursor.monthly_usd', '70'),
   ('cost.openai.monthly_usd', '20'),
   ('cost.gemini.monthly_usd', '10'),
+  ('cost.claude.monthly_usd', '10'),
   ('cost.workers.monthly_usd', '5'),
+  ('llm.claude.model', 'claude-sonnet-4-20250514'),
+  ('llm.claude.models', '["claude-sonnet-4-20250514","claude-haiku-4-20250414"]'),
+  ('llm.claude.base_url', 'https://api.anthropic.com'),
   ('llm.workers.model', '@cf/meta/llama-3.1-8b-instruct'),
   ('llm.workers.gateway_id', 'default'),
+  ('router.enabled_engines', '["openai","gemini","claude"]'),
+  ('billing.user_plan', 'unlimited'),
   ('app.locale', 'ja')
 ON DUPLICATE KEY UPDATE `setting_key` = `setting_key`;

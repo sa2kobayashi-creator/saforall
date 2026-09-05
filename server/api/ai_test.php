@@ -8,6 +8,7 @@ require_once dirname(__DIR__) . '/src/ModelCatalog.php';
 require_once dirname(__DIR__) . '/src/ChatService.php';
 require_once dirname(__DIR__) . '/src/LlmClient.php';
 require_once dirname(__DIR__) . '/src/GeminiClient.php';
+require_once dirname(__DIR__) . '/src/ClaudeClient.php';
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     Response::error('METHOD_NOT_ALLOWED', 'Use POST', 405);
@@ -18,8 +19,8 @@ $engine = isset($body['engine']) && is_string($body['engine'])
     ? strtolower(trim($body['engine']))
     : '';
 
-if (!in_array($engine, ['openai', 'gemini', 'workers', 'cursor'], true)) {
-    Response::error('INVALID_ENGINE', 'engine=openai|gemini|workers|cursor を指定してください', 400);
+if (!in_array($engine, ['openai', 'gemini', 'claude', 'workers', 'cursor'], true)) {
+    Response::error('INVALID_ENGINE', 'engine=openai|gemini|claude|workers|cursor を指定してください', 400);
 }
 
 $pdo = Database::connection();
@@ -55,6 +56,14 @@ try {
     if ($engine === 'gemini') {
         $text = GeminiClient::chat($provider['api_key'], $provider['model'], $messages);
         $baseUrl = 'gemini-native';
+    } elseif ($engine === 'claude') {
+        $text = ClaudeClient::chat(
+            $provider['api_key'],
+            $provider['model'],
+            $messages,
+            (string) ($provider['base_url'] ?? '')
+        );
+        $baseUrl = (string) ($provider['base_url'] ?? 'https://api.anthropic.com');
     } else {
         $text = LlmClient::chat(
             $provider['base_url'],

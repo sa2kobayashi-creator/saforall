@@ -16,6 +16,8 @@ final class ChatService
      *   task_type:string,
      *   fallback_from:?string,
      *   fallback_reason:?string,
+     *   budget_warning:?string,
+     *   estimated_usd:float,
      *   model:string,
      *   api_key:string,
      *   base_url:string,
@@ -128,8 +130,9 @@ final class ChatService
 
         $systemParts[] = match ($engine) {
             'gemini' => 'レーン: Gemini。要約・翻訳・やや軽い質問向けです。',
+            'claude' => 'レーン: Claude。設計・レビュー・難しいコード修正を丁寧に行ってください。',
             'workers' => 'レーン: Cloudflare Workers AI。簡単な質問・短い文章・ドキュメント向けに短く答えてください。',
-            'cursor' => 'レーン: Cursor Agent。リポジトリ上のコードを調査・修正します。',
+            'cursor' => 'レーン: Cursor Agent（開発者オプトイン）。リポジトリ上のコードを調査・修正します。',
             default => 'レーン: OpenAI。説明・設計・コード提案を丁寧に行ってください。',
         };
 
@@ -300,6 +303,8 @@ final class ChatService
             'task_type' => $decision['task_type'],
             'fallback_from' => $decision['fallback_from'],
             'fallback_reason' => $decision['fallback_reason'],
+            'budget_warning' => $decision['budget_warning'] ?? null,
+            'estimated_usd' => isset($decision['estimated_usd']) ? (float) $decision['estimated_usd'] : 0.0,
             'mode' => $decision['mode'] ?? $mode,
             'policy_profile' => $decision['policy_profile'] ?? 'balanced',
             'model' => $provider['model'],
@@ -337,6 +342,24 @@ final class ChatService
                 'api_key' => $apiKey,
                 // 公式 generateContent を使用（OpenAI 互換エンドポイントは使わない）
                 'base_url' => 'gemini-native',
+                'extra_headers' => [],
+            ];
+        }
+
+        if ($engine === 'claude') {
+            $apiKey = AppSettings::secret($settings, 'llm.claude.api_key', 'ANTHROPIC_API_KEY');
+            if ($apiKey === '') {
+                Response::error(
+                    'LLM_NOT_CONFIGURED',
+                    'Claude API キーが未設定です。設定画面または ANTHROPIC_API_KEY を保存してください。',
+                    400
+                );
+            }
+            $baseUrl = AppSettings::str($settings, 'llm.claude.base_url', 'https://api.anthropic.com');
+            return [
+                'model' => $model,
+                'api_key' => $apiKey,
+                'base_url' => $baseUrl !== '' ? $baseUrl : 'https://api.anthropic.com',
                 'extra_headers' => [],
             ];
         }

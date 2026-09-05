@@ -443,12 +443,16 @@ function isAgentPhase(value: string): value is AgentPhase {
 }
 
 export function isToolAgentCompatibleEndpoint(engine: string, baseUrl: string, model: string): boolean {
-  if (engine === 'workers' || engine === 'gemini' || engine === 'cursor') return false
+  if (engine === 'workers' || engine === 'gemini' || engine === 'claude' || engine === 'cursor') {
+    return false
+  }
   const id = (model || '').trim().toLowerCase()
   if (id.startsWith('@cf/')) return false
   const u = (baseUrl || '').trim().toLowerCase()
   if (!u || u === 'gemini-native') return false
-  if (u.includes('cloudflare.com') || u.includes('workers.ai')) return false
+  if (u.includes('cloudflare.com') || u.includes('workers.ai') || u.includes('anthropic.com')) {
+    return false
+  }
   // Cloudflare Workers OpenAI-compat path
   if (u.includes('/client/v4/accounts/') && u.includes('/ai/')) return false
   return true

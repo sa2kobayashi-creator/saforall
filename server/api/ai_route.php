@@ -50,6 +50,8 @@ Response::ok([
     'task_type' => $prepared['task_type'],
     'fallback_from' => $prepared['fallback_from'],
     'fallback_reason' => $prepared['fallback_reason'],
+    'budget_warning' => $prepared['budget_warning'] ?? null,
+    'estimated_usd' => $prepared['estimated_usd'] ?? 0,
     'mode' => $prepared['mode'] ?? 'ask',
     'policy_profile' => $prepared['policy_profile'] ?? 'balanced',
     'model' => $prepared['model'],

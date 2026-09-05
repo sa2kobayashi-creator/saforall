@@ -73,6 +73,7 @@ function loadEngine(): AiEngine {
     saved === 'cursor' ||
     saved === 'openai' ||
     saved === 'gemini' ||
+    saved === 'claude' ||
     saved === 'workers' ||
     saved === 'auto'
   ) {
@@ -235,6 +236,7 @@ export function ChatPanel({
         setEnabledByEngine({
           openai: parseModelList(settings['llm.openai.models'], DEFAULT_ENABLED_MODELS.openai),
           gemini: parseModelList(settings['llm.gemini.models'], DEFAULT_ENABLED_MODELS.gemini),
+          claude: parseModelList(settings['llm.claude.models'], DEFAULT_ENABLED_MODELS.claude),
           workers: parseModelList(
             settings['llm.workers.models'] ?? settings['llm.simple.models'],
             DEFAULT_ENABLED_MODELS.workers
@@ -952,10 +954,15 @@ export function ChatPanel({
           if (event.type === 'route') {
             usedEngine = event.engine
             const reason = event.fallback_reason ? `（${event.fallback_reason}）` : ''
+            const warn = event.budget_warning ? ` ⚠${event.budget_warning}` : ''
+            const est =
+              typeof event.estimated_usd === 'number' && event.estimated_usd > 0
+                ? ` · est $${event.estimated_usd.toFixed(4)}`
+                : ''
             const profile = event.policy_profile ? ` · ${event.policy_profile}` : ''
             const modeTag = event.mode ? ` · ${event.mode}` : ''
             setRouteLabel(
-              `${event.engine} · ${event.model} / ${event.task_type}${modeTag}${profile}${reason}`
+              `${event.engine} · ${event.model} / ${event.task_type}${modeTag}${profile}${est}${reason}${warn}`
             )
             if (event.usage) {
               const parts = USAGE_ENGINE_KEYS.map((key) => {
@@ -1226,8 +1233,9 @@ export function ChatPanel({
                 >
                   <option value="auto">自動</option>
                   <option value="openai">OpenAI</option>
-                  <option value="cursor">Cursor</option>
                   <option value="gemini">Gemini</option>
+                  <option value="claude">Claude</option>
+                  <option value="cursor">Cursor</option>
                   <option value="workers">Workers</option>
                 </select>
               </label>
@@ -1301,9 +1309,11 @@ export function ChatPanel({
                     ? 'Cursor'
                     : engine === 'gemini'
                       ? 'Gemini（ツール不可）'
-                      : engine === 'workers'
-                        ? 'Workers（ツール不可）'
-                        : 'OpenAI'}
+                      : engine === 'claude'
+                        ? 'Claude（ツール不可）'
+                        : engine === 'workers'
+                          ? 'Workers（ツール不可）'
+                          : 'OpenAI'}
                 {routeLabel ? ` · ${routeLabel}` : ''}
               </span>
               <button

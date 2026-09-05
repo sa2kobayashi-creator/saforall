@@ -12,8 +12,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 }
 
 $engine = isset($_GET['engine']) ? strtolower(trim((string) $_GET['engine'])) : '';
-if (!in_array($engine, ['openai', 'gemini', 'workers', 'cursor'], true)) {
-    Response::error('INVALID_ENGINE', 'engine=openai|gemini|workers|cursor を指定してください', 400);
+if (!in_array($engine, ['openai', 'gemini', 'claude', 'workers', 'cursor'], true)) {
+    Response::error('INVALID_ENGINE', 'engine=openai|gemini|claude|workers|cursor を指定してください', 400);
 }
 
 $pdo = Database::connection();
@@ -23,6 +23,7 @@ try {
     $models = match ($engine) {
         'gemini' => fetchGeminiModels($settings),
         'openai' => fetchOpenAiModels($settings),
+        'claude' => fetchClaudeModels($settings),
         'workers' => fetchWorkersModels($settings),
         'cursor' => fetchCursorModels(),
     };
@@ -200,6 +201,21 @@ function fetchWorkersModels(array $settings): array
 
     usort($out, static fn (array $a, array $b): int => strcmp($a['id'], $b['id']));
     return array_slice($out, 0, 80);
+}
+
+/**
+ * @param array<string, mixed> $settings
+ * @return list<array{id:string,label:string,tier:string}>
+ */
+function fetchClaudeModels(array $settings): array
+{
+    // Anthropic 公開の安定一覧 API が無いため、アプリ側カタログを返す
+    unset($settings);
+    return [
+        ['id' => 'claude-haiku-4-20250414', 'label' => 'Claude Haiku 4', 'tier' => 'cheap'],
+        ['id' => 'claude-sonnet-4-20250514', 'label' => 'Claude Sonnet 4', 'tier' => 'standard'],
+        ['id' => 'claude-opus-4-20250514', 'label' => 'Claude Opus 4', 'tier' => 'strong'],
+    ];
 }
 
 /**

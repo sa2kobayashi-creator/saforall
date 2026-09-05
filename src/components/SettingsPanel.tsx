@@ -2,24 +2,29 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { ModelMultiSelect } from './ModelMultiSelect'
 import {
   DEFAULT_COST_LIMITS,
+  DEFAULT_CLAUDE_MODEL,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_ENABLED_MODELS,
   DEFAULT_GEMINI_MODEL,
   DEFAULT_LLM_MODEL,
   DEFAULT_ROUTER_ENGINES,
   DEFAULT_ROUTER_PROFILE,
+  DEFAULT_USER_PLAN,
   DEFAULT_WORKERS_MODEL,
   ENGINE_LABELS,
   ROUTER_PROFILE_LABELS,
   USAGE_ENGINE_KEYS,
+  USER_PLAN_LABELS,
   parseEngineList,
   parseModelList,
   parseRouterAutoPolicy,
   parseRouterProfile,
+  parseUserPlan,
   routerPolicyPreset,
   type ProviderEngine,
   type RouterAutoPolicy,
-  type RouterProfile
+  type RouterProfile,
+  type UserPlan
 } from '../lib/llmModels'
 import { parseLocale, useI18n } from '../i18n'
 import {
@@ -60,6 +65,10 @@ export function SettingsPanel({
   const [geminiKeySet, setGeminiKeySet] = useState(false)
   const [geminiModels, setGeminiModels] = useState<string[]>([...DEFAULT_ENABLED_MODELS.gemini])
 
+  const [claudeKey, setClaudeKey] = useState('')
+  const [claudeKeySet, setClaudeKeySet] = useState(false)
+  const [claudeModels, setClaudeModels] = useState<string[]>([...DEFAULT_ENABLED_MODELS.claude])
+
   const [cursorKey, setCursorKey] = useState('')
   const [cursorKeySet, setCursorKeySet] = useState(false)
   const [cursorModels, setCursorModels] = useState<string[]>([...DEFAULT_ENABLED_MODELS.cursor])
@@ -74,7 +83,9 @@ export function SettingsPanel({
   const [limitCursor, setLimitCursor] = useState(String(DEFAULT_COST_LIMITS.cursor))
   const [limitOpenai, setLimitOpenai] = useState(String(DEFAULT_COST_LIMITS.openai))
   const [limitGemini, setLimitGemini] = useState(String(DEFAULT_COST_LIMITS.gemini))
+  const [limitClaude, setLimitClaude] = useState(String(DEFAULT_COST_LIMITS.claude))
   const [limitWorkers, setLimitWorkers] = useState(String(DEFAULT_COST_LIMITS.workers))
+  const [userPlan, setUserPlan] = useState<UserPlan>(DEFAULT_USER_PLAN)
   const [routerEngines, setRouterEngines] = useState<Array<(typeof USAGE_ENGINE_KEYS)[number]>>([
     ...DEFAULT_ROUTER_ENGINES
   ])
@@ -125,6 +136,9 @@ export function SettingsPanel({
         setGeminiModels(
           parseModelList(settings['llm.gemini.models'], DEFAULT_ENABLED_MODELS.gemini)
         )
+        setClaudeModels(
+          parseModelList(settings['llm.claude.models'], DEFAULT_ENABLED_MODELS.claude)
+        )
         setCursorModels(
           parseModelList(settings['llm.cursor.models'], DEFAULT_ENABLED_MODELS.cursor)
         )
@@ -155,6 +169,7 @@ export function SettingsPanel({
           settings['llm.openai.api_key_set'] === true || settings['llm.api_key_set'] === true
         )
         setGeminiKeySet(settings['llm.gemini.api_key_set'] === true)
+        setClaudeKeySet(settings['llm.claude.api_key_set'] === true)
         setCursorKeySet(settings['llm.cursor.api_key_set'] === true)
         {
           const runtime = settings['llm.cursor.runtime']
@@ -168,6 +183,7 @@ export function SettingsPanel({
         )
         setOpenaiKey('')
         setGeminiKey('')
+        setClaudeKey('')
         setCursorKey('')
         setWorkersToken('')
 
@@ -180,9 +196,13 @@ export function SettingsPanel({
         if (typeof settings['cost.gemini.monthly_usd'] === 'string') {
           setLimitGemini(settings['cost.gemini.monthly_usd'])
         }
+        if (typeof settings['cost.claude.monthly_usd'] === 'string') {
+          setLimitClaude(settings['cost.claude.monthly_usd'])
+        }
         if (typeof settings['cost.workers.monthly_usd'] === 'string') {
           setLimitWorkers(settings['cost.workers.monthly_usd'])
         }
+        setUserPlan(parseUserPlan(settings['billing.user_plan']))
         setRouterEngines(parseEngineList(settings['router.enabled_engines'], DEFAULT_ROUTER_ENGINES))
         if (typeof settings['app.locale'] === 'string') {
           setLocale(parseLocale(settings['app.locale']))
@@ -248,9 +268,11 @@ export function SettingsPanel({
         ? openaiKey.trim() !== ''
         : engine === 'gemini'
           ? geminiKey.trim() !== ''
-          : engine === 'cursor'
-            ? cursorKey.trim() !== ''
-            : workersToken.trim() !== ''
+          : engine === 'claude'
+            ? claudeKey.trim() !== ''
+            : engine === 'cursor'
+              ? cursorKey.trim() !== ''
+              : workersToken.trim() !== ''
 
     if (pendingKey) {
       setEngineTestStatus(
@@ -266,9 +288,11 @@ export function SettingsPanel({
         ? openaiKeySet
         : engine === 'gemini'
           ? geminiKeySet
-          : engine === 'cursor'
-            ? cursorKeySet
-            : workersTokenSet && workersAccountId.trim() !== ''
+          : engine === 'claude'
+            ? claudeKeySet
+            : engine === 'cursor'
+              ? cursorKeySet
+              : workersTokenSet && workersAccountId.trim() !== ''
 
     if (!configured) {
       setEngineTestStatus(engine, false, '設定が不足しています（キー等を保存してください）')
@@ -280,9 +304,11 @@ export function SettingsPanel({
         ? preferred('openai', openaiModels, DEFAULT_LLM_MODEL)
         : engine === 'gemini'
           ? preferred('gemini', geminiModels, DEFAULT_GEMINI_MODEL)
-          : engine === 'cursor'
-            ? preferred('cursor', cursorModels, DEFAULT_CURSOR_MODEL)
-            : preferred('workers', workersModels, DEFAULT_WORKERS_MODEL)
+          : engine === 'claude'
+            ? preferred('claude', claudeModels, DEFAULT_CLAUDE_MODEL)
+            : engine === 'cursor'
+              ? preferred('cursor', cursorModels, DEFAULT_CURSOR_MODEL)
+              : preferred('workers', workersModels, DEFAULT_WORKERS_MODEL)
 
     setTestingEngine(engine)
     setTestStatus((prev) => {
@@ -337,6 +363,8 @@ export function SettingsPanel({
       'llm.model': preferred('openai', openaiModels, DEFAULT_LLM_MODEL),
       'llm.gemini.models': JSON.stringify(geminiModels),
       'llm.gemini.model': preferred('gemini', geminiModels, DEFAULT_GEMINI_MODEL),
+      'llm.claude.models': JSON.stringify(claudeModels),
+      'llm.claude.model': preferred('claude', claudeModels, DEFAULT_CLAUDE_MODEL),
       'llm.cursor.models': JSON.stringify(cursorModels),
       'llm.cursor.model': preferred('cursor', cursorModels, DEFAULT_CURSOR_MODEL),
       'llm.cursor.runtime': cursorRuntime,
@@ -351,7 +379,9 @@ export function SettingsPanel({
       'cost.cursor.monthly_usd': limitCursor.trim() || String(DEFAULT_COST_LIMITS.cursor),
       'cost.openai.monthly_usd': limitOpenai.trim() || String(DEFAULT_COST_LIMITS.openai),
       'cost.gemini.monthly_usd': limitGemini.trim() || String(DEFAULT_COST_LIMITS.gemini),
-      'cost.workers.monthly_usd': limitWorkers.trim() || String(DEFAULT_COST_LIMITS.workers)
+      'cost.claude.monthly_usd': limitClaude.trim() || String(DEFAULT_COST_LIMITS.claude),
+      'cost.workers.monthly_usd': limitWorkers.trim() || String(DEFAULT_COST_LIMITS.workers),
+      'billing.user_plan': userPlan
     }
     if (openaiKey.trim() !== '') {
       settings['llm.openai.api_key'] = openaiKey.trim()
@@ -359,6 +389,9 @@ export function SettingsPanel({
     }
     if (geminiKey.trim() !== '') {
       settings['llm.gemini.api_key'] = geminiKey.trim()
+    }
+    if (claudeKey.trim() !== '') {
+      settings['llm.claude.api_key'] = claudeKey.trim()
     }
     if (cursorKey.trim() !== '') {
       settings['llm.cursor.api_key'] = cursorKey.trim()
@@ -383,6 +416,10 @@ export function SettingsPanel({
     if (geminiKey.trim() !== '') {
       setGeminiKeySet(true)
       setGeminiKey('')
+    }
+    if (claudeKey.trim() !== '') {
+      setClaudeKeySet(true)
+      setClaudeKey('')
     }
     if (cursorKey.trim() !== '') {
       setCursorKeySet(true)
@@ -520,7 +557,25 @@ export function SettingsPanel({
 
           <h3 className="settings-section-title">月額上限</h3>
           <p className="settings-hint">
-            Auto は選んだモデル候補の中から、安いもの／作業に合うものを自動で使います。
+            Provider 上限（開発者側の API 予算）と、ユーザープラン上限（販売時の利用者枠）を分けて管理します。
+            Auto は推定コストが残予算を超える Provider を避けます。
+          </p>
+          <label>
+            ユーザープラン
+            <select
+              value={userPlan}
+              disabled={!backendConnected}
+              onChange={(event) => setUserPlan(parseUserPlan(event.target.value))}
+            >
+              {(Object.keys(USER_PLAN_LABELS) as UserPlan[]).map((plan) => (
+                <option key={plan} value={plan}>
+                  {USER_PLAN_LABELS[plan]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="settings-hint">
+            ローカル開発は Unlimited 推奨。販売時は Free / Light / Standard で利用者ごとの月枠を制限します。
           </p>
           {usageText && <p className="settings-hint">今月の概算: {usageText}</p>}
           {onOpenUsage && (
@@ -547,6 +602,10 @@ export function SettingsPanel({
           <label>
             Gemini 月上限 USD
             <input value={limitGemini} onChange={(event) => setLimitGemini(event.target.value)} />
+          </label>
+          <label>
+            Claude 月上限 USD
+            <input value={limitClaude} onChange={(event) => setLimitClaude(event.target.value)} />
           </label>
           <label>
             Workers AI 月上限 USD
@@ -745,6 +804,43 @@ export function SettingsPanel({
               type="password"
               value={geminiKey}
               onChange={(event) => setGeminiKey(event.target.value)}
+              autoComplete="off"
+            />
+          </label>
+
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">Claude モデル（複数選択）</h3>
+            <button
+              type="button"
+              className="settings-test-btn"
+              disabled={
+                !backendConnected ||
+                (!claudeKeySet && claudeKey.trim() === '') ||
+                testingEngine !== null
+              }
+              onClick={() => void testEngine('claude')}
+            >
+              {testingEngine === 'claude' ? 'テスト中…' : '接続テスト'}
+            </button>
+          </div>
+          {renderTestResult('claude')}
+          <p className="settings-hint">
+            設計・レビュー・難しい修正向け。製品 Auto の既定候補です（Cursor Pro 契約とは別の Anthropic
+            API キーが必要）。
+          </p>
+          <ModelMultiSelect
+            engine="claude"
+            enabled={claudeModels}
+            onChange={setClaudeModels}
+            disabled={!backendConnected}
+            canFetchLatest={backendConnected && (claudeKeySet || claudeKey.trim() !== '')}
+          />
+          <label>
+            API Key {claudeKeySet ? '（設定済み）' : '（未設定）'}
+            <input
+              type="password"
+              value={claudeKey}
+              onChange={(event) => setClaudeKey(event.target.value)}
               autoComplete="off"
             />
           </label>

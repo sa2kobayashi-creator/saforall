@@ -3,6 +3,8 @@ import {
   DEFAULT_COST_LIMITS,
   ENGINE_LABELS,
   USAGE_ENGINE_KEYS,
+  USER_PLAN_LABELS,
+  parseUserPlan,
   type ProviderEngine
 } from '../lib/llmModels'
 import './UsagePanel.css'
@@ -33,6 +35,14 @@ type UsagePayload = {
     remaining: number
     requests: number
   }
+  user?: {
+    plan: string
+    spent: number
+    limit: number
+    remaining: number
+    pct?: number
+    level?: string
+  }
   usage: Record<string, EngineUsage>
   models: ModelUsage[]
   note?: string
@@ -57,7 +67,8 @@ function percent(spent: number, limit: number): number {
 }
 
 function barClass(pct: number): string {
-  if (pct >= 90) return 'usage-bar-fill danger'
+  if (pct >= 95) return 'usage-bar-fill danger'
+  if (pct >= 85) return 'usage-bar-fill danger'
   if (pct >= 70) return 'usage-bar-fill warn'
   return 'usage-bar-fill'
 }
@@ -141,7 +152,7 @@ export function UsagePanel({
           <>
             <section className="usage-total">
               <div className="usage-total-row">
-                <strong>合計（今月）</strong>
+                <strong>合計（今月・Provider）</strong>
                 <span>
                   {formatUsd(totalSpent)} / {formatUsd(totalLimit)}
                   <span className="usage-muted"> · 残 {formatUsd(data.total.remaining)}</span>
@@ -154,6 +165,30 @@ export function UsagePanel({
                 リクエスト {data.total.requests.toLocaleString()} 回 · 使用率 {totalPct}%
               </div>
             </section>
+
+            {data.user && (
+              <section className="usage-total">
+                <div className="usage-total-row">
+                  <strong>
+                    ユーザープラン（
+                    {USER_PLAN_LABELS[parseUserPlan(data.user.plan)] ?? data.user.plan}）
+                  </strong>
+                  <span>
+                    {formatUsd(data.user.spent)} / {formatUsd(data.user.limit)}
+                    <span className="usage-muted"> · 残 {formatUsd(data.user.remaining)}</span>
+                  </span>
+                </div>
+                <div
+                  className="usage-bar-track"
+                  title={`${percent(data.user.spent, data.user.limit)}%`}
+                >
+                  <div
+                    className={barClass(percent(data.user.spent, data.user.limit))}
+                    style={{ width: `${percent(data.user.spent, data.user.limit)}%` }}
+                  />
+                </div>
+              </section>
+            )}
 
             <section className="usage-engines">
               <h3>エンジン別</h3>

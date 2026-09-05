@@ -17,6 +17,7 @@ $detail = UsageService::monthDetail($pdo, $settings);
 Response::ok([
     'month' => $detail['month'],
     'total' => $detail['total'],
+    'user' => $detail['user'],
     'usage' => $detail['usage'],
     'models' => $detail['models'],
     'note' => '金額は概算です。各プロバイダの実請求とは一致しない場合があります。',

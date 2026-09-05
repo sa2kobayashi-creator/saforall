@@ -156,6 +156,8 @@ export type ChatStreamEvent =
       task_type: string
       model: string
       fallback_reason?: string | null
+      budget_warning?: string | null
+      estimated_usd?: number
       mode?: string
       policy_profile?: string
       usage?: MonthUsage
@@ -203,11 +205,13 @@ export type ChatStreamEvent =
   | { type: 'error'; code: string; message: string }
 
 type RouteData = {
-  engine: 'cursor' | 'openai' | 'gemini' | 'workers'
+  engine: 'cursor' | 'openai' | 'gemini' | 'claude' | 'workers'
   requested: string
   task_type: string
   fallback_from: string | null
   fallback_reason: string | null
+  budget_warning?: string | null
+  estimated_usd?: number
   mode?: string
   policy_profile?: string
   model: string
@@ -262,6 +266,8 @@ export async function streamChat(
     task_type: decided.task_type,
     model: decided.model,
     fallback_reason: decided.fallback_reason,
+    budget_warning: decided.budget_warning,
+    estimated_usd: decided.estimated_usd,
     mode: decided.mode,
     policy_profile: decided.policy_profile,
     usage: decided.usage
@@ -279,18 +285,21 @@ export async function streamChat(
     decided.provider &&
       decided.provider.api_key &&
       decided.provider.base_url &&
-      decided.provider.base_url !== 'gemini-native'
+      decided.provider.base_url !== 'gemini-native' &&
+      !String(decided.provider.base_url).includes('anthropic.com')
   )
   const endpointOk =
     providerOk &&
     decided.engine !== 'workers' &&
     decided.engine !== 'gemini' &&
+    decided.engine !== 'claude' &&
     !String(decided.model || '')
       .toLowerCase()
       .startsWith('@cf/') &&
     (() => {
       const u = String(decided.provider?.base_url || '').toLowerCase()
       if (u.includes('cloudflare.com') || u.includes('workers.ai')) return false
+      if (u.includes('anthropic.com')) return false
       if (u.includes('/client/v4/accounts/') && u.includes('/ai/')) return false
       return true
     })()
@@ -302,6 +311,7 @@ export async function streamChat(
       const reasons: string[] = []
       if (!workspacePath.trim()) reasons.push('ワークスペース未選択（フォルダを開く）')
       if (decided.engine === 'gemini') reasons.push('Gemini はツール Agent 未対応')
+      if (decided.engine === 'claude') reasons.push('Claude はツール Agent 未対応（Ask で利用）')
       if (decided.engine === 'workers') {
         reasons.push('Workers AI は function calling 非対応（OpenAI を選択）')
       }
