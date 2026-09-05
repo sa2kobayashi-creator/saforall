@@ -175,6 +175,10 @@
   background: var(--bg-elevated);
 }
 
+.scm-file--conflict .scm-file-status {
+  color: #f0c674;
+}
+
 .scm-file-status {
   color: #9fdfb0;
   min-width: 3.5em;

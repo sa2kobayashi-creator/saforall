@@ -39,6 +39,8 @@ export type ChatStreamEvent =
       task_type: string
       model: string
       fallback_reason?: string | null
+      budget_warning?: string | null
+      estimated_usd?: number
       mode?: string
       policy_profile?: string
       usage?: Record<string, { spent: number; limit: number; remaining: number }>
@@ -209,6 +211,19 @@ const api = {
     line: number
     character: number
   }): Promise<{ contents: string } | null> => ipcRenderer.invoke('lsp:hover', params),
+  lspSignatureHelp: (params: {
+    path: string
+    line: number
+    character: number
+  }): Promise<{
+    signatures: Array<{
+      label: string
+      documentation?: string
+      parameters: Array<{ label: string; documentation?: string }>
+    }>
+    activeSignature: number
+    activeParameter: number
+  } | null> => ipcRenderer.invoke('lsp:signatureHelp', params),
   lspReferences: (params: {
     path: string
     line: number

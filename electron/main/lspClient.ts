@@ -30,6 +30,16 @@ export type LspHover = {
   contents: string
 }
 
+export type LspSignatureHelp = {
+  signatures: Array<{
+    label: string
+    documentation?: string
+    parameters: Array<{ label: string; documentation?: string }>
+  }>
+  activeSignature: number
+  activeParameter: number
+}
+
 export type LspInlayHint = {
   label: string
   line: number
@@ -291,6 +301,13 @@ export class LspClient extends EventEmitter {
           hover: {
             contentFormat: ['markdown', 'plaintext']
           },
+          signatureHelp: {
+            contextSupport: false,
+            signatureInformation: {
+              documentationFormat: ['markdown', 'plaintext'],
+              parameterInformation: { labelOffsetSupport: true }
+            }
+          },
           references: {},
           rename: { prepareSupport: false },
           codeAction: {
@@ -432,6 +449,73 @@ export class LspClient extends EventEmitter {
     const text = formatHoverContents(contents)
     if (!text.trim()) return null
     return { contents: text.slice(0, 8000) }
+  }
+
+  async signatureHelp(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspSignatureHelp | null> {
+    const response = await this.request('textDocument/signatureHelp', {
+      textDocument: { uri: toUri(filePath) },
+      position: { line, character },
+      context: { triggerKind: 1 }
+    })
+    const result = response.result
+    if (!result || typeof result !== 'object') return null
+    const rec = result as {
+      signatures?: unknown
+      activeSignature?: number
+      activeParameter?: number
+    }
+    const rows = Array.isArray(rec.signatures) ? rec.signatures : []
+    const signatures: LspSignatureHelp['signatures'] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue
+      const sig = row as {
+        label?: unknown
+        documentation?: unknown
+        parameters?: unknown
+      }
+      const label =
+        typeof sig.label === 'string'
+          ? sig.label
+          : formatHoverContents(sig.label)
+      if (!label.trim()) continue
+      const parameters: Array<{ label: string; documentation?: string }> = []
+      const params = Array.isArray(sig.parameters) ? sig.parameters : []
+      for (const param of params) {
+        if (!param || typeof param !== 'object') continue
+        const p = param as { label?: unknown; documentation?: unknown }
+        let paramLabel = ''
+        if (typeof p.label === 'string') paramLabel = p.label
+        else if (Array.isArray(p.label) && p.label.length >= 2) {
+          const start = Number(p.label[0])
+          const end = Number(p.label[1])
+          if (Number.isFinite(start) && Number.isFinite(end)) {
+            paramLabel = label.slice(start, end)
+          }
+        }
+        if (!paramLabel) continue
+        const doc = formatHoverContents(p.documentation)
+        parameters.push({
+          label: paramLabel,
+          ...(doc ? { documentation: doc.slice(0, 2000) } : {})
+        })
+      }
+      const documentation = formatHoverContents(sig.documentation)
+      signatures.push({
+        label: label.slice(0, 4000),
+        ...(documentation ? { documentation: documentation.slice(0, 4000) } : {}),
+        parameters
+      })
+    }
+    if (signatures.length === 0) return null
+    return {
+      signatures,
+      activeSignature: Math.max(0, Number(rec.activeSignature ?? 0)),
+      activeParameter: Math.max(0, Number(rec.activeParameter ?? 0))
+    }
   }
 
   async references(
@@ -892,6 +976,20 @@ export class LspManager {
     if (!client) return null
     try {
       return await client.hover(filePath, line, character)
+    } catch {
+      return null
+    }
+  }
+
+  async signatureHelp(
+    filePath: string,
+    line: number,
+    character: number
+  ): Promise<LspSignatureHelp | null> {
+    const client = this.clientForPath(filePath)
+    if (!client) return null
+    try {
+      return await client.signatureHelp(filePath, line, character)
     } catch {
       return null
     }

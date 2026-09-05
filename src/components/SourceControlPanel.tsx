@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useI18n } from '../i18n'
+import { isGitConflictEntry } from '../lib/mergeConflicts'
 import { CreatePrDialog } from './CreatePrDialog'
 import './SourceControlPanel.css'
 
@@ -8,6 +9,8 @@ type GitFile = {
   status: string
   staged: boolean
   unstaged: boolean
+  index?: string
+  worktree?: string
 }
 
 type Props = {
@@ -63,8 +66,15 @@ export function SourceControlPanel({
     guideUrl: string
   } | null>(null)
 
-  const staged = useMemo(() => files.filter((file) => file.staged), [files])
-  const changes = useMemo(() => files.filter((file) => file.unstaged), [files])
+  const staged = useMemo(() => files.filter((file) => file.staged && !isGitConflictEntry(file.index ?? '', file.worktree ?? '', file.status)), [files])
+  const changes = useMemo(() => files.filter((file) => file.unstaged && !isGitConflictEntry(file.index ?? '', file.worktree ?? '', file.status)), [files])
+  const conflicts = useMemo(
+    () =>
+      files.filter((file) =>
+        isGitConflictEntry(file.index ?? '', file.worktree ?? '', file.status)
+      ),
+    [files]
+  )
 
   const refresh = useCallback(async () => {
     if (!workspacePath) {
@@ -95,7 +105,9 @@ export function SourceControlPanel({
           path: file.path,
           status: file.status,
           staged: file.staged,
-          unstaged: file.unstaged
+          unstaged: file.unstaged,
+          index: file.index,
+          worktree: file.worktree
         }))
       )
       if (!result.ok || (result.error && !result.isRepo)) {
@@ -373,6 +385,47 @@ export function SourceControlPanel({
                   </button>
                 </div>
               </div>
+
+              <div className="scm-section-title">
+                Merge Conflicts {conflicts.length > 0 ? `(${conflicts.length})` : ''}
+              </div>
+              {conflicts.length === 0 ? (
+                <div className="scm-note">マージコンフリクトはありません</div>
+              ) : (
+                <ul className="scm-file-list">
+                  {conflicts.map((file) => (
+                    <li key={`conflict-${file.path}`}>
+                      <div className="scm-file-row">
+                        <button
+                          type="button"
+                          className="scm-file scm-file--conflict"
+                          title={`${file.path} · 開いて Accept Current / Incoming`}
+                          onClick={() => openPath(file.path)}
+                        >
+                          <span className="scm-file-status">競合</span>
+                          <span className="scm-file-path">{file.path}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="scm-file-action"
+                          title="解決後に Stage"
+                          disabled={busy}
+                          onClick={() =>
+                            void runOp('Stage conflict', () =>
+                              window.saforall.gitStage({
+                                cwd: workspacePath,
+                                paths: [file.path]
+                              })
+                            )
+                          }
+                        >
+                          +
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               <div className="scm-section-title">
                 Staged Changes {staged.length > 0 ? `(${staged.length})` : ''}

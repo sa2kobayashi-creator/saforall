@@ -12,6 +12,11 @@ import {
   OutlinePanel,
   useDocumentSymbols
 } from './OutlinePanel'
+import {
+  parseMergeConflicts,
+  resolveMergeConflict,
+  type MergeConflictHunk
+} from '../lib/mergeConflicts'
 import './EditorPane.css'
 import './PreviewPane.css'
 
@@ -144,6 +149,9 @@ export function EditorPane({
     title: string
     hits: Array<{ path: string; line: number; column: number }>
   } | null>(null)
+  const [conflicts, setConflicts] = useState<MergeConflictHunk[]>([])
+  const [activeConflict, setActiveConflict] = useState(0)
+  const conflictDecorationsRef = useRef<string[]>([])
   const openInlineEditRef = useRef<() => void>(() => undefined)
 
   const openInlineEdit = useCallback(() => {
@@ -391,6 +399,74 @@ export function EditorPane({
       cancelled = true
     }
   }, [blameOn, activePath, workspacePath, file?.content])
+
+  useEffect(() => {
+    const content = file?.content ?? ''
+    const hunks = parseMergeConflicts(content)
+    setConflicts(hunks)
+    setActiveConflict((index) => (hunks.length === 0 ? 0 : Math.min(index, hunks.length - 1)))
+  }, [file?.content, activePath])
+
+  useEffect(() => {
+    const editor = editorRef.current
+    const monaco = monacoRef.current
+    if (!editor || !monaco) return
+    if (conflicts.length === 0) {
+      conflictDecorationsRef.current = editor.deltaDecorations(conflictDecorationsRef.current, [])
+      return
+    }
+    const decorations: unknown[] = []
+    for (const hunk of conflicts) {
+      if (hunk.midLine - 1 >= hunk.startLine + 1) {
+        decorations.push({
+          range: new monaco.Range(hunk.startLine + 1, 1, hunk.midLine - 1, 1),
+          options: {
+            isWholeLine: true,
+            className: 'saforall-conflict-current'
+          }
+        })
+      }
+      if (hunk.endLine - 1 >= hunk.midLine + 1) {
+        decorations.push({
+          range: new monaco.Range(hunk.midLine + 1, 1, hunk.endLine - 1, 1),
+          options: {
+            isWholeLine: true,
+            className: 'saforall-conflict-incoming'
+          }
+        })
+      }
+      decorations.push({
+        range: new monaco.Range(hunk.startLine, 1, hunk.startLine, 1),
+        options: {
+          isWholeLine: true,
+          className: 'saforall-conflict-marker',
+          glyphMarginClassName: 'saforall-conflict-glyph'
+        }
+      })
+    }
+    conflictDecorationsRef.current = editor.deltaDecorations(
+      conflictDecorationsRef.current,
+      decorations as never
+    )
+  }, [conflicts, activePath, file?.content])
+
+  const applyConflictResolve = useCallback(
+    (mode: 'current' | 'incoming' | 'both') => {
+      if (!file || conflicts.length === 0) return
+      const hunk = conflicts[Math.min(activeConflict, conflicts.length - 1)]
+      if (!hunk) return
+      const next = resolveMergeConflict(file.content, hunk, mode)
+      onChange(next)
+      statusMessageRef.current?.(
+        mode === 'current'
+          ? 'Current を採用しました'
+          : mode === 'incoming'
+            ? 'Incoming を採用しました'
+            : 'Both を採用しました'
+      )
+    },
+    [file, conflicts, activeConflict, onChange]
+  )
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
@@ -747,6 +823,46 @@ export function EditorPane({
           editor.focus()
         }}
       />
+      {conflicts.length > 0 && (
+        <div className="editor-conflict-bar" role="region" aria-label="マージコンフリクト">
+          <strong>
+            コンフリクト {Math.min(activeConflict + 1, conflicts.length)} / {conflicts.length}
+          </strong>
+          <button
+            type="button"
+            disabled={activeConflict <= 0}
+            onClick={() => {
+              const next = Math.max(0, activeConflict - 1)
+              setActiveConflict(next)
+              const hunk = conflicts[next]
+              if (hunk) editorRef.current?.revealLineInCenter(hunk.startLine)
+            }}
+          >
+            ←
+          </button>
+          <button
+            type="button"
+            disabled={activeConflict >= conflicts.length - 1}
+            onClick={() => {
+              const next = Math.min(conflicts.length - 1, activeConflict + 1)
+              setActiveConflict(next)
+              const hunk = conflicts[next]
+              if (hunk) editorRef.current?.revealLineInCenter(hunk.startLine)
+            }}
+          >
+            →
+          </button>
+          <button type="button" onClick={() => applyConflictResolve('current')}>
+            Accept Current
+          </button>
+          <button type="button" onClick={() => applyConflictResolve('incoming')}>
+            Accept Incoming
+          </button>
+          <button type="button" onClick={() => applyConflictResolve('both')}>
+            Accept Both
+          </button>
+        </div>
+      )}
       <InlineEditBar
         target={inlineTarget}
         onClose={() => setInlineTarget(null)}

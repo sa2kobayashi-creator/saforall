@@ -541,6 +541,14 @@ ipcMain.handle(
 )
 
 ipcMain.handle(
+  'lsp:signatureHelp',
+  async (
+    _event,
+    params: { path: string; line: number; character: number }
+  ) => lspManager.signatureHelp(params.path, params.line, params.character)
+)
+
+ipcMain.handle(
   'lsp:references',
   async (
     _event,

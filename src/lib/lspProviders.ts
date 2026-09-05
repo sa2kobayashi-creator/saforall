@@ -227,6 +227,53 @@ export function registerLspProviders(
     )
 
     disposables.push(
+      monaco.languages.registerSignatureHelpProvider(language, {
+        signatureHelpTriggerCharacters: ['(', ','],
+        signatureHelpRetriggerCharacters: [','],
+        provideSignatureHelp: async (
+          _model: unknown,
+          position: Position,
+          token: CancellationToken
+        ) => {
+          const meta = getMeta()
+          if (!meta || typeof window.saforall.lspSignatureHelp !== 'function') {
+            return null
+          }
+          try {
+            const help = await Promise.race([
+              window.saforall.lspSignatureHelp({
+                path: meta.path,
+                line: position.lineNumber - 1,
+                character: position.column - 1
+              }),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
+            ])
+            if (token.isCancellationRequested || !help || help.signatures.length === 0) {
+              return null
+            }
+            return {
+              value: {
+                signatures: help.signatures.map((sig) => ({
+                  label: sig.label,
+                  documentation: sig.documentation,
+                  parameters: sig.parameters.map((param) => ({
+                    label: param.label,
+                    documentation: param.documentation
+                  }))
+                })),
+                activeSignature: help.activeSignature,
+                activeParameter: help.activeParameter
+              },
+              dispose: () => undefined
+            }
+          } catch {
+            return null
+          }
+        }
+      })
+    )
+
+    disposables.push(
       monaco.languages.registerReferenceProvider(language, {
         provideReferences: async (
           _model: unknown,

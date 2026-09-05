@@ -268,3 +268,55 @@
   color: var(--text-muted);
   font-family: Consolas, 'Cascadia Code', monospace;
 }
+
+.editor-conflict-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 10px;
+  background: #3a2a12;
+  border-bottom: 1px solid #8a6a2a;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.editor-conflict-bar button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.editor-conflict-bar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+:global(.saforall-conflict-current),
+.saforall-conflict-current {
+  background: rgba(80, 160, 80, 0.18) !important;
+}
+
+:global(.saforall-conflict-incoming),
+.saforall-conflict-incoming {
+  background: rgba(80, 120, 200, 0.18) !important;
+}
+
+:global(.saforall-conflict-marker),
+.saforall-conflict-marker {
+  background: rgba(200, 160, 40, 0.22) !important;
+}
+
+:global(.saforall-conflict-glyph),
+.saforall-conflict-glyph {
+  background: #d7a100 !important;
+  width: 8px !important;
+  height: 8px !important;
+  margin-left: 4px !important;
+  margin-top: 5px !important;
+  border-radius: 2px !important;
+}
