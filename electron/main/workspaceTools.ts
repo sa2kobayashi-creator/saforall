@@ -236,6 +236,66 @@ export function truncateShellOutput(text: string, max = 12_000): string {
   return `${text.slice(0, head)}\n\n... (truncated ${text.length - max} chars) ...\n\n${text.slice(-tail)}`
 }
 
+/** Prefer the tail (where real errors usually appear) for failure excerpts. */
+export function excerptShellFailure(stderr: string, stdout: string, max = 5_000): string {
+  const combined = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n')
+  if (!combined) return '(no output)'
+  if (combined.length <= max) return combined
+  const head = Math.floor(max * 0.25)
+  const tail = max - head - 48
+  return `${combined.slice(0, head)}\n\n... (truncated ${combined.length - max} chars; showing head+tail) ...\n\n${combined.slice(-tail)}`
+}
+
+export type VerifySuggestion = {
+  primary: string
+  fallbacks: string[]
+}
+
+export async function suggestVerifyCommands(
+  workspaceRoot: string
+): Promise<VerifySuggestion | null> {
+  try {
+    const raw = await readFile(resolveWorkspacePath(workspaceRoot, 'package.json'), 'utf-8')
+    const pkg = JSON.parse(raw) as { scripts?: Record<string, string> }
+    const scripts = pkg.scripts ?? {}
+    const fallbacks: string[] = []
+    let primary: string | null = null
+
+    // Prefer fast typecheck first; keep full test as a second gate when available.
+    if (scripts.typecheck) {
+      primary = 'npm run typecheck'
+      if (scripts.test) fallbacks.push('npm test')
+    } else if (scripts.test) {
+      primary = 'npm test'
+    }
+    if (scripts.lint && primary !== 'npm run lint') fallbacks.push('npm run lint')
+    if (scripts.build && !fallbacks.includes('npm run build') && primary !== 'npm run build') {
+      fallbacks.push('npm run build')
+    }
+    if (primary) return { primary, fallbacks: fallbacks.slice(0, 3) }
+  } catch {
+    // ignore
+  }
+  try {
+    await stat(resolveWorkspacePath(workspaceRoot, 'pyproject.toml'))
+    return { primary: 'python -m pytest -q', fallbacks: [] }
+  } catch {
+    // ignore
+  }
+  try {
+    await stat(resolveWorkspacePath(workspaceRoot, 'Cargo.toml'))
+    return { primary: 'cargo test', fallbacks: ['cargo check'] }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+export async function suggestVerifyCommand(workspaceRoot: string): Promise<string | null> {
+  const suggestion = await suggestVerifyCommands(workspaceRoot)
+  return suggestion?.primary ?? null
+}
+
 export type ShellRunResult = {
   ok: boolean
   exitCode: number | null
@@ -343,29 +403,3 @@ export async function withMaterializedEdits<T>(
   }
 }
 
-export async function suggestVerifyCommand(workspaceRoot: string): Promise<string | null> {
-  try {
-    const raw = await readFile(resolveWorkspacePath(workspaceRoot, 'package.json'), 'utf-8')
-    const pkg = JSON.parse(raw) as { scripts?: Record<string, string> }
-    const scripts = pkg.scripts ?? {}
-    if (scripts.test) return 'npm test'
-    if (scripts.typecheck) return 'npm run typecheck'
-    if (scripts.lint) return 'npm run lint'
-    if (scripts.build) return 'npm run build'
-  } catch {
-    // ignore
-  }
-  try {
-    await stat(resolveWorkspacePath(workspaceRoot, 'pyproject.toml'))
-    return 'python -m pytest -q'
-  } catch {
-    // ignore
-  }
-  try {
-    await stat(resolveWorkspacePath(workspaceRoot, 'Cargo.toml'))
-    return 'cargo test'
-  } catch {
-    // ignore
-  }
-  return null
-}

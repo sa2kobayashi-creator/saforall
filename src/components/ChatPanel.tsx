@@ -43,6 +43,8 @@ type Props = {
     language?: string,
     options?: ApplyCodeOptions
   ) => void | Promise<void>
+  /** Agent finished with Composer proposals that still need accept. */
+  onAgentNeedsReview?: (info: { editCount: number; engine: string }) => void
 }
 
 const welcomeMessage: ChatMessage = {
@@ -124,7 +126,8 @@ export function ChatPanel({
   width,
   pendingPrompt = null,
   onPendingPromptConsumed,
-  onApplyCode
+  onApplyCode,
+  onAgentNeedsReview
 }: Props) {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage])
@@ -889,6 +892,7 @@ export function ChatPanel({
       let finalAssistantContent: string | null = null
       let usedEngine: string = engine
       let usedTools = false
+      let editProposalCount = 0
 
       await window.saforall.chatStream(payload, {
         onEvent: (event) => {
@@ -1020,6 +1024,7 @@ export function ChatPanel({
           }
 
           if (event.type === 'edit_proposal') {
+            editProposalCount += 1
             setBusy({ phase: 'applying', detail: `変更候補: ${event.path}` })
             void onApplyCode(event.content, event.path, languageFromPath(event.path), {
               auto: true,
@@ -1105,6 +1110,11 @@ export function ChatPanel({
 
       if (finalAssistantId && finalAssistantContent && usedEngine !== 'cursor' && !usedTools) {
         await runAgentActions(finalAssistantId, finalAssistantContent)
+      }
+      if (editProposalCount > 0) {
+        onAgentNeedsReview?.({ editCount: editProposalCount, engine: usedEngine })
+      } else if (usedEngine === 'cursor' && modeRef.current === 'agent') {
+        onAgentNeedsReview?.({ editCount: 0, engine: usedEngine })
       }
       void refreshSessions()
     } finally {

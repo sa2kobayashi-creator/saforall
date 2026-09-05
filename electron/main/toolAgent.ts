@@ -1,8 +1,11 @@
 import type { ChatStreamEvent, MonthUsage } from './api'
 import { mcpManager, type McpToolInfo } from './mcpClient'
 import {
+  excerptShellFailure,
   loadProjectRules,
-  suggestVerifyCommand,
+  resolveWorkspacePath,
+  searchFilesByName,
+  suggestVerifyCommands,
   toolListDir,
   toolReadFile,
   toolRunShell,
@@ -10,7 +13,7 @@ import {
   withMaterializedEdits
 } from './workspaceTools'
 import { mkdir, writeFile } from 'fs/promises'
-import { join } from 'path'
+import { join, relative, resolve } from 'path'
 
 type ProviderMessage =
   | { role: 'system' | 'user' | 'assistant'; content: string | null; tool_calls?: ToolCall[] }
@@ -236,6 +239,12 @@ export function normalizeAgentPath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
 }
 
+/** Normalize to a stable workspace-relative POSIX path for pending edits. */
+export function toWorkspaceRelativePath(workspaceRoot: string, pathArg: string): string {
+  const absolute = resolveWorkspacePath(workspaceRoot, pathArg)
+  return relative(resolve(workspaceRoot), absolute).split(/[/\\]/).join('/')
+}
+
 export function pathKeyMatch(a: string, b: string): boolean {
   const na = normalizeAgentPath(a)
   const nb = normalizeAgentPath(b)
@@ -368,23 +377,46 @@ async function runTool(
   readCache: Map<string, string>,
   editSummaries: Map<string, string>,
   pendingEdits: Map<string, string>,
-  shellState: { attempts: number; passed: boolean; lastExit: number | null; editRecoveries: number }
+  shellState: { attempts: number; passed: boolean; lastExit: number | null; editRecoveries: number },
+  verifyHint?: { primary: string; fallbacks: string[] } | null
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
-  const repaired = repairToolArguments(argsJson)
   let args: Record<string, unknown> = {}
-  try {
-    args = JSON.parse(repaired || '{}') as Record<string, unknown>
-  } catch {
-    const content = JSON.stringify({ ok: false, error: 'invalid JSON arguments' })
-    onEvent({ type: 'tool_call', id: callId, name, args: {} })
-    onEvent({
-      type: 'tool_result',
-      id: callId,
-      name,
-      ok: false,
-      summary: 'invalid JSON arguments'
-    })
-    return { content, ok: false }
+  // Never soft-repair truncated edit_file payloads — that queues broken full files.
+  if (name === 'edit_file') {
+    try {
+      args = JSON.parse((argsJson || '').trim() || '{}') as Record<string, unknown>
+    } catch {
+      const content = JSON.stringify({
+        ok: false,
+        error: 'truncated_arguments',
+        note: 'edit_file JSON was truncated or invalid. Resend with the complete file content.'
+      })
+      onEvent({ type: 'tool_call', id: callId, name, args: {} })
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: false,
+        summary: 'truncated edit_file arguments'
+      })
+      return { content, ok: false }
+    }
+  } else {
+    const repaired = repairToolArguments(argsJson)
+    try {
+      args = JSON.parse(repaired || '{}') as Record<string, unknown>
+    } catch {
+      const content = JSON.stringify({ ok: false, error: 'invalid JSON arguments' })
+      onEvent({ type: 'tool_call', id: callId, name, args: {} })
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: false,
+        summary: 'invalid JSON arguments'
+      })
+      return { content, ok: false }
+    }
   }
 
   if (!PHASE_TOOLS[phase].has(name)) {
@@ -492,9 +524,9 @@ async function runTool(
       return { content: result, ok: true }
     }
     if (name === 'edit_file') {
-      const path = String(args.path ?? '')
+      const rawPath = String(args.path ?? '').trim()
       const content = String(args.content ?? '')
-      if (!path || content === '') {
+      if (!rawPath || content === '') {
         onEvent({
           type: 'tool_result',
           id: callId,
@@ -508,15 +540,74 @@ async function runTool(
         }
       }
 
+      let path = rawPath
+      try {
+        path = toWorkspaceRelativePath(workspacePath, rawPath)
+      } catch {
+        const base = rawPath.split(/[/\\]/).pop() ?? rawPath
+        const found = await searchFilesByName(workspacePath, base, 8)
+        if (found.length === 1) {
+          path = found[0]
+        } else {
+          onEvent({
+            type: 'tool_result',
+            id: callId,
+            name,
+            ok: false,
+            summary: 'path unresolved'
+          })
+          return {
+            content: JSON.stringify({
+              ok: false,
+              error: 'path could not be resolved inside the workspace',
+              path: rawPath,
+              candidates: found
+            }),
+            ok: false
+          }
+        }
+      }
+
+      // Collapse duplicate pending keys that match the same normalized path
+      for (const key of Array.from(pendingEdits.keys())) {
+        if (key !== path && pathKeyMatch(key, path)) {
+          pendingEdits.delete(key)
+          editedPaths.delete(key)
+          editSummaries.delete(key)
+        }
+      }
+
       let warning: string | null = null
+      let requireRewrite = false
       try {
         const existing = await toolReadFile(workspacePath, path)
         if (existing.length > 400 && content.length < existing.length * 0.35) {
+          requireRewrite = true
           warning =
-            'Proposed content is much shorter than the current file. Prefer a complete file unless intentional.'
+            'Proposed content is much shorter than the current file. Resend a complete file (not a fragment).'
         }
       } catch {
         // new file
+      }
+
+      if (requireRewrite) {
+        onEvent({
+          type: 'tool_result',
+          id: callId,
+          name,
+          ok: false,
+          summary: `rejected short edit ${path}`
+        })
+        return {
+          content: JSON.stringify({
+            ok: false,
+            error: 'incomplete_edit',
+            path,
+            warning,
+            note: 'Do not queue truncated replacements. Call edit_file again with the full file content.'
+          }),
+          ok: false
+        }
       }
 
       editedPaths.add(path)
@@ -572,6 +663,13 @@ async function runTool(
       if (result.ok) shellState.passed = true
       else shellState.passed = false
 
+      const failureExcerpt = excerptShellFailure(result.stderr, result.stdout, 5_000)
+      const fallbackNote =
+        result.timedOut && verifyHint?.fallbacks?.[0]
+          ? ` Timed out — try a shorter command next: ${verifyHint.fallbacks[0]}`
+          : !result.ok && verifyHint?.fallbacks?.length
+            ? ` If this stays flaky, also try: ${verifyHint.fallbacks.join(' | ')}`
+            : ''
       const payload = {
         ok: result.ok,
         exitCode: result.exitCode,
@@ -581,9 +679,10 @@ async function runTool(
         appliedPendingEdits: Array.from(pendingEdits.keys()).slice(0, 40),
         stdout: result.stdout,
         stderr: result.stderr,
+        errorExcerpt: result.ok ? undefined : failureExcerpt,
         note: result.ok
           ? 'Command succeeded. Pending edits were restored after the run; accept Composer to keep them.'
-          : 'Command failed. Inspect stdout/stderr, set_phase edit (or edit_file), then run_shell again.'
+          : `Command failed. Inspect errorExcerpt (tail-focused), set_phase edit, edit_file, then run_shell again.${fallbackNote}`
       }
       onEvent({
         type: 'tool_result',
@@ -606,7 +705,7 @@ async function runTool(
             ...payload,
             autoRecoveredPhase: 'edit',
             recoveries: shellState.editRecoveries,
-            failureHint: [result.stderr, result.stdout].filter(Boolean).join('\n').slice(0, 1500)
+            failureHint: failureExcerpt
           }),
           ok: false,
           nextPhase: 'edit'
@@ -738,7 +837,12 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   }
 
   const rules = await loadProjectRules(workspacePath)
-  const suggestedVerify = await suggestVerifyCommand(workspacePath)
+  const verifySuggestion = await suggestVerifyCommands(workspacePath)
+  const suggestedVerify = verifySuggestion?.primary ?? null
+  const verifyFallbackText =
+    verifySuggestion && verifySuggestion.fallbacks.length > 0
+      ? ` / 代替: ${verifySuggestion.fallbacks.join(' · ')}`
+      : ''
   let mcpCatalog: McpToolInfo[] = []
   try {
     const listed = await mcpManager.listWorkspaceTools(workspacePath)
@@ -753,16 +857,17 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     'set_phase でフェーズを宣言してから作業してください。',
     'plan: 変更方針を短く立てる（必要なら軽く list/search）。',
     'explore: read_file / search_code / MCP で深く調査（関連ファイルを複数読む）。',
-    'edit: edit_file で複数ファイルを提案（Composer レビュー用。即時永続保存されない）。',
-    'verify: 編集ファイルを read_file で確認し、run_shell で test/typecheck を実行する。失敗したら edit に戻って修正し、再度 run_shell。',
+    'edit: edit_file で複数ファイルを提案（Composer レビュー用。即時永続保存されない）。完全なファイル内容を送る（断片・切り捨て禁止）。',
+    'verify: 編集ファイルを read_file で確認し、run_shell で検証する。失敗したら errorExcerpt を読んで edit に戻り、修正後に再実行。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
     'MCP: list_mcp_tools / call_mcp_tool で外部ツールを使える（.saforall/mcp.json）。',
-    '破壊的コマンドは禁止。短い検証コマンド（npm test / typecheck 等）を優先。',
+    '破壊的コマンドは禁止。まず短い検証（typecheck）を通し、必要なら test を追加。',
     'ツール失敗時は別パス/クエリ/コマンドで自己修正。同じ呼び出しを繰り返さない。失敗理由を読み、仮説を変える。',
-    '最終回答は日本語で、変更ファイル一覧・シェル結果・注意点を短くまとめる。',
+    'シェル未成功のまま最終回答しない。直せる限り edit → run_shell を続ける。',
+    '最終回答は日本語で、変更ファイル一覧・シェル結果・Composer 適用の促しを短くまとめる。',
     `ワークスペース: ${workspacePath}`,
     suggestedVerify
-      ? `推奨検証コマンド: ${suggestedVerify}`
+      ? `推奨検証コマンド: ${suggestedVerify}${verifyFallbackText}`
       : 'package.json / テスト設定を探し、適切な検証コマンドを run_shell で実行する。'
   ]
   if (mcpCatalog.length > 0) {
@@ -811,10 +916,18 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     editRecoveries: 0
   }
   let lastShellFailure = ''
+  let lastShellCommand = ''
   let exploreReads = 0
   let verifyNudgeCount = 0
   let shellNudgeCount = 0
-  let finalizeBlockCount = 0
+  let blockPhase = 0
+  let blockUnread = 0
+  let blockNoShell = 0
+  let blockShellFail = 0
+  const MAX_BLOCK_PHASE = 3
+  const MAX_BLOCK_UNREAD = 6
+  const MAX_BLOCK_NO_SHELL = 4
+  const MAX_BLOCK_SHELL_FAIL = 6
   let verifyIncomplete = false
   let shellIncomplete = false
   let recoverNudgeCount = 0
@@ -916,7 +1029,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
                 readCache,
                 editSummaries,
                 pendingEdits,
-                shellState
+                shellState,
+                verifySuggestion
               )
               return { call, result, skippedDup: false as const }
             })
@@ -949,7 +1063,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           readCache,
           editSummaries,
           pendingEdits,
-          shellState
+          shellState,
+          verifySuggestion
         )
         orderedResults.push({ call, result, skippedDup: false })
       }
@@ -1009,16 +1124,21 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
               stdout?: string
               command?: string
               exitCode?: number | null
+              errorExcerpt?: string
+              failureHint?: string
             }
+            lastShellCommand = parsed.command ?? ''
             lastShellFailure = [
               parsed.command ? `$ ${parsed.command}` : 'run_shell failed',
               parsed.exitCode != null ? `exit=${parsed.exitCode}` : '',
-              (parsed.stderr || parsed.stdout || '').slice(0, 1200)
+              parsed.errorExcerpt ||
+                parsed.failureHint ||
+                excerptShellFailure(parsed.stderr ?? '', parsed.stdout ?? '', 5_000)
             ]
               .filter(Boolean)
               .join('\n')
           } catch {
-            lastShellFailure = result.content.slice(0, 1200)
+            lastShellFailure = result.content.slice(0, 5_000)
           }
         }
       }
@@ -1033,7 +1153,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         })
         messages.push({
           role: 'user',
-          content: `システムチェックポイント: ${summary}。必要なら続行、十分なら最終回答へ。`
+          content: `システムチェックポイント: ${summary}。verify 未成功なら edit を続け、成功したら最終回答へ。`
         })
         try {
           const dir = join(workspacePath, '.saforall')
@@ -1159,7 +1279,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         messages.push({
           role: 'user',
           content:
-            'システム: ツール失敗が続いています。別の調査方法に切り替えるか、現状で最終回答を出してください。\n最近の失敗:\n' +
+            'システム: ツール失敗が続いています。別の調査方法・パス・コマンドに切り替えて自己修正を続けてください。verify 未成功なら最終回答せず edit を継続。\n最近の失敗:\n' +
             recentFailures.slice(-3).join('\n---\n')
         })
         consecutiveToolFailures = 0
@@ -1168,8 +1288,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     }
 
     // Model attempted to finalize without tools
-    if (editedPaths.size > 0 && phase !== 'verify' && finalizeBlockCount < 2) {
-      finalizeBlockCount += 1
+    if (editedPaths.size > 0 && phase !== 'verify' && blockPhase < MAX_BLOCK_PHASE) {
+      blockPhase += 1
       messages.push({
         role: 'assistant',
         content: message.content ?? null
@@ -1184,8 +1304,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
     if (editedPaths.size > 0 && phase === 'verify') {
       const pending = unverifiedEditPaths(editedPaths, verifiedPaths)
-      if (pending.length > 0 && finalizeBlockCount < 5) {
-        finalizeBlockCount += 1
+      if (pending.length > 0 && blockUnread < MAX_BLOCK_UNREAD) {
+        blockUnread += 1
         messages.push({
           role: 'assistant',
           content: message.content ?? null
@@ -1203,12 +1323,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         })
         continue
       }
-      if (
-        pending.length === 0 &&
-        shellState.attempts === 0 &&
-        finalizeBlockCount < 7
-      ) {
-        finalizeBlockCount += 1
+      if (pending.length === 0 && shellState.attempts === 0 && blockNoShell < MAX_BLOCK_NO_SHELL) {
+        blockNoShell += 1
         messages.push({
           role: 'assistant',
           content: message.content ?? null
@@ -1216,22 +1332,39 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         messages.push({
           role: 'user',
           content: `システム: 最終回答の前に run_shell で検証してください${
-            suggestedVerify ? `（推奨: ${suggestedVerify}）` : ''
+            suggestedVerify ? `（推奨: ${suggestedVerify}${verifyFallbackText}）` : ''
           }。`
         })
         continue
       }
-      if (pending.length === 0 && shellState.attempts > 0 && !shellState.passed && finalizeBlockCount < 9) {
-        finalizeBlockCount += 1
+      if (
+        pending.length === 0 &&
+        shellState.attempts > 0 &&
+        !shellState.passed &&
+        blockShellFail < MAX_BLOCK_SHELL_FAIL
+      ) {
+        blockShellFail += 1
         messages.push({
           role: 'assistant',
           content: message.content ?? null
         })
+        const canRecover = shellState.editRecoveries < 3
         messages.push({
           role: 'user',
-          content:
-            'システム: シェル検証が失敗したままです。修正してから再実行するか、失敗内容を明記したうえで最終回答してください。'
+          content: canRecover
+            ? `システム: シェル検証が失敗したままです。最終回答は禁止。set_phase edit → edit_file で直し、再度 run_shell してください${
+                suggestedVerify ? `（再実行例: ${suggestedVerify}）` : ''
+              }。\n--- failure ---\n${lastShellFailure || '(no output)'}`
+            : `システム: シェル検証が失敗し、自動リカバリ上限に達しています。失敗内容を明記したうえで最終回答し、Composer で人手確認を促してください。\n--- failure ---\n${lastShellFailure || '(no output)'}`
         })
+        if (canRecover) {
+          phase = 'edit'
+          onEvent({
+            type: 'agent_phase',
+            phase: 'edit',
+            note: 'finalize 阻止 → edit 継続'
+          })
+        }
         continue
       }
       if (pending.length > 0) {
@@ -1256,16 +1389,37 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   }
   if (shellIncomplete && finalText) {
     finalText +=
-      '\n\n⚠ シェル検証（run_shell）が未成功です。Composer 適用前にローカルで test/typecheck を実行してください。'
+      '\n\n⚠ シェル検証（run_shell）が未成功です。Composer 適用前にローカルで test/typecheck を実行してください。' +
+      (lastShellFailure ? `\n\n--- last failure ---\n${lastShellFailure}` : '')
   }
 
   if (!finalText) {
-    const notes =
-      progressNotes.length > 0
-        ? `\n実施ログ: ${progressNotes.slice(-12).join(' · ')}`
-        : ''
-    finalText =
-      '長時間 Agent を完了しました。Composer の差分レビューから変更を確認してください。' + notes
+    const editList = Array.from(editedPaths).slice(0, 12).join(', ')
+    if (editedPaths.size > 0 && !shellState.passed) {
+      finalText = [
+        'Agent がステップ上限に達しました。シェル検証は未成功です。',
+        lastShellCommand ? `最後のコマンド: ${lastShellCommand}` : null,
+        editList ? `未適用の編集候補: ${editList}` : null,
+        lastShellFailure ? `--- failure ---\n${lastShellFailure}` : null,
+        'Composer で差分を確認し、必要なら手動で修正を続けてください。'
+      ]
+        .filter(Boolean)
+        .join('\n')
+      shellIncomplete = true
+    } else {
+      const notes =
+        progressNotes.length > 0
+          ? `\n実施ログ: ${progressNotes.slice(-12).join(' · ')}`
+          : ''
+      finalText =
+        '長時間 Agent を完了しました。Composer の差分レビューから変更を確認・適用してください。' +
+        notes
+    }
+  }
+
+  if (editedPaths.size > 0 && shellState.passed && !finalText.includes('Composer')) {
+    finalText +=
+      '\n\n✅ シェル検証は成功しています。Composer で「すべて適用」すると変更がディスクに残ります。'
   }
 
   const chunkSize = 120

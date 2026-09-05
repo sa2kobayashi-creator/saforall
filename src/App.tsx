@@ -1610,6 +1610,20 @@ export default function App() {
                 pendingPrompt={pendingChatPrompt}
                 onPendingPromptConsumed={() => setPendingChatPrompt(null)}
                 onApplyCode={applyCode}
+                onAgentNeedsReview={({ editCount, engine }) => {
+                  if (editCount > 0) {
+                    setComposerOpen(true)
+                    showNotice(
+                      `Agent の変更候補が ${editCount} 件あります。Composer で確認して適用してください。`
+                    )
+                    return
+                  }
+                  if (engine === 'cursor') {
+                    showNotice(
+                      'Cursor Agent はディスクへ直接書き込みます。必要なら Git / 差分で確認してください。'
+                    )
+                  }
+                }}
               />
             </>
           ) : (
