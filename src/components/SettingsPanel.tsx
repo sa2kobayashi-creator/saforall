@@ -22,18 +22,34 @@ import {
   type RouterProfile
 } from '../lib/llmModels'
 import { parseLocale, useI18n } from '../i18n'
+import {
+  loadAutoSaveDelayMs,
+  loadAutoSaveEnabled,
+  saveAutoSaveDelayMs,
+  saveAutoSaveEnabled
+} from '../lib/autoSave'
+import { KeybindingsEditor } from './KeybindingsEditor'
 import './SettingsPanel.css'
 
 type Props = {
   open: boolean
   backendConnected: boolean
+  workspacePath?: string | null
   onClose: () => void
   onOpenUsage?: () => void
+  onStatusMessage?: (message: string) => void
 }
 
 type SettingsMap = Record<string, string | boolean>
 
-export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: Props) {
+export function SettingsPanel({
+  open,
+  backendConnected,
+  workspacePath = null,
+  onClose,
+  onOpenUsage,
+  onStatusMessage
+}: Props) {
   const { t, locale, setLocale, locales, localeLabels } = useI18n()
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState('https://api.openai.com/v1')
   const [openaiKey, setOpenaiKey] = useState('')
@@ -74,6 +90,14 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
   >({})
   const [saving, setSaving] = useState(false)
   const [testingEngine, setTestingEngine] = useState<ProviderEngine | null>(null)
+  const [autoSave, setAutoSave] = useState(true)
+  const [autoSaveDelay, setAutoSaveDelay] = useState(1500)
+
+  useEffect(() => {
+    if (!open) return
+    setAutoSave(loadAutoSaveEnabled())
+    setAutoSaveDelay(loadAutoSaveDelayMs())
+  }, [open])
 
   useEffect(() => {
     if (!open || !backendConnected) return
@@ -726,6 +750,40 @@ export function SettingsPanel({ open, backendConnected, onClose, onOpenUsage }: 
           </label>
 
           {status && <p className="settings-status">{status}</p>}
+
+          <div className="settings-section">
+            <h3>エディタ</h3>
+            <label className="settings-check">
+              <input
+                type="checkbox"
+                checked={autoSave}
+                onChange={(event) => {
+                  const next = event.target.checked
+                  setAutoSave(next)
+                  saveAutoSaveEnabled(next)
+                  onStatusMessage?.(next ? 'Auto-save を有効にしました' : 'Auto-save を無効にしました')
+                }}
+              />
+              Auto-save（編集後に自動保存）
+            </label>
+            <label>
+              Auto-save 遅延 (ms)
+              <input
+                type="number"
+                min={400}
+                max={10000}
+                step={100}
+                value={autoSaveDelay}
+                disabled={!autoSave}
+                onChange={(event) => {
+                  const next = Number(event.target.value)
+                  setAutoSaveDelay(next)
+                  saveAutoSaveDelayMs(next)
+                }}
+              />
+            </label>
+            <KeybindingsEditor workspacePath={workspacePath} onStatusMessage={onStatusMessage} />
+          </div>
 
           <div className="settings-actions">
             <button type="button" className="settings-close" onClick={onClose}>

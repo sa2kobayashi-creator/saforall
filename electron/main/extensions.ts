@@ -20,9 +20,63 @@ export type WorkspaceExtension = {
   id: string
   name: string
   description?: string
+  enabled?: boolean
   permissions?: ExtensionPermission[]
   commands: ExtensionCommand[]
 }
+
+/** Block obvious destructive shell without dangerous permission. */
+export function assertSafeExtensionRun(
+  run: string,
+  permissions?: ExtensionPermission[]
+): { ok: true } | { ok: false; error: string } {
+  const text = run.trim()
+  if (!text) return { ok: false, error: 'コマンドが空です' }
+  const dangerous = (permissions ?? []).includes('terminal.run.dangerous')
+  const blocked =
+    /\brm\s+-rf\b/i.test(text) ||
+    /\bdel\s+\/s\b/i.test(text) ||
+    /\bformat\s+[a-z]:/i.test(text) ||
+    /\bshutdown\b/i.test(text) ||
+    /\b:(){:|:&};:/i.test(text)
+  if (blocked && !dangerous) {
+    return {
+      ok: false,
+      error: '破壊的コマンドには terminal.run.dangerous 権限が必要です'
+    }
+  }
+  return { ok: true }
+}
+
+export async function setWorkspaceExtensionEnabled(
+  workspaceRoot: string,
+  extensionId: string,
+  enabled: boolean
+): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  const dir = resolveWorkspacePath(workspaceRoot, '.saforall/extensions')
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return { ok: false, error: 'extensions フォルダがありません' }
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+    const absolute = join(dir, entry.name)
+    try {
+      const raw = await readFile(absolute, 'utf-8')
+      const json = JSON.parse(raw) as Partial<WorkspaceExtension>
+      if (json.id !== extensionId) continue
+      json.enabled = enabled
+      await writeFile(absolute, `${JSON.stringify(json, null, 2)}\n`, 'utf-8')
+      return { ok: true, path: `.saforall/extensions/${entry.name}` }
+    } catch {
+      // continue
+    }
+  }
+  return { ok: false, error: `拡張が見つかりません: ${extensionId}` }
+}
+
 
 const KNOWN: ExtensionPermission[] = [
   'terminal.run',
@@ -79,6 +133,7 @@ export async function loadWorkspaceExtensions(
         id: json.id,
         name: json.name,
         description: typeof json.description === 'string' ? json.description : undefined,
+        enabled: json.enabled !== false,
         permissions: normalizePermissions(json.permissions),
         commands
       })

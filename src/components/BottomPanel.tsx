@@ -3,17 +3,20 @@ import { ProblemsPanel, type ProblemItem } from './ProblemsPanel'
 import { DebugPanel } from './DebugPanel'
 import { ReferencesPanel, type ReferenceHit } from './ReferencesPanel'
 import { JobsPanel } from './JobsPanel'
+import { TimelinePanel } from './TimelinePanel'
 import type { DebugCallFrame } from '../lib/debugTypes'
 import { useI18n } from '../i18n'
 import './BottomPanel.css'
 
-export type BottomPanelTab = 'terminal' | 'problems' | 'debug' | 'references' | 'jobs'
+export type BottomPanelTab = 'terminal' | 'problems' | 'debug' | 'references' | 'jobs' | 'timeline'
 
 type Props = {
   open: boolean
   height: number
   activeTab: BottomPanelTab
   cwd: string | null
+  activePath: string | null
+  historyRefreshKey?: number
   pendingCommand: string | null
   problems: ProblemItem[]
   references: {
@@ -31,6 +34,8 @@ type Props = {
     error?: string
     prompt?: string
   }) => void
+  onHistoryRestore?: (path: string, content: string) => void
+  onStatusMessage?: (message: string) => void
   debug: {
     running: boolean
     paused: boolean
@@ -63,10 +68,14 @@ export function BottomPanel({
   height,
   activeTab,
   cwd,
+  activePath,
+  historyRefreshKey = 0,
   pendingCommand,
   problems,
   references,
   onJobDetail,
+  onHistoryRestore,
+  onStatusMessage,
   debug,
   onChangeTab,
   onCommandSent,
@@ -133,6 +142,15 @@ export function BottomPanel({
           >
             Jobs
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'timeline'}
+            className={activeTab === 'timeline' ? 'active' : ''}
+            onClick={() => onChangeTab('timeline')}
+          >
+            Timeline
+          </button>
         </div>
         <div className="bottom-panel-actions">
           {activeTab === 'terminal' && (
@@ -187,6 +205,19 @@ export function BottomPanel({
           style={{ display: activeTab === 'jobs' ? 'flex' : 'none' }}
         >
           <JobsPanel onOpenPrompt={onJobDetail} />
+        </div>
+        <div
+          className="bottom-panel-page"
+          hidden={activeTab !== 'timeline'}
+          style={{ display: activeTab === 'timeline' ? 'flex' : 'none' }}
+        >
+          <TimelinePanel
+            workspacePath={cwd}
+            activePath={activePath}
+            refreshKey={historyRefreshKey}
+            onRestore={(path, content) => onHistoryRestore?.(path, content)}
+            onStatusMessage={onStatusMessage}
+          />
         </div>
       </div>
     </section>

@@ -80,3 +80,81 @@ export async function detectCurrentBranchName(cwd: string): Promise<string | nul
   const name = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)
   return name && name !== 'HEAD' ? name : null
 }
+
+export type BitbucketAuthProbe = {
+  ok: boolean
+  remote: boolean
+  message: string
+  guideUrl: string
+}
+
+/** Lightweight auth probe: can we talk to origin without prompting forever? */
+export async function probeBitbucketAuth(cwd: string): Promise<BitbucketAuthProbe> {
+  const guideUrl = 'https://support.atlassian.com/bitbucket-cloud/docs/set-up-an-ssh-key/'
+  const info = await detectBitbucketRemote(cwd)
+  if (!info) {
+    return {
+      ok: false,
+      remote: false,
+      message: 'origin が Bitbucket ではありません',
+      guideUrl
+    }
+  }
+  const result = await runGitWithCode(
+    ['ls-remote', '--heads', 'origin'],
+    cwd,
+    12_000
+  )
+  if (result.code === 0) {
+    return {
+      ok: true,
+      remote: true,
+      message: `認証 OK · ${info.workspace}/${info.repo}`,
+      guideUrl
+    }
+  }
+  const err = (result.stderr || result.stdout || '').toLowerCase()
+  let message = 'Bitbucket へのアクセスに失敗しました'
+  if (err.includes('authentication') || err.includes('permission') || err.includes('403')) {
+    message = '認証エラーです。SSH 鍵または App Password を確認してください'
+  } else if (err.includes('could not resolve') || err.includes('timed out')) {
+    message = 'ネットワークまたはホスト名を確認してください'
+  } else if (result.stderr) {
+    message = result.stderr.slice(0, 180)
+  }
+  return { ok: false, remote: true, message, guideUrl }
+}
+
+function runGitWithCode(
+  args: string[],
+  cwd: string,
+  timeoutMs: number
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn('git', args, { cwd, windowsHide: true, env: process.env })
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => {
+      try {
+        child.kill()
+      } catch {
+        // ignore
+      }
+      resolve({ code: 124, stdout, stderr: stderr || 'timeout' })
+    }, timeoutMs)
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8')
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8')
+    })
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      resolve({ code: 1, stdout, stderr: error.message })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ code: code ?? 1, stdout: stdout.trim(), stderr: stderr.trim() })
+    })
+  })
+}

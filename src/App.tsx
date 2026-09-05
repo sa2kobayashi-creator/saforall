@@ -27,6 +27,7 @@ import { buildBackendOfflineMessage } from './lib/backendGuide'
 import { buildNpmScriptCommand, buildRunFileCommand } from './lib/runCommands'
 import type { DebugBreakpointMap, DebugCallFrame } from './lib/debugTypes'
 import { loadWorkspaceKeybindings, matchKeybinding } from './lib/keybindings'
+import { loadAutoSaveDelayMs, loadAutoSaveEnabled } from './lib/autoSave'
 import { loadExtensionGrants, saveExtensionGrants } from './lib/extensionPermissions'
 import type { ExtensionPermission, WorkspaceExtension } from './types/extensions'
 import { UsagePanel } from './components/UsagePanel'
@@ -116,6 +117,9 @@ export default function App() {
   } | null>(null)
   const [applyQueue, setApplyQueue] = useState<ApplyDiffProposal[]>([])
   const [scmDiff, setScmDiff] = useState<ScmDiffView | null>(null)
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(() => loadAutoSaveEnabled())
+  const [autoSaveDelayMs, setAutoSaveDelayMs] = useState(() => loadAutoSaveDelayMs())
   const [composerOpen, setComposerOpen] = useState(true)
   const [reviewIndex, setReviewIndex] = useState(0)
   const [quickOpen, setQuickOpen] = useState(false)
@@ -438,6 +442,19 @@ export default function App() {
     if (!activeFile) return
     try {
       await window.saforall.writeFile(activeFile.path, activeFile.content)
+      if (workspacePath && typeof window.saforall.recordLocalHistory === 'function') {
+        try {
+          await window.saforall.recordLocalHistory({
+            cwd: workspacePath,
+            path: activeFile.path,
+            content: activeFile.content,
+            label: 'save'
+          })
+          setHistoryRefreshKey((n) => n + 1)
+        } catch {
+          // history is best-effort
+        }
+      }
       setTabs((current) =>
         current.map((tab) =>
           tab.path === activeFile.path ? { ...tab, dirty: false } : tab
@@ -447,7 +464,24 @@ export default function App() {
     } catch (error) {
       setStatus(`保存失敗: ${String(error)}`)
     }
-  }, [activeFile])
+  }, [activeFile, workspacePath])
+
+  useEffect(() => {
+    if (!autoSaveEnabled || !activeFile?.dirty) return
+    const timer = window.setTimeout(() => {
+      void saveFile()
+    }, autoSaveDelayMs)
+    return () => window.clearTimeout(timer)
+  }, [autoSaveEnabled, autoSaveDelayMs, activeFile?.path, activeFile?.content, activeFile?.dirty, saveFile])
+
+  useEffect(() => {
+    const onStorage = () => {
+      setAutoSaveEnabled(loadAutoSaveEnabled())
+      setAutoSaveDelayMs(loadAutoSaveDelayMs())
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   const closeTab = useCallback(
     (path: string) => {
@@ -1595,6 +1629,10 @@ export default function App() {
                 onRevoke={revokeExtensionPermissions}
                 onRefresh={() => void refreshExtensions()}
                 onRun={(command) => runCommand(command)}
+                onStatusMessage={(message) => {
+                  setStatus(message)
+                  showNotice(message)
+                }}
               />
             </div>
           )}
@@ -1709,6 +1747,8 @@ export default function App() {
                   height={terminalHeight}
                   activeTab={bottomTab}
                   cwd={workspacePath}
+                  activePath={activePath}
+                  historyRefreshKey={historyRefreshKey}
                   pendingCommand={pendingCommand}
                   problems={problems}
                   references={{
@@ -1729,6 +1769,33 @@ export default function App() {
                       setChatOpen(true)
                       setPendingChatPrompt(job.prompt)
                     }
+                  }}
+                  onHistoryRestore={(relative, content) => {
+                    if (!workspacePath) return
+                    const abs = resolveProblemOpenPath(workspacePath, relative)
+                    setTabs((current) => {
+                      const hit = current.find((tab) => tab.path === abs)
+                      if (hit) {
+                        return current.map((tab) =>
+                          tab.path === abs ? { ...tab, content, dirty: true } : tab
+                        )
+                      }
+                      return [
+                        ...current,
+                        {
+                          path: abs,
+                          content,
+                          language: languageFromPath(abs),
+                          dirty: true
+                        }
+                      ]
+                    })
+                    setActivePath(abs)
+                    setHistoryRefreshKey((n) => n + 1)
+                  }}
+                  onStatusMessage={(message) => {
+                    setStatus(message)
+                    showNotice(message)
                   }}
                   debug={{
                     running: debugRunning,
@@ -1870,10 +1937,19 @@ export default function App() {
       <SettingsPanel
         open={settingsOpen}
         backendConnected={backend.connected}
-        onClose={() => setSettingsOpen(false)}
+        workspacePath={workspacePath}
+        onClose={() => {
+          setSettingsOpen(false)
+          setAutoSaveEnabled(loadAutoSaveEnabled())
+          setAutoSaveDelayMs(loadAutoSaveDelayMs())
+        }}
         onOpenUsage={() => {
           setSettingsOpen(false)
           setUsageLayout(preferredUsageMode)
+        }}
+        onStatusMessage={(message) => {
+          setStatus(message)
+          showNotice(message)
         }}
       />
       <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />

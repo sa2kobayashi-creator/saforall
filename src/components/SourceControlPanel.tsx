@@ -57,6 +57,11 @@ export function SourceControlPanel({
     repo: string
     branch?: string | null
   } | null>(null)
+  const [bbAuth, setBbAuth] = useState<{
+    ok: boolean
+    message: string
+    guideUrl: string
+  } | null>(null)
 
   const staged = useMemo(() => files.filter((file) => file.staged), [files])
   const changes = useMemo(() => files.filter((file) => file.unstaged), [files])
@@ -72,6 +77,7 @@ export function SourceControlPanel({
       setError(null)
       setGhAuth(null)
       setBitbucket(null)
+      setBbAuth(null)
       return
     }
 
@@ -119,12 +125,25 @@ export function SourceControlPanel({
               repo: remote.info.repo,
               branch: remote.branch
             })
+            if (typeof window.saforall.bitbucketProbeAuth === 'function') {
+              void window.saforall.bitbucketProbeAuth(workspacePath).then((probe) => {
+                setBbAuth({
+                  ok: probe.ok,
+                  message: probe.message,
+                  guideUrl: probe.guideUrl
+                })
+              })
+            } else {
+              setBbAuth(null)
+            }
           } else {
             setBitbucket(null)
+            setBbAuth(null)
           }
         })
       } else {
         setBitbucket(null)
+        setBbAuth(null)
       }
     } catch (err) {
       setError(String(err))
@@ -277,6 +296,41 @@ export function SourceControlPanel({
               <div className="scm-note">
                 Bitbucket: {bitbucket.workspace}/{bitbucket.repo}
                 {bitbucket.branch ? ` · ${bitbucket.branch}` : ''}
+                {bbAuth && (
+                  <div className={`scm-gh-auth ${bbAuth.ok ? 'ok' : 'ng'}`}>
+                    {bbAuth.message}
+                    {!bbAuth.ok && (
+                      <button
+                        type="button"
+                        className="scm-file-action"
+                        title="認証ガイドを開く"
+                        onClick={() => {
+                          void window.saforall.openExternal(bbAuth.guideUrl)
+                        }}
+                      >
+                        ガイド
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="scm-file-action"
+                      title="再チェック"
+                      onClick={() => {
+                        if (!workspacePath) return
+                        void window.saforall.bitbucketProbeAuth(workspacePath).then((probe) => {
+                          setBbAuth({
+                            ok: probe.ok,
+                            message: probe.message,
+                            guideUrl: probe.guideUrl
+                          })
+                          onStatusMessage?.(probe.message)
+                        })
+                      }}
+                    >
+                      再確認
+                    </button>
+                  </div>
+                )}
               </div>
             )}
             {error && <div className="scm-error">{error}</div>}

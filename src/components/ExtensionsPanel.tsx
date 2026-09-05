@@ -6,6 +6,7 @@ import {
   normalizePermissions,
   permissionsLabel
 } from '../lib/extensionPermissions'
+import { assertSafeExtensionRun } from '../lib/extensionSafety'
 import { localizeMcpTool, useI18n } from '../i18n'
 import './ExtensionsPanel.css'
 
@@ -18,6 +19,7 @@ type Props = {
   onRevoke: (extensionId: string) => void
   onRun: (command: string) => void
   onRefresh: () => void
+  onStatusMessage?: (message: string) => void
 }
 
 export function ExtensionsPanel({
@@ -28,7 +30,8 @@ export function ExtensionsPanel({
   onGrant,
   onRevoke,
   onRun,
-  onRefresh
+  onRefresh,
+  onStatusMessage
 }: Props) {
   const { t, locale } = useI18n()
   const [pending, setPending] = useState<{
@@ -138,12 +141,21 @@ export function ExtensionsPanel({
     )
 
   const requestRun = (extension: WorkspaceExtension, command: ExtensionCommand) => {
+    if (extension.enabled === false) {
+      onStatusMessage?.('この拡張は無効です。有効化してから実行してください')
+      return
+    }
     const run = resolveRun(command)
     const declared = normalizePermissions(
       command.permissions ?? extension.permissions ?? ['terminal.run']
     )
     const inferred = inferRequiredPermissions(run)
     const required = Array.from(new Set([...declared, ...inferred]))
+    const safety = assertSafeExtensionRun(run, required)
+    if (!safety.ok) {
+      onStatusMessage?.(safety.error)
+      return
+    }
     if (hasGrantedPermissions(grants[extension.id], required)) {
       onRun(run)
       return
@@ -329,21 +341,52 @@ export function ExtensionsPanel({
         <ul className="extensions-list">
           {extensions.map((ext) => {
             const granted = grants[ext.id] ?? []
+            const enabled = ext.enabled !== false
             return (
-              <li key={ext.id} className="extensions-card">
-                <div className="extensions-card-title">{ext.name}</div>
+              <li key={ext.id} className={`extensions-card${enabled ? '' : ' is-disabled'}`}>
+                <div className="extensions-card-title">
+                  {ext.name}
+                  <button
+                    type="button"
+                    className="extensions-enable"
+                    disabled={!workspacePath || typeof window.saforall.setExtensionEnabled !== 'function'}
+                    onClick={() => {
+                      if (!workspacePath) return
+                      void window.saforall
+                        .setExtensionEnabled({
+                          cwd: workspacePath,
+                          id: ext.id,
+                          enabled: !enabled
+                        })
+                        .then((result) => {
+                          if (!result.ok) {
+                            onStatusMessage?.(result.error ?? '更新に失敗しました')
+                            return
+                          }
+                          onStatusMessage?.(
+                            enabled ? `拡張を無効化: ${ext.name}` : `拡張を有効化: ${ext.name}`
+                          )
+                          onRefresh()
+                        })
+                    }}
+                  >
+                    {enabled ? '無効化' : '有効化'}
+                  </button>
+                </div>
                 {ext.description && <p>{ext.description}</p>}
                 <p className="extensions-perms">
                   {t('ext.perms')}: {(ext.permissions ?? ['terminal.run']).join(', ')}
                   {granted.length > 0
                     ? ` · ${t('ext.granted')}: ${granted.join(', ')}`
                     : ` · ${t('ext.ungranted')}`}
+                  {enabled ? '' : ' · 無効'}
                 </p>
                 <div className="extensions-commands">
                   {ext.commands.map((cmd) => (
                     <button
                       key={cmd.id}
                       type="button"
+                      disabled={!enabled}
                       onClick={() => requestRun(ext, cmd)}
                       title={cmd.run}
                     >

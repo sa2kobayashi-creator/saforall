@@ -1,0 +1,73 @@
+.timeline-panel {
+  height: 100%;
+  overflow: auto;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.timeline-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.timeline-scope {
+  display: flex;
+  gap: 4px;
+}
+
+.timeline-scope button,
+.timeline-row button {
+  background: transparent;
+  border: 1px solid var(--border, #444);
+  color: var(--text, #ddd);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.timeline-scope button.active,
+.timeline-row button.primary {
+  border-color: var(--accent, #0078d4);
+  color: #fff;
+}
+
+.timeline-hint,
+.timeline-error {
+  color: #888;
+  margin: 8px 0;
+}
+
+.timeline-error {
+  color: #f48771;
+}
+
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #333;
+}
+
+.timeline-path {
+  color: #ddd;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-meta {
+  color: #888;
+  font-size: 11px;
+}

@@ -53,6 +53,43 @@ export async function loadWorkspaceKeybindings(
   }
 }
 
+export function serializeKeybindings(entries: KeybindingEntry[]): string {
+  const cleaned = entries
+    .filter((row) => row.key.trim() && row.command.trim())
+    .map((row) => ({
+      key: row.key.trim().toLowerCase().replace(/\s+/g, ''),
+      command: row.command.trim(),
+      ...(row.when?.trim() ? { when: row.when.trim() } : {})
+    }))
+  return `${JSON.stringify(cleaned, null, 2)}\n`
+}
+
+export const DEFAULT_KEYBINDING_COMMANDS = [
+  'file.save',
+  'file.openFolder',
+  'view.explorer',
+  'view.search',
+  'view.scm',
+  'view.extensions',
+  'view.terminal',
+  'git.pull',
+  'git.push',
+  'editor.inlineEdit',
+  'editor.format',
+  'editor.blame'
+] as const
+
+export async function saveWorkspaceKeybindings(
+  workspacePath: string,
+  entries: KeybindingEntry[]
+): Promise<string> {
+  const sep = workspacePath.includes('\\') ? '\\' : '/'
+  const path = `${workspacePath.replace(/[\\/]+$/, '')}${sep}.saforall${sep}keybindings.json`
+  const body = serializeKeybindings(entries)
+  await window.saforall.writeFile(path, body)
+  return path
+}
+
 export function matchKeybinding(
   event: KeyboardEvent,
   bindings: KeybindingEntry[]

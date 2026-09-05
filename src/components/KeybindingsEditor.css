@@ -1,0 +1,59 @@
+.kb-editor {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #333);
+}
+
+.kb-hint {
+  color: #999;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.kb-error {
+  color: #f48771;
+  font-size: 12px;
+}
+
+.kb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kb-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.kb-row input,
+.kb-row select {
+  background: #1e1e1e;
+  border: 1px solid #444;
+  color: #ddd;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.kb-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.kb-actions button {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid #444;
+  background: transparent;
+  color: #ddd;
+  cursor: pointer;
+}
+
+.kb-actions button.primary {
+  border-color: #0078d4;
+}

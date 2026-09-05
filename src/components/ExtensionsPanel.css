@@ -79,8 +79,26 @@
 }
 
 .extensions-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.extensions-card.is-disabled {
+  opacity: 0.65;
+}
+
+.extensions-enable {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #555;
+  background: transparent;
+  color: #ccc;
+  cursor: pointer;
 }
 
 .extensions-card p {

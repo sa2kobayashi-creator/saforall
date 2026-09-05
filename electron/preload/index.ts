@@ -325,6 +325,12 @@ const api = {
     }
   ): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('extensions:scaffold', { cwd, item }),
+  setExtensionEnabled: (params: {
+    cwd: string
+    id: string
+    enabled: boolean
+  }): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('extensions:setEnabled', params),
   postPrReview: (payload: {
     cwd: string
     prNumber?: number
@@ -642,6 +648,37 @@ const api = {
     createUrl?: string
     error?: string
   }> => ipcRenderer.invoke('bitbucket:remote', cwd),
+  bitbucketProbeAuth: (
+    cwd: string
+  ): Promise<{
+    ok: boolean
+    remote: boolean
+    message: string
+    guideUrl: string
+  }> => ipcRenderer.invoke('bitbucket:probeAuth', cwd),
+  listLocalHistory: (
+    cwd: string,
+    path?: string
+  ): Promise<
+    Array<{ id: string; path: string; savedAt: number; bytes: number; label?: string }>
+  > => ipcRenderer.invoke('history:list', cwd, path),
+  readLocalHistory: (params: {
+    cwd: string
+    id: string
+    path: string
+  }): Promise<string> => ipcRenderer.invoke('history:read', params),
+  recordLocalHistory: (params: {
+    cwd: string
+    path: string
+    content: string
+    label?: string
+  }): Promise<{ id: string; path: string; savedAt: number; bytes: number; label?: string }> =>
+    ipcRenderer.invoke('history:record', params),
+  restoreLocalHistory: (params: {
+    cwd: string
+    id: string
+    path: string
+  }): Promise<{ path: string; bytes: number }> => ipcRenderer.invoke('history:restore', params),
   listJobs: (): Promise<
     Array<{
       id: string

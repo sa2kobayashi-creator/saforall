@@ -17,6 +17,8 @@ export type WorkspaceExtension = {
   id: string
   name: string
   description?: string
+  /** When false, commands are hidden / blocked in UI */
+  enabled?: boolean
   permissions?: ExtensionPermission[]
   commands: ExtensionCommand[]
 }

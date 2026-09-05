@@ -27,12 +27,19 @@ import {
   writeTerminal
 } from './terminal'
 import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch, listProjectRuleFiles, readProjectMemory, appendProjectMemory, saveProjectMemory, readProjectRuleFile, replaceInWorkspace } from './workspaceTools'
-import { loadWorkspaceExtensions, scaffoldExtensionFromMarketplace } from './extensions'
+import { loadWorkspaceExtensions, scaffoldExtensionFromMarketplace, setWorkspaceExtensionEnabled } from './extensions'
+import {
+  listLocalHistory,
+  readLocalHistoryContent,
+  recordLocalHistory,
+  restoreLocalHistory
+} from './localHistory'
 import { type DebugBreakpoint, type DebugSession } from './debugSession'
 import {
   detectBitbucketRemote,
   detectCurrentBranchName,
-  buildBitbucketPullRequestCreateUrl
+  buildBitbucketPullRequestCreateUrl,
+  probeBitbucketAuth
 } from './bitbucket'
 import {
   continueUnifiedDebug,
@@ -630,6 +637,39 @@ ipcMain.handle('bitbucket:remote', async (_event, cwd: string) => {
   })
   return { ok: true as const, info, branch, createUrl }
 })
+
+ipcMain.handle('bitbucket:probeAuth', async (_event, cwd: string) => probeBitbucketAuth(cwd))
+
+ipcMain.handle(
+  'history:list',
+  async (_event, cwd: string, path?: string) => listLocalHistory(cwd, path)
+)
+
+ipcMain.handle(
+  'history:read',
+  async (_event, params: { cwd: string; id: string; path: string }) =>
+    readLocalHistoryContent(params.cwd, params.id, params.path)
+)
+
+ipcMain.handle(
+  'history:record',
+  async (
+    _event,
+    params: { cwd: string; path: string; content: string; label?: string }
+  ) => recordLocalHistory(params.cwd, params.path, params.content, params.label)
+)
+
+ipcMain.handle(
+  'history:restore',
+  async (_event, params: { cwd: string; id: string; path: string }) =>
+    restoreLocalHistory(params.cwd, params.id, params.path)
+)
+
+ipcMain.handle(
+  'extensions:setEnabled',
+  async (_event, params: { cwd: string; id: string; enabled: boolean }) =>
+    setWorkspaceExtensionEnabled(params.cwd, params.id, params.enabled)
+)
 
 ipcMain.handle('jobs:list', async () => listBackgroundJobs())
 
