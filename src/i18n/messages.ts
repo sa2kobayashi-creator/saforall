@@ -18,6 +18,7 @@ const ja = {
   'common.cancel': 'キャンセル',
 
   'activity.explorer': 'エクスプローラー',
+  'activity.search': '検索',
   'activity.scm': 'ソース管理',
   'activity.extensions': '拡張機能',
   'activity.openFolder': 'フォルダを開く',
@@ -27,6 +28,18 @@ const ja = {
   'activity.terminal': 'ターミナル',
   'activity.settings': '設定',
   'activity.aria': 'アクティビティバー',
+
+  'search.title': '検索',
+  'search.aria': 'ワークスペース検索',
+  'search.needWorkspace': '検索するにはフォルダを開いてください。',
+  'search.content': 'コード内',
+  'search.files': 'ファイル名',
+  'search.placeholderContent': 'コード内を検索…',
+  'search.placeholderFiles': 'ファイル名で検索…',
+  'search.searching': '検索中…',
+  'search.minChars': '2 文字以上入力してください',
+  'search.typeFiles': 'ファイル名の一部を入力',
+  'search.none': '一致なし',
 
   'sidebar.explorer': 'エクスプローラー',
   'sidebar.noWorkspace': 'ワークスペースが未選択です',
@@ -115,6 +128,7 @@ const en: Record<MessageKey, string> = {
   'common.cancel': 'Cancel',
 
   'activity.explorer': 'Explorer',
+  'activity.search': 'Search',
   'activity.scm': 'Source Control',
   'activity.extensions': 'Extensions',
   'activity.openFolder': 'Open Folder',
@@ -124,6 +138,18 @@ const en: Record<MessageKey, string> = {
   'activity.terminal': 'Terminal',
   'activity.settings': 'Settings',
   'activity.aria': 'Activity Bar',
+
+  'search.title': 'Search',
+  'search.aria': 'Workspace Search',
+  'search.needWorkspace': 'Open a folder to search.',
+  'search.content': 'In files',
+  'search.files': 'File name',
+  'search.placeholderContent': 'Search in files…',
+  'search.placeholderFiles': 'Search by file name…',
+  'search.searching': 'Searching…',
+  'search.minChars': 'Type at least 2 characters',
+  'search.typeFiles': 'Type part of a file name',
+  'search.none': 'No matches',
 
   'sidebar.explorer': 'EXPLORER',
   'sidebar.noWorkspace': 'No folder opened',

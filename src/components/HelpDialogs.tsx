@@ -62,6 +62,8 @@ const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: 'Ctrl/Cmd + K', action: '選択範囲を AI インライン編集' },
   { keys: 'Ctrl/Cmd + L', action: 'AI チャットの表示切替' },
   { keys: 'Ctrl/Cmd + Shift + E', action: 'Explorer を表示' },
+  { keys: 'Ctrl/Cmd + Shift + F', action: 'Search（コード / ファイル名）' },
+  { keys: 'Ctrl/Cmd + Shift + G', action: 'ソース管理を表示' },
   { keys: 'Ctrl/Cmd + Shift + G', action: 'Source Control を表示' },
   { keys: 'Ctrl/Cmd + Shift + M', action: 'Problems を表示' },
   { keys: 'Ctrl/Cmd + Shift + U', action: 'AI 使用量を表示' },

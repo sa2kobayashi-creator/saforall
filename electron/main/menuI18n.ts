@@ -11,6 +11,7 @@ type MenuLabels = {
   backgroundAgent: string
   view: string
   explorer: string
+  search: string
   scm: string
   toggleTerminal: string
   problems: string
@@ -58,6 +59,7 @@ const ja: MenuLabels = {
   backgroundAgent: 'Background Agent…',
   view: '表示',
   explorer: 'エクスプローラー',
+  search: '検索',
   scm: 'ソース管理',
   toggleTerminal: 'ターミナルの表示切替',
   problems: 'Problems',
@@ -105,6 +107,7 @@ const en: MenuLabels = {
   backgroundAgent: 'Background Agent…',
   view: 'View',
   explorer: 'Explorer',
+  search: 'Search',
   scm: 'Source Control',
   toggleTerminal: 'Toggle Terminal',
   problems: 'Problems',

@@ -6,6 +6,7 @@ export type MenuCommand =
   | 'workspace:close'
   | 'file:save'
   | 'view:explorer'
+  | 'view:search'
   | 'view:scm'
   | 'view:terminal'
   | 'view:problems'
@@ -118,6 +119,11 @@ export function setupApplicationMenu(locale: MenuLocale = currentLocale): void {
           label: L.explorer,
           accelerator: 'CmdOrCtrl+Shift+E',
           click: () => send('view:explorer')
+        },
+        {
+          label: L.search,
+          accelerator: 'CmdOrCtrl+Shift+F',
+          click: () => send('view:search')
         },
         {
           label: L.scm,

@@ -1,7 +1,7 @@
 import { useI18n } from '../i18n'
 import './ActivityBar.css'
 
-export type SidebarView = 'explorer' | 'scm' | 'extensions'
+export type SidebarView = 'explorer' | 'search' | 'scm' | 'extensions'
 
 type Props = {
   activeView: SidebarView
@@ -43,6 +43,14 @@ export function ActivityBar({
         onClick={() => onChangeView('explorer')}
       >
         📁
+      </button>
+      <button
+        type="button"
+        className={`activity-btn ${activeView === 'search' ? 'active' : ''}`}
+        title={t('activity.search')}
+        onClick={() => onChangeView('search')}
+      >
+        🔎
       </button>
       <button
         type="button"

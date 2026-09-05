@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityBar, type SidebarView } from './components/ActivityBar'
 import { Sidebar } from './components/Sidebar'
+import { SearchPanel } from './components/SearchPanel'
 import { SourceControlPanel } from './components/SourceControlPanel'
 import { CloneDialog } from './components/CloneDialog'
 import { EditorPane } from './components/EditorPane'
@@ -1200,6 +1201,9 @@ export default function App() {
         case 'view:explorer':
           setSidebarView('explorer')
           break
+        case 'view:search':
+          setSidebarView('search')
+          break
         case 'view:scm':
           setSidebarView('scm')
           setScmRefreshKey((key) => key + 1)
@@ -1406,6 +1410,13 @@ export default function App() {
             <Sidebar
               workspacePath={workspacePath}
               activePath={activePath}
+              width={sidebarWidth}
+              onOpenWorkspace={openWorkspace}
+              onOpenFile={openFileAt}
+            />
+          ) : sidebarView === 'search' ? (
+            <SearchPanel
+              workspacePath={workspacePath}
               width={sidebarWidth}
               onOpenWorkspace={openWorkspace}
               onOpenFile={openFileAt}
