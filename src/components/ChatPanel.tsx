@@ -297,9 +297,24 @@ export function ChatPanel({
         const needles = extractCodebaseNeedles(input)
         const hitBlocks: string[] = []
         if (typeof window.saforall.searchCode === 'function') {
+          const anchors: string[] = []
+          const root = workspacePath.replace(/\\/g, '/').replace(/\/$/, '')
+          const toRel = (abs: string): string | null => {
+            const unified = abs.replace(/\\/g, '/')
+            if (unified.startsWith(root + '/')) return unified.slice(root.length + 1)
+            return null
+          }
+          if (file?.path) {
+            const rel = toRel(file.path)
+            if (rel) anchors.push(rel)
+          }
+          for (const tab of openFiles.slice(0, 8)) {
+            const rel = toRel(tab.path)
+            if (rel && !anchors.includes(rel)) anchors.push(rel)
+          }
           for (const needle of needles.slice(0, 4)) {
             try {
-              const hits = await window.saforall.searchCode(workspacePath, needle)
+              const hits = await window.saforall.searchCode(workspacePath, needle, anchors)
               if (hits && hits !== '一致なし') {
                 hitBlocks.push(`## ${needle}\n${hits.split('\n').slice(0, 12).join('\n')}`)
               }

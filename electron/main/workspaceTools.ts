@@ -45,14 +45,19 @@ export async function toolListDir(workspaceRoot: string, pathArg = '.'): Promise
   return lines.join('\n') || '(empty)'
 }
 
-export async function toolSearch(workspaceRoot: string, query: string, globHint?: string): Promise<string> {
+export async function toolSearch(
+  workspaceRoot: string,
+  query: string,
+  globHint?: string,
+  anchorPaths?: string[]
+): Promise<string> {
   const needle = query.trim()
   if (needle.length < 2) {
     return 'query は 2 文字以上にしてください'
   }
 
   try {
-    const indexed = await searchIndexedContent(workspaceRoot, needle, globHint, 40)
+    const indexed = await searchIndexedContent(workspaceRoot, needle, globHint, 40, anchorPaths)
     if (indexed.length > 0) return indexed.join('\n')
   } catch {
     // fall through to walk

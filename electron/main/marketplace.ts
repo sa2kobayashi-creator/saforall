@@ -4,9 +4,13 @@ export type MarketplaceExtension = {
   description: string
   url: string
   downloads?: number
+  namespace?: string
+  packageName?: string
+  downloadUrl?: string
+  version?: string
 }
 
-/** Open VSX search — browse only (no VSIX install runtime yet). */
+/** Open VSX search — browse + scaffold install (no VSIX host). */
 export async function searchOpenVsx(
   query: string,
   size = 20
@@ -27,6 +31,7 @@ export async function searchOpenVsx(
         name?: string
         displayName?: string
         description?: string
+        version?: string
         files?: { download?: string }
         downloadCount?: number
       }>
@@ -39,7 +44,11 @@ export async function searchOpenVsx(
         name: row.displayName || name,
         description: row.description || '',
         url: `https://open-vsx.org/extension/${namespace}/${name}`,
-        downloads: row.downloadCount
+        downloads: row.downloadCount,
+        namespace,
+        packageName: name,
+        downloadUrl: row.files?.download,
+        version: row.version
       }
     })
     return { ok: true, items }

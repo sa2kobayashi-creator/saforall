@@ -15,7 +15,7 @@ import {
   stagePaths,
   unstagePaths
 } from './git'
-import { createPullRequest, getGhAuthStatus } from './gh'
+import { createPullRequest, getGhAuthStatus, createPullRequestReview, findingsToReviewComments } from './gh'
 import { setupApplicationMenu } from './menu'
 import {
   createTerminalSession,
@@ -25,7 +25,7 @@ import {
   writeTerminal
 } from './terminal'
 import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch, listProjectRuleFiles, readProjectMemory, appendProjectMemory, saveProjectMemory, readProjectRuleFile } from './workspaceTools'
-import { loadWorkspaceExtensions } from './extensions'
+import { loadWorkspaceExtensions, scaffoldExtensionFromMarketplace } from './extensions'
 import { type DebugBreakpoint, type DebugSession } from './debugSession'
 import {
   detectBitbucketRemote,
@@ -160,9 +160,12 @@ ipcMain.handle('fs:searchFiles', async (_event, cwd: string, query: string) => {
   return searchFilesByName(cwd, query, 50)
 })
 
-ipcMain.handle('fs:searchCode', async (_event, cwd: string, query: string) => {
-  return toolSearch(cwd, query)
-})
+ipcMain.handle(
+  'fs:searchCode',
+  async (_event, cwd: string, query: string, anchorPaths?: string[]) => {
+    return toolSearch(cwd, query, undefined, anchorPaths)
+  }
+)
 
 ipcMain.handle('fs:searchSymbols', async (_event, cwd: string, query: string) => {
   return searchIndexedSymbols(cwd, query, 40)
@@ -513,6 +516,50 @@ lspManager.setDiagnosticsHandler((items: LspDiagnostic[]) => {
 })
 
 ipcMain.handle('marketplace:search', async (_event, query: string) => searchOpenVsx(query))
+
+ipcMain.handle(
+  'extensions:scaffold',
+  async (
+    _event,
+    payload: {
+      cwd: string
+      item: {
+        id: string
+        name: string
+        description?: string
+        namespace?: string
+        packageName?: string
+        url?: string
+      }
+    }
+  ) => scaffoldExtensionFromMarketplace(payload.cwd, payload.item)
+)
+
+ipcMain.handle(
+  'gh:prReview',
+  async (
+    _event,
+    payload: {
+      cwd: string
+      prNumber?: number
+      body?: string
+      findings: Array<{
+        path: string
+        line?: number
+        title: string
+        detail: string
+        severity?: string
+      }>
+    }
+  ) => {
+    const comments = findingsToReviewComments(payload.findings)
+    return createPullRequestReview(payload.cwd, {
+      prNumber: payload.prNumber,
+      comments,
+      body: payload.body ?? 'Bugbot findings from saforall'
+    })
+  }
+)
 
 ipcMain.handle('rules:list', async (_event, cwd: string) => listProjectRuleFiles(cwd))
 ipcMain.handle('rules:readFile', async (_event, cwd: string, relativePath: string) =>

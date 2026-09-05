@@ -341,6 +341,14 @@ export async function streamChat(
         text: '🔧 ツール Agent を開始します。説明だけで終わらず、ツールで編集・検証します。\n'
       })
       const { runToolAgent } = await import('./toolAgent')
+      const context =
+        typeof requestBody.context === 'object' && requestBody.context !== null
+          ? (requestBody.context as Record<string, unknown>)
+          : {}
+      const problemsRaw = context.problems
+      const problems = Array.isArray(problemsRaw)
+        ? problemsRaw.filter((row): row is string => typeof row === 'string')
+        : []
       await runToolAgent({
         workspacePath,
         apiKey: decided.provider.api_key,
@@ -351,6 +359,7 @@ export async function streamChat(
         engine: decided.engine,
         taskType: decided.task_type,
         sessionId: decided.session_id,
+        problems,
         onEvent,
         complete: async (content) => {
           const completed = await fetchJson<{

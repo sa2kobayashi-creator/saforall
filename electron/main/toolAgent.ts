@@ -1,4 +1,9 @@
 import type { ChatStreamEvent, MonthUsage } from './api'
+import {
+  formatProblemsForAgent,
+  MAX_EDIT_RECOVERIES,
+  problemsAffectEditedPaths
+} from './lib/agentVerify'
 import { mcpManager, type McpToolInfo } from './mcpClient'
 import {
   excerptShellFailure,
@@ -118,6 +123,23 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_problems',
+      description:
+        'List current IDE Problems (LSP/Monaco diagnostics) relevant to edited files. Use in verify before declaring success.',
+      parameters: {
+        type: 'object',
+        properties: {
+          edited_only: {
+            type: 'boolean',
+            description: 'If true (default), only problems touching edited paths'
+          }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'run_shell',
       description:
         'Run a short shell command in the workspace (e.g. npm test, npm run typecheck). Pending edit_file proposals are temporarily applied for the run, then restored. Prefer package scripts. Blocked: destructive system commands.',
@@ -174,14 +196,15 @@ const TOOLS = [
 ]
 
 const PHASE_TOOLS: Record<AgentPhase, Set<string>> = {
-  plan: new Set(['set_phase', 'list_dir', 'search_code', 'read_file', 'list_mcp_tools']),
+  plan: new Set(['set_phase', 'list_dir', 'search_code', 'read_file', 'list_mcp_tools', 'get_problems']),
   explore: new Set([
     'set_phase',
     'list_dir',
     'search_code',
     'read_file',
     'list_mcp_tools',
-    'call_mcp_tool'
+    'call_mcp_tool',
+    'get_problems'
   ]),
   edit: new Set([
     'set_phase',
@@ -191,7 +214,8 @@ const PHASE_TOOLS: Record<AgentPhase, Set<string>> = {
     'edit_file',
     'run_shell',
     'list_mcp_tools',
-    'call_mcp_tool'
+    'call_mcp_tool',
+    'get_problems'
   ]),
   verify: new Set([
     'set_phase',
@@ -201,7 +225,8 @@ const PHASE_TOOLS: Record<AgentPhase, Set<string>> = {
     'run_shell',
     'edit_file',
     'list_mcp_tools',
-    'call_mcp_tool'
+    'call_mcp_tool',
+    'get_problems'
   ])
 }
 
@@ -215,6 +240,8 @@ export type ToolAgentParams = {
   engine: string
   taskType: string
   sessionId: number
+  /** Snapshot of IDE Problems panel lines (path + message). */
+  problems?: string[]
   onEvent: (event: ChatStreamEvent) => void
   complete: (content: string) => Promise<{
     assistant_message: Record<string, unknown>
@@ -564,7 +591,8 @@ async function runTool(
     editRecoveries: number
     triedVerifyCommands: string[]
   },
-  verifyHint?: { primary: string; fallbacks: string[] } | null
+  verifyHint?: { primary: string; fallbacks: string[] } | null,
+  problemsSnapshot: string[] = []
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
   let args: Record<string, unknown> = {}
   // Never soft-repair truncated edit_file payloads — that queues broken full files.
@@ -832,6 +860,32 @@ async function runTool(
       }
     }
 
+    if (name === 'get_problems') {
+      const editedOnly = args.edited_only !== false
+      const source = problemsSnapshot
+      const hits = editedOnly
+        ? problemsAffectEditedPaths(source, editedPaths, { errorsOnly: true })
+        : source.slice(0, 40)
+      const payload = {
+        ok: true,
+        count: hits.length,
+        editedOnly,
+        problems: hits,
+        note:
+          hits.length === 0
+            ? 'No matching Problems for edited paths (or snapshot empty). Still run_shell to verify.'
+            : 'Fix these diagnostics with edit_file before finishing verify.'
+      }
+      onEvent({
+        type: 'tool_result',
+        id: callId,
+        name,
+        ok: true,
+        summary: hits.length === 0 ? 'problems: none' : `problems: ${hits.length}`
+      })
+      return { content: JSON.stringify(payload), ok: hits.length === 0 }
+    }
+
     if (name === 'run_shell') {
       const command = String(args.command ?? '')
       const cwd = typeof args.cwd === 'string' ? args.cwd : undefined
@@ -928,12 +982,12 @@ async function runTool(
           ? `timeout: ${activeCommand}`
           : `exit ${result.exitCode ?? '?'} · ${activeCommand}${autoTried.length ? ' (+fallbacks)' : ''}`
       })
-      if (!result.ok && shellState.editRecoveries < 3) {
+      if (!result.ok && shellState.editRecoveries < MAX_EDIT_RECOVERIES) {
         shellState.editRecoveries += 1
         onEvent({
           type: 'agent_phase',
           phase: 'edit',
-          note: `verify 失敗 → edit へ自動復帰 (${shellState.editRecoveries}/3)`
+          note: `verify 失敗 → edit へ自動復帰 (${shellState.editRecoveries}/${MAX_EDIT_RECOVERIES})`
         })
         return {
           content: JSON.stringify({
@@ -944,6 +998,34 @@ async function runTool(
           }),
           ok: false,
           nextPhase: 'edit'
+        }
+      }
+      // Shell succeeded — still fail verify if Problems hit edited files.
+      if (result.ok && editedPaths.size > 0 && problemsSnapshot.length > 0) {
+        const problemHits = problemsAffectEditedPaths(problemsSnapshot, editedPaths, {
+          errorsOnly: true
+        })
+        if (problemHits.length > 0) {
+          shellState.passed = false
+          if (shellState.editRecoveries < MAX_EDIT_RECOVERIES) {
+            shellState.editRecoveries += 1
+            onEvent({
+              type: 'agent_phase',
+              phase: 'edit',
+              note: `Problems 残存 → edit (${shellState.editRecoveries}/${MAX_EDIT_RECOVERIES})`
+            })
+            return {
+              content: JSON.stringify({
+                ...payload,
+                ok: false,
+                problemsBlocking: problemHits,
+                autoRecoveredPhase: 'edit',
+                note: 'Shell passed but Problems still report errors on edited files. Fix with edit_file.'
+              }),
+              ok: false,
+              nextPhase: 'edit'
+            }
+          }
         }
       }
       return { content: JSON.stringify(payload), ok: result.ok }
@@ -1059,8 +1141,10 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     engine,
     taskType,
     onEvent,
-    complete
+    complete,
+    problems: problemsParam
   } = params
+  const problemsSnapshot = Array.isArray(problemsParam) ? problemsParam : []
 
   if (!isToolAgentCompatibleEndpoint(engine, baseUrl, model)) {
     onEvent({
@@ -1095,12 +1179,13 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     'plan: 変更方針を短く立てる（必要なら軽く list/search）。',
     'explore: read_file / search_code / MCP で深く調査（関連ファイルを複数読む）。',
     'edit: edit_file で複数ファイルを提案（Composer レビュー用。即時永続保存されない）。完全なファイル内容を送る（断片・切り捨て禁止）。',
-    'verify: 編集ファイルを read_file で確認し、run_shell で検証する。失敗したら errorExcerpt を読んで edit に戻り、修正後に再実行。',
+    'verify: 編集ファイルを read_file で確認し、run_shell と get_problems で検証する。失敗したら errorExcerpt / Problems を読んで edit に戻り、修正後に再実行。',
     '重要: 修正内容を markdown のコードブロックで説明するだけでは終了しない。必ず edit_file ツールで Composer に載せる。',
     '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）と、依頼が修正なら edit_file + run_shell を行う。',
     '禁止: set_phase / edit_file / read_file / run_shell を文章・bash・手順リストとして書くこと。必ず function/tool_calls で呼ぶ。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
     'MCP: list_mcp_tools / call_mcp_tool で外部ツールを使える（.saforall/mcp.json）。',
+    `編集リカバリ上限: ${MAX_EDIT_RECOVERIES} 回まで verify 失敗→edit 自動復帰。`,
     '破壊的コマンドは禁止。まず短い検証（typecheck）を通し、必要なら test を追加。',
     'ツール失敗時は別パス/クエリ/コマンドで自己修正。同じ呼び出しを繰り返さない。失敗理由を読み、仮説を変える。',
     'シェル未成功のまま最終回答しない。直せる限り edit → run_shell を続ける。',
@@ -1123,6 +1208,14 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   }
   if (rules) {
     agentSystem.push('プロジェクトルール:\n' + rules)
+  }
+  const problemsBlock = formatProblemsForAgent(problemsSnapshot, 30)
+  if (problemsBlock) {
+    agentSystem.push(
+      '現在の Problems（編集対象に関連し得る診断）:\n' +
+        problemsBlock +
+        '\nverify では get_problems で再確認し、error が残るなら edit_file で直す。'
+    )
   }
 
   const messages: ProviderMessage[] = [
@@ -1181,7 +1274,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       modelAllowsRequiredToolChoice(model) &&
       (!anyToolCall ||
         (editedPaths.size === 0 && step < 10) ||
-        (editedPaths.size > 0 && !shellState.passed && shellState.editRecoveries < 3 && step < 40))
+        (editedPaths.size > 0 && !shellState.passed && shellState.editRecoveries < MAX_EDIT_RECOVERIES && step < 40))
 
     let completion: ChatCompletionResponse
     try {
@@ -1288,7 +1381,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
                 editSummaries,
                 pendingEdits,
                 shellState,
-                verifySuggestion
+                verifySuggestion,
+                problemsSnapshot
               )
               return { call, result, skippedDup: false as const }
             })
@@ -1322,7 +1416,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           editSummaries,
           pendingEdits,
           shellState,
-          verifySuggestion
+          verifySuggestion,
+          problemsSnapshot
         )
         orderedResults.push({ call, result, skippedDup: false })
       }
@@ -1521,14 +1616,14 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         !shellState.passed &&
         shellState.attempts >= 1 &&
         phase !== 'edit' &&
-        recoverNudgeCount < 2 &&
-        shellState.editRecoveries === 0
+        recoverNudgeCount < 3 &&
+        shellState.editRecoveries < MAX_EDIT_RECOVERIES
       ) {
         recoverNudgeCount += 1
         messages.push({
           role: 'user',
           content:
-            'システム: シェル検証失敗からのリカバリです。set_phase edit で失敗箇所を修正し、verify で run_shell を再実行してください。\n--- failure ---\n' +
+            'システム: シェル検証失敗からのリカバリです。set_phase edit で失敗箇所を修正し、verify で run_shell を再実行してください。get_problems も確認。\n--- failure ---\n' +
             lastShellFailure
         })
       }
@@ -1632,7 +1727,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           role: 'assistant',
           content: message.content ?? null
         })
-        const canRecover = shellState.editRecoveries < 3
+        const canRecover = shellState.editRecoveries < MAX_EDIT_RECOVERIES
         messages.push({
           role: 'user',
           content: canRecover

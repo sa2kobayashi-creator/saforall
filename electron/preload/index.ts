@@ -102,8 +102,8 @@ const api = {
     ipcRenderer.invoke('fs:readDir', dirPath),
   searchFiles: (cwd: string, query: string): Promise<string[]> =>
     ipcRenderer.invoke('fs:searchFiles', cwd, query),
-  searchCode: (cwd: string, query: string): Promise<string> =>
-    ipcRenderer.invoke('fs:searchCode', cwd, query),
+  searchCode: (cwd: string, query: string, anchorPaths?: string[]): Promise<string> =>
+    ipcRenderer.invoke('fs:searchCode', cwd, query, anchorPaths),
   watchWorkspace: (cwd: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:watchWorkspace', cwd),
   unwatchWorkspace: (): Promise<boolean> => ipcRenderer.invoke('fs:unwatchWorkspace'),
@@ -264,9 +264,38 @@ const api = {
       description: string
       url: string
       downloads?: number
+      namespace?: string
+      packageName?: string
+      downloadUrl?: string
+      version?: string
     }>
     error?: string
   }> => ipcRenderer.invoke('marketplace:search', query),
+  scaffoldExtension: (
+    cwd: string,
+    item: {
+      id: string
+      name: string
+      description?: string
+      namespace?: string
+      packageName?: string
+      url?: string
+    }
+  ): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('extensions:scaffold', { cwd, item }),
+  postPrReview: (payload: {
+    cwd: string
+    prNumber?: number
+    body?: string
+    findings: Array<{
+      path: string
+      line?: number
+      title: string
+      detail: string
+      severity?: string
+    }>
+  }): Promise<{ ok: boolean; prNumber?: number; error?: string }> =>
+    ipcRenderer.invoke('gh:prReview', payload),
   prepareBugbot: (
     cwd: string
   ): Promise<{

@@ -1124,13 +1124,16 @@ export default function App() {
         const raw = await window.saforall.readFile(pkgPath)
         const pkg = JSON.parse(raw) as { scripts?: Record<string, string> }
         const verify = suggestPostApplyVerifyFromScripts(pkg.scripts)
-        if (verify) notice += ` · 検証推奨: ${verify.primary}`
+        if (verify) {
+          notice += ` · 検証実行: ${verify.primary}`
+          runCommand(verify.primary, { auto: true })
+        }
       } catch {
         // ignore missing package.json / parse errors
       }
     }
     showNotice(notice)
-  }, [applyQueue, commitProposal, showNotice, workspacePath])
+  }, [applyQueue, commitProposal, showNotice, workspacePath, runCommand])
 
   const rejectAllProposals = useCallback(() => {
     setApplyQueue([])
@@ -1350,6 +1353,22 @@ export default function App() {
                 ? `Bugbot: ヒューリスティック ${findings.length} 件 + チャットレビュー`
                 : 'Bugbot: 差分レビューをチャットで開始します'
             )
+            if (
+              findings.length > 0 &&
+              typeof window.saforall.postPrReview === 'function' &&
+              window.confirm('GitHub の現在 PR に Bugbot findings をコメントしますか？')
+            ) {
+              const posted = await window.saforall.postPrReview({
+                cwd: workspacePath,
+                findings,
+                body: 'Bugbot findings from saforall'
+              })
+              showNotice(
+                posted.ok
+                  ? `PR #${posted.prNumber ?? '?'} に findings を投稿しました`
+                  : `PR 投稿スキップ/失敗: ${posted.error ?? 'unknown'}`
+              )
+            }
           })()
           break
         case 'agent:background': {

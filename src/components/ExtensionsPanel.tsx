@@ -39,7 +39,15 @@ export function ExtensionsPanel({
   } | null>(null)
   const [marketQuery, setMarketQuery] = useState('')
   const [marketItems, setMarketItems] = useState<
-    Array<{ id: string; name: string; description: string; url: string; downloads?: number }>
+    Array<{
+      id: string
+      name: string
+      description: string
+      url: string
+      downloads?: number
+      namespace?: string
+      packageName?: string
+    }>
   >([])
   const [marketBusy, setMarketBusy] = useState(false)
   const [marketError, setMarketError] = useState<string | null>(null)
@@ -235,9 +243,38 @@ export function ExtensionsPanel({
             <li key={item.id} className="extensions-card">
               <div className="extensions-card-title">{item.name}</div>
               <p>{item.description || item.id}</p>
-              <a href={item.url} target="_blank" rel="noreferrer">
-                {t('ext.market.open')}
-              </a>
+              <div className="extensions-commands">
+                <a href={item.url} target="_blank" rel="noreferrer">
+                  {t('ext.market.open')}
+                </a>
+                <button
+                  type="button"
+                  disabled={!workspacePath}
+                  title="ワークスペース拡張として scaffold（VSIX 非実行）"
+                  onClick={() => {
+                    if (!workspacePath || typeof window.saforall.scaffoldExtension !== 'function') {
+                      return
+                    }
+                    void (async () => {
+                      const result = await window.saforall.scaffoldExtension(workspacePath, {
+                        id: item.id,
+                        name: item.name,
+                        description: item.description,
+                        namespace: item.namespace,
+                        packageName: item.packageName,
+                        url: item.url
+                      })
+                      if (!result.ok) {
+                        setMarketError(result.error ?? 'インストール失敗')
+                        return
+                      }
+                      onRefresh()
+                    })()
+                  }}
+                >
+                  Install
+                </button>
+              </div>
             </li>
           ))}
         </ul>

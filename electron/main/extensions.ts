@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'fs/promises'
+import { readdir, readFile, writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { resolveWorkspacePath } from './workspaceTools'
 
@@ -87,4 +87,91 @@ export async function loadWorkspaceExtensions(
     }
   }
   return out
+}
+
+/** Safe id fragment for filesystem. */
+export function sanitizeExtensionId(id: string): string {
+  return id
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+}
+
+/**
+ * Scaffold a workspace tool manifest from an Open VSX browse hit.
+ * Does NOT run VSIX — wraps as a terminal helper (+ optional npx hint).
+ */
+export function buildExtensionScaffoldManifest(item: {
+  id: string
+  name: string
+  description?: string
+  namespace?: string
+  packageName?: string
+  url?: string
+}): WorkspaceExtension {
+  const id = `openvsx.${sanitizeExtensionId(item.id || item.name)}`
+  const pkg =
+    item.namespace && item.packageName
+      ? `${item.namespace}.${item.packageName}`
+      : item.id
+  const runHint =
+    item.namespace && item.packageName
+      ? `npx --yes ${item.namespace === 'vscode' ? `@${item.packageName}` : `${item.namespace}/${item.packageName}`} --help`
+      : `echo "Open ${item.url || item.name} — VS Code 拡張は VSIX 未対応。必要なら commands.run を編集してください"`
+
+  return {
+    id,
+    name: item.name || id,
+    description:
+      (item.description || '').slice(0, 400) ||
+      `Open VSX scaffold for ${pkg}. Edit .saforall/extensions to customize.`,
+    permissions: ['terminal.run', 'network'],
+    commands: [
+      {
+        id: 'help',
+        title: 'Show help / probe',
+        run: runHint,
+        permissions: ['terminal.run', 'network']
+      },
+      {
+        id: 'open-page',
+        title: 'Print marketplace URL',
+        run: `echo ${JSON.stringify(item.url || `https://open-vsx.org/extension/${pkg}`)}`,
+        permissions: ['terminal.run']
+      }
+    ]
+  }
+}
+
+export async function scaffoldExtensionFromMarketplace(
+  workspaceRoot: string,
+  item: {
+    id: string
+    name: string
+    description?: string
+    namespace?: string
+    packageName?: string
+    url?: string
+  }
+): Promise<{ ok: true; extension: WorkspaceExtension; path: string } | { ok: false; error: string }> {
+  try {
+    const manifest = buildExtensionScaffoldManifest(item)
+    const dir = resolveWorkspacePath(workspaceRoot, '.saforall/extensions')
+    await mkdir(dir, { recursive: true })
+    const fileName = `${sanitizeExtensionId(manifest.id)}.json`
+    const absolute = join(dir, fileName)
+    await writeFile(absolute, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8')
+    return {
+      ok: true,
+      extension: manifest,
+      path: `.saforall/extensions/${fileName}`
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
 }

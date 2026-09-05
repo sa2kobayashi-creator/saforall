@@ -29,10 +29,96 @@ export type WorkspaceIndex = {
   symbols: CodeSymbol[]
   /** relative path -> file text (capped) */
   texts: Map<string, string>
+  /** relative path -> imported relative paths (resolved best-effort) */
+  imports: Map<string, string[]>
 }
 
 let active: WorkspaceIndex | null = null
 let building: Promise<WorkspaceIndex> | null = null
+
+/** Extract relative import/require targets from source text (no node_modules). */
+export function extractImportSpecifiers(content: string): string[] {
+  const specs = new Set<string>()
+  const patterns = [
+    /(?:import|export)\s+(?:type\s+)?(?:[^'"\n]+?\s+from\s+)?['"]([^'"]+)['"]/g,
+    /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /from\s+['"]([^'"]+)['"]/g
+  ]
+  for (const re of patterns) {
+    re.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = re.exec(content)) !== null) {
+      const spec = match[1]?.trim()
+      if (!spec || !spec.startsWith('.')) continue
+      specs.add(spec)
+    }
+  }
+  return Array.from(specs)
+}
+
+export function resolveImportToIndexedPath(
+  fromPath: string,
+  specifier: string,
+  knownFiles: Set<string>
+): string | null {
+  const fromDir = fromPath.includes('/') ? fromPath.slice(0, fromPath.lastIndexOf('/')) : ''
+  const joined = [fromDir, specifier].filter(Boolean).join('/')
+  const parts = joined.replace(/\\/g, '/').split('/')
+  const out: string[] = []
+  for (const part of parts) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      out.pop()
+      continue
+    }
+    out.push(part)
+  }
+  const base = out.join('/')
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.js`,
+    `${base}.jsx`,
+    `${base}.mjs`,
+    `${base}/index.ts`,
+    `${base}/index.tsx`,
+    `${base}/index.js`
+  ]
+  for (const candidate of candidates) {
+    if (knownFiles.has(candidate)) return candidate
+  }
+  return null
+}
+
+export function getImportNeighborhood(
+  imports: Map<string, string[]>,
+  seeds: string[],
+  depth = 1
+): Set<string> {
+  const out = new Set(seeds.map((row) => row.replace(/\\/g, '/')))
+  let frontier = Array.from(out)
+  for (let d = 0; d < depth; d += 1) {
+    const next: string[] = []
+    for (const path of frontier) {
+      for (const dep of imports.get(path) ?? []) {
+        if (!out.has(dep)) {
+          out.add(dep)
+          next.push(dep)
+        }
+      }
+      for (const [importer, deps] of Array.from(imports.entries())) {
+        if (deps.includes(path) && !out.has(importer)) {
+          out.add(importer)
+          next.push(importer)
+        }
+      }
+    }
+    frontier = next
+    if (frontier.length === 0) break
+  }
+  return out
+}
 
 export function extractSymbols(relPath: string, content: string): CodeSymbol[] {
   const out: CodeSymbol[] = []
@@ -99,6 +185,7 @@ export async function buildWorkspaceIndex(workspaceRoot: string): Promise<Worksp
   const texts = new Map<string, string>()
   const symbols: CodeSymbol[] = []
   const files: string[] = []
+  const imports = new Map<string, string[]>()
 
   for (const full of absFiles) {
     const rel = relative(root, full).split(sep).join('/')
@@ -116,7 +203,18 @@ export async function buildWorkspaceIndex(workspaceRoot: string): Promise<Worksp
     symbols.push(...extractSymbols(rel, text).slice(0, 80))
   }
 
-  return { root, builtAt: Date.now(), files, symbols, texts }
+  const known = new Set(files)
+  for (const [rel, text] of Array.from(texts.entries())) {
+    if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(rel)) continue
+    const resolved: string[] = []
+    for (const spec of extractImportSpecifiers(text).slice(0, 40)) {
+      const target = resolveImportToIndexedPath(rel, spec, known)
+      if (target && target !== rel) resolved.push(target)
+    }
+    if (resolved.length > 0) imports.set(rel, Array.from(new Set(resolved)))
+  }
+
+  return { root, builtAt: Date.now(), files, symbols, texts, imports }
 }
 
 export async function ensureWorkspaceIndex(
@@ -159,6 +257,10 @@ export function scoreContentHit(params: {
   lineText: string
   needle: string
   symbolNames?: string[]
+  /** Open / seed files — boosted. */
+  anchorPaths?: Set<string>
+  /** 1-hop import neighborhood of anchors. */
+  neighborPaths?: Set<string>
 }): number {
   const needle = params.needle.toLowerCase()
   const path = params.path.toLowerCase()
@@ -176,8 +278,20 @@ export function scoreContentHit(params: {
   if (/test|spec|mock|fixture/.test(path)) score -= 5
   if (params.symbolNames?.some((name) => name.toLowerCase() === needle)) score += 50
   if (params.symbolNames?.some((name) => name.toLowerCase().includes(needle))) score += 15
-  // Prefer denser signal lines (identifiers) over noise
   if (/^(export|function|class|const|type|interface)\b/.test(line.trim())) score += 12
+  const rel = params.path.replace(/\\/g, '/')
+  if (params.anchorPaths?.has(rel) || params.anchorPaths?.has(path)) score += 35
+  if (params.neighborPaths?.has(rel) || params.neighborPaths?.has(path)) score += 25
+  if (params.anchorPaths && params.anchorPaths.size > 0) {
+    for (const anchor of Array.from(params.anchorPaths)) {
+      const aDir = anchor.includes('/') ? anchor.slice(0, anchor.lastIndexOf('/')) : ''
+      const pDir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''
+      if (aDir && aDir === pDir) {
+        score += 10
+        break
+      }
+    }
+  }
   return score
 }
 
@@ -193,12 +307,18 @@ export async function searchIndexedContent(
   workspaceRoot: string,
   query: string,
   globHint?: string,
-  limit = 40
+  limit = 40,
+  anchorPaths?: string[]
 ): Promise<string[]> {
   const needle = query.trim().toLowerCase()
   if (needle.length < 2) return []
   const index = await ensureWorkspaceIndex(workspaceRoot)
   const symbolNames = index.symbols.map((row) => row.name)
+  const anchors = new Set(
+    (anchorPaths ?? []).map((row) => row.replace(/\\/g, '/').replace(/^\.\//, ''))
+  )
+  const neighbors =
+    anchors.size > 0 ? getImportNeighborhood(index.imports, Array.from(anchors), 1) : new Set<string>()
   const ranked: RankedHit[] = []
 
   for (const [rel, text] of Array.from(index.texts.entries())) {
@@ -212,7 +332,9 @@ export async function searchIndexedContent(
         path: rel,
         lineText: lines[i],
         needle,
-        symbolNames
+        symbolNames,
+        anchorPaths: anchors,
+        neighborPaths: neighbors
       })
       if (score < 0) continue
       ranked.push({
