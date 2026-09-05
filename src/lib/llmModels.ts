@@ -14,6 +14,7 @@ export const OPENAI_MODEL_CATALOG: ModelOption[] = [
   { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini（安価・推奨）', tier: 'cheap', costRank: 1 },
   { id: 'gpt-5.4-mini', label: 'gpt-5.4-mini（安価）', tier: 'cheap', costRank: 2 },
   { id: 'gpt-4o-mini', label: 'gpt-4o-mini（安価・旧）', tier: 'cheap', costRank: 3 },
+  { id: 'gpt-5.3-codex', label: 'gpt-5.3-codex（Coding・推奨）', tier: 'standard', costRank: 3.5 },
   { id: 'gpt-4.1', label: 'gpt-4.1（標準）', tier: 'standard', costRank: 4 },
   { id: 'gpt-4o', label: 'gpt-4o（標準・旧）', tier: 'standard', costRank: 5 },
   { id: 'gpt-5.4', label: 'gpt-5.4（標準）', tier: 'standard', costRank: 6 },
@@ -56,9 +57,9 @@ export const WORKERS_MODEL_CATALOG: ModelOption[] = [
 ]
 
 export const CLAUDE_MODEL_CATALOG: ModelOption[] = [
-  { id: 'claude-haiku-4-20250414', label: 'Claude Haiku 4（安価）', tier: 'cheap', costRank: 1 },
-  { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4（標準・推奨）', tier: 'standard', costRank: 2 },
-  { id: 'claude-opus-4-20250514', label: 'Claude Opus 4（強）', tier: 'strong', costRank: 3 }
+  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5（安価）', tier: 'cheap', costRank: 1 },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5（標準・推奨）', tier: 'standard', costRank: 2 },
+  { id: 'claude-opus-5', label: 'Claude Opus 5（強）', tier: 'strong', costRank: 3 }
 ]
 
 export const CURSOR_MODEL_CATALOG: ModelOption[] = [
@@ -91,7 +92,7 @@ export function optionsForEngine(engine: ProviderEngine, enabled: string[]): Mod
 
 export const DEFAULT_LLM_MODEL = 'gpt-4.1-mini'
 export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest'
-export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-20250514'
+export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-5'
 export const DEFAULT_CURSOR_MODEL = 'grok-4.6'
 export const DEFAULT_WORKERS_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8'
 
@@ -111,9 +112,9 @@ export const ENGINE_MODEL_CATALOG: Record<ProviderEngine, ModelOption[]> = {
 }
 
 export const DEFAULT_ENABLED_MODELS: Record<ProviderEngine, string[]> = {
-  openai: ['gpt-4.1-mini', 'gpt-4.1'],
+  openai: ['gpt-5.3-codex', 'gpt-4.1-mini', 'gpt-4.1'],
   gemini: ['gemini-flash-latest', 'gemini-2.5-flash'],
-  claude: ['claude-sonnet-4-20250514', 'claude-haiku-4-20250414'],
+  claude: ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
   workers: ['@cf/meta/llama-3.1-8b-instruct-fp8', '@cf/qwen/qwen2.5-coder-32b-instruct'],
   cursor: [
     'auto',

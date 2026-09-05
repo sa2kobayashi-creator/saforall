@@ -20,5 +20,6 @@ Response::ok([
     'user' => $detail['user'],
     'usage' => $detail['usage'],
     'models' => $detail['models'],
-    'note' => '金額は概算です。各プロバイダの実請求とは一致しない場合があります。',
+    'router' => $detail['router'],
+    'note' => '金額は概算です。各プロバイダの実請求とは一致しない場合があります。Router ログは振り分け調整用です。',
 ]);

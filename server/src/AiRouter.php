@@ -95,7 +95,7 @@ final class AiRouter
                 Response::error(
                     'LLM_NOT_CONFIGURED',
                     $mode === 'agent'
-                        ? 'Agent モードには OpenAI（function calling 対応）が必要です。設定で OpenAI API キーを保存してください。Workers / Gemini ではツール Agent を実行できません。'
+                        ? 'Agent モードには OpenAI または Claude（ツール対応）が必要です。設定で API キーを保存してください。'
                         : ($userLeft <= 0
                             ? 'ユーザープランの月額上限に達しているか、推定コストを賄える Provider がありません。'
                             : 'Auto で有効な AI のうち、キー設定済みかつ月額上限・推定コスト内のものがありません。'),
@@ -147,10 +147,10 @@ final class AiRouter
 
         // 固定エンジン: Auto の有効リストとは独立（明示選択を優先）
         $engine = $requested;
-        if ($mode === 'agent' && in_array($engine, ['workers', 'gemini', 'claude'], true)) {
+        if ($mode === 'agent' && in_array($engine, ['workers', 'gemini'], true)) {
             Response::error(
                 'AGENT_ENGINE_UNSUPPORTED',
-                self::label($engine) . ' は Agent（ツール実行）に未対応です。OpenAI（api.openai.com）を選択してください。',
+                self::label($engine) . ' は Agent（ツール実行）に未対応です。OpenAI または Claude を選択してください。',
                 400
             );
         }
@@ -545,8 +545,9 @@ final class AiRouter
     }
 
     /**
-     * Auto + Agent では OpenAI function calling（ツール Agent）を優先する。
-     * Cursor / Gemini / Workers は明示選択時のみ（Workers は tools 400 になりやすい）。
+     * Auto + Agent ではツール実行可能なエンジンを優先する。
+     * Gemini / Workers / Cursor は明示選択時のみ（ツール非対応）。
+     * Claude は Anthropic tool_use 対応のため維持する。
      */
     private static function preferToolAgentEngine(string $preferred, string $mode): string
     {
@@ -554,7 +555,7 @@ final class AiRouter
             return $preferred;
         }
 
-        if ($preferred === 'gemini' || $preferred === 'cursor' || $preferred === 'workers' || $preferred === 'claude') {
+        if ($preferred === 'gemini' || $preferred === 'cursor' || $preferred === 'workers') {
             return 'openai';
         }
 

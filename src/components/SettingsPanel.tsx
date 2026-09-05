@@ -825,8 +825,7 @@ export function SettingsPanel({
           </div>
           {renderTestResult('claude')}
           <p className="settings-hint">
-            設計・レビュー・難しい修正向け。製品 Auto の既定候補です（Cursor Pro 契約とは別の Anthropic
-            API キーが必要）。
+            設計・レビュー・難しい修正向け。Agent モードでは Anthropic tool_use で編集ツールを実行できます。
           </p>
           <ModelMultiSelect
             engine="claude"

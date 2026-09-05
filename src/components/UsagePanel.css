@@ -203,6 +203,52 @@
   white-space: nowrap;
 }
 
+.usage-router {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.usage-subhead {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.usage-hints {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.usage-hint {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.4;
+  background: var(--bg);
+}
+
+.usage-hint--warn {
+  border-color: #b45309;
+  background: rgba(180, 83, 9, 0.12);
+}
+
+.usage-hint--tip {
+  border-color: #2563eb;
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.usage-hint--info {
+  opacity: 0.95;
+}
+
 .usage-link {
   border: none;
   background: transparent;

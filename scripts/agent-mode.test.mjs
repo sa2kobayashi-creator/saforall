@@ -55,10 +55,11 @@ set_phase agent
 test('agent tools unavailable error forbids ask fallback', () => {
   const msg =
     'Agent（ツール実行）を開始できません: ワークスペース未選択（フォルダを開く）。' +
-    'OpenAI（api.openai.com）を選び、フォルダを開いて再実行してください。' +
+    'OpenAI または Claude を選び、フォルダを開いて再実行してください。' +
     'Ask への自動フォールバックはしません（edit_file を文章で演じるのを防ぐため）。'
   assert.match(msg, /Ask への自動フォールバックはしません/)
   assert.match(msg, /ツール実行/)
+  assert.match(msg, /Claude/)
 })
 
 test('cloudflare base url is not tool-agent compatible', () => {

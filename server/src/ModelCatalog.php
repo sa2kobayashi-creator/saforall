@@ -13,6 +13,7 @@ final class ModelCatalog
             ['id' => 'gpt-4.1-mini', 'tier' => 'cheap', 'cost' => 1],
             ['id' => 'gpt-5.4-mini', 'tier' => 'cheap', 'cost' => 2],
             ['id' => 'gpt-4o-mini', 'tier' => 'cheap', 'cost' => 3],
+            ['id' => 'gpt-5.3-codex', 'tier' => 'standard', 'cost' => 3],
             ['id' => 'gpt-4.1', 'tier' => 'standard', 'cost' => 4],
             ['id' => 'gpt-4o', 'tier' => 'standard', 'cost' => 5],
             ['id' => 'gpt-5.4', 'tier' => 'standard', 'cost' => 6],
@@ -26,9 +27,9 @@ final class ModelCatalog
             ['id' => 'gemini-2.5-pro', 'tier' => 'strong', 'cost' => 4],
         ],
         'claude' => [
-            ['id' => 'claude-haiku-4-20250414', 'tier' => 'cheap', 'cost' => 1],
-            ['id' => 'claude-sonnet-4-20250514', 'tier' => 'standard', 'cost' => 2],
-            ['id' => 'claude-opus-4-20250514', 'tier' => 'strong', 'cost' => 3],
+            ['id' => 'claude-haiku-4-5-20251001', 'tier' => 'cheap', 'cost' => 1],
+            ['id' => 'claude-sonnet-5', 'tier' => 'standard', 'cost' => 2],
+            ['id' => 'claude-opus-5', 'tier' => 'strong', 'cost' => 3],
         ],
         'workers' => [
             ['id' => '@cf/meta/llama-3.1-8b-instruct-fp8', 'tier' => 'cheap', 'cost' => 1],
@@ -50,9 +51,9 @@ final class ModelCatalog
 
     /** @var array<string, list<string>> */
     private const DEFAULT_ENABLED = [
-        'openai' => ['gpt-4.1-mini', 'gpt-4.1'],
+        'openai' => ['gpt-5.3-codex', 'gpt-4.1-mini', 'gpt-4.1'],
         'gemini' => ['gemini-flash-latest', 'gemini-2.5-flash'],
-        'claude' => ['claude-sonnet-4-20250514', 'claude-haiku-4-20250414'],
+        'claude' => ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
         'workers' => [
             '@cf/meta/llama-3.1-8b-instruct-fp8',
             '@cf/qwen/qwen2.5-coder-32b-instruct',
@@ -189,6 +190,17 @@ final class ModelCatalog
         }
 
         usort($pool, static fn (array $a, array $b): int => $a['cost'] <=> $b['cost']);
+
+        // Coding 系は Codex モデルを優先（有効候補にある場合）
+        if ($engine === 'openai' && in_array($taskType, [
+            'codegen', 'patch_small', 'patch_multi', 'test_fix', 'long_dev', 'repo_analysis',
+        ], true)) {
+            foreach ($pool as $row) {
+                if (str_contains((string) $row['id'], 'codex')) {
+                    return (string) $row['id'];
+                }
+            }
+        }
 
         require_once __DIR__ . '/RouterPolicy.php';
         $policy = RouterPolicy::load($settings);

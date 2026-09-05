@@ -130,7 +130,7 @@ final class ChatService
 
         $systemParts[] = match ($engine) {
             'gemini' => 'レーン: Gemini。要約・翻訳・やや軽い質問向けです。',
-            'claude' => 'レーン: Claude。設計・レビュー・難しいコード修正を丁寧に行ってください。',
+            'claude' => 'レーン: Claude。設計・レビュー・難しいコード修正を丁寧に行ってください。Agent ではツールで編集・検証できます。',
             'workers' => 'レーン: Cloudflare Workers AI。簡単な質問・短い文章・ドキュメント向けに短く答えてください。',
             'cursor' => 'レーン: Cursor Agent（開発者オプトイン）。リポジトリ上のコードを調査・修正します。',
             default => 'レーン: OpenAI。説明・設計・コード提案を丁寧に行ってください。',
@@ -295,6 +295,20 @@ final class ChatService
                 'content' => (string) $row['content'],
             ];
         }
+
+        require_once __DIR__ . '/UsageService.php';
+        UsageService::recordRoute($pdo, [
+            'session_id' => $sessionId,
+            'requested' => $decision['requested'] ?? $requested,
+            'engine' => $engine,
+            'task_type' => $decision['task_type'] ?? '',
+            'mode' => $decision['mode'] ?? $mode,
+            'model' => $provider['model'],
+            'estimated_usd' => $decision['estimated_usd'] ?? 0,
+            'fallback_from' => $decision['fallback_from'] ?? null,
+            'fallback_reason' => $decision['fallback_reason'] ?? null,
+            'budget_warning' => $decision['budget_warning'] ?? null,
+        ]);
 
         return [
             'session_id' => $sessionId,

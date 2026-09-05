@@ -212,9 +212,9 @@ function fetchClaudeModels(array $settings): array
     // Anthropic 公開の安定一覧 API が無いため、アプリ側カタログを返す
     unset($settings);
     return [
-        ['id' => 'claude-haiku-4-20250414', 'label' => 'Claude Haiku 4', 'tier' => 'cheap'],
-        ['id' => 'claude-sonnet-4-20250514', 'label' => 'Claude Sonnet 4', 'tier' => 'standard'],
-        ['id' => 'claude-opus-4-20250514', 'label' => 'Claude Opus 4', 'tier' => 'strong'],
+        ['id' => 'claude-haiku-4-5-20251001', 'label' => 'Claude Haiku 4.5', 'tier' => 'cheap'],
+        ['id' => 'claude-sonnet-5', 'label' => 'Claude Sonnet 5', 'tier' => 'standard'],
+        ['id' => 'claude-opus-5', 'label' => 'Claude Opus 5', 'tier' => 'strong'],
     ];
 }
 

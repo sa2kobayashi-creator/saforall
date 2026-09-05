@@ -443,19 +443,257 @@ function isAgentPhase(value: string): value is AgentPhase {
 }
 
 export function isToolAgentCompatibleEndpoint(engine: string, baseUrl: string, model: string): boolean {
-  if (engine === 'workers' || engine === 'gemini' || engine === 'claude' || engine === 'cursor') {
+  if (engine === 'workers' || engine === 'gemini' || engine === 'cursor') {
     return false
   }
   const id = (model || '').trim().toLowerCase()
   if (id.startsWith('@cf/')) return false
   const u = (baseUrl || '').trim().toLowerCase()
   if (!u || u === 'gemini-native') return false
-  if (u.includes('cloudflare.com') || u.includes('workers.ai') || u.includes('anthropic.com')) {
+  if (engine === 'claude' || u.includes('anthropic.com')) {
+    return true
+  }
+  if (u.includes('cloudflare.com') || u.includes('workers.ai')) {
     return false
   }
   // Cloudflare Workers OpenAI-compat path
   if (u.includes('/client/v4/accounts/') && u.includes('/ai/')) return false
   return true
+}
+
+function isAnthropicEndpoint(engine: string, baseUrl: string): boolean {
+  if (engine === 'claude') return true
+  return (baseUrl || '').toLowerCase().includes('anthropic.com')
+}
+
+function toAnthropicTools(tools: typeof TOOLS): Array<{
+  name: string
+  description: string
+  input_schema: Record<string, unknown>
+}> {
+  return tools.map((row) => ({
+    name: row.function.name,
+    description: row.function.description,
+    input_schema: {
+      type: 'object',
+      ...(row.function.parameters as Record<string, unknown>)
+    }
+  }))
+}
+
+function anthropicBase(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/$/, '')
+  if (trimmed.endsWith('/v1')) return trimmed
+  return `${trimmed}/v1`
+}
+
+/**
+ * Convert OpenAI-style ProviderMessage[] into Anthropic Messages API shape.
+ */
+function toAnthropicMessages(messages: ProviderMessage[]): {
+  system: string
+  messages: Array<{ role: 'user' | 'assistant'; content: unknown }>
+} {
+  const systemParts: string[] = []
+  const out: Array<{ role: 'user' | 'assistant'; content: unknown }> = []
+
+  for (const row of messages) {
+    if (row.role === 'system') {
+      if (typeof row.content === 'string' && row.content.trim() !== '') {
+        systemParts.push(row.content)
+      }
+      continue
+    }
+    if (row.role === 'tool') {
+      const block = {
+        type: 'tool_result',
+        tool_use_id: row.tool_call_id,
+        content: row.content
+      }
+      const last = out[out.length - 1]
+      if (last && last.role === 'user' && Array.isArray(last.content)) {
+        ;(last.content as unknown[]).push(block)
+      } else {
+        out.push({ role: 'user', content: [block] })
+      }
+      continue
+    }
+    if (row.role === 'assistant' && row.tool_calls && row.tool_calls.length > 0) {
+      const blocks: unknown[] = []
+      if (typeof row.content === 'string' && row.content.trim() !== '') {
+        blocks.push({ type: 'text', text: row.content })
+      }
+      for (const call of row.tool_calls) {
+        let input: Record<string, unknown> = {}
+        try {
+          input = JSON.parse(repairToolArguments(call.function.arguments)) as Record<
+            string,
+            unknown
+          >
+        } catch {
+          input = {}
+        }
+        blocks.push({
+          type: 'tool_use',
+          id: call.id,
+          name: call.function.name,
+          input
+        })
+      }
+      out.push({ role: 'assistant', content: blocks })
+      continue
+    }
+    out.push({
+      role: row.role === 'assistant' ? 'assistant' : 'user',
+      content: typeof row.content === 'string' ? row.content : String(row.content ?? '')
+    })
+  }
+
+  // Anthropic requires alternating roles; merge consecutive same-role if needed
+  const merged: Array<{ role: 'user' | 'assistant'; content: unknown }> = []
+  for (const row of out) {
+    const prev = merged[merged.length - 1]
+    if (prev && prev.role === row.role) {
+      const a = prev.content
+      const b = row.content
+      if (Array.isArray(a) && Array.isArray(b)) {
+        prev.content = [...a, ...b]
+      } else if (typeof a === 'string' && typeof b === 'string') {
+        prev.content = `${a}\n${b}`
+      } else {
+        merged.push(row)
+      }
+    } else {
+      merged.push(row)
+    }
+  }
+
+  if (merged.length === 0 || merged[0].role !== 'user') {
+    merged.unshift({ role: 'user', content: '(continue)' })
+  }
+
+  return { system: systemParts.join('\n\n'), messages: merged }
+}
+
+async function callAnthropicMessages(params: {
+  apiKey: string
+  baseUrl: string
+  model: string
+  messages: ProviderMessage[]
+  tools?: typeof TOOLS
+  toolChoice?: 'auto' | 'required'
+  timeoutMs?: number
+}): Promise<ChatCompletionResponse> {
+  const url = `${anthropicBase(params.baseUrl)}/messages`
+  const { system, messages } = toAnthropicMessages(params.messages)
+  const body: Record<string, unknown> = {
+    model: params.model,
+    max_tokens: 8192,
+    messages
+  }
+  if (system.trim() !== '') body.system = system
+  if (params.tools && params.tools.length > 0) {
+    body.tools = toAnthropicTools(params.tools)
+    body.tool_choice =
+      params.toolChoice === 'required' ? { type: 'any' } : { type: 'auto' }
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? 90_000)
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': params.apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    })
+    const bodyText = await response.text()
+    let json: {
+      content?: Array<{ type?: string; text?: string; id?: string; name?: string; input?: unknown }>
+      error?: { message?: string; type?: string }
+      stop_reason?: string
+    }
+    try {
+      json = JSON.parse(bodyText) as typeof json
+    } catch {
+      throw new Error(formatLlmHttpError(response.status, bodyText))
+    }
+    if (!response.ok) {
+      throw new Error(formatLlmHttpError(response.status, bodyText))
+    }
+
+    const blocks = Array.isArray(json.content) ? json.content : []
+    const textParts: string[] = []
+    const toolCalls: ToolCall[] = []
+    for (const block of blocks) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        textParts.push(block.text)
+      }
+      if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+        toolCalls.push({
+          id: block.id,
+          type: 'function',
+          function: {
+            name: block.name,
+            arguments: JSON.stringify(block.input ?? {})
+          }
+        })
+      }
+    }
+
+    return {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: textParts.join('\n') || null,
+            tool_calls: toolCalls.length > 0 ? toolCalls : undefined
+          },
+          finish_reason: toolCalls.length > 0 ? 'tool_calls' : json.stop_reason
+        }
+      ]
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function callAgentLlm(params: {
+  engine: string
+  apiKey: string
+  baseUrl: string
+  model: string
+  extraHeaders: string[]
+  messages: ProviderMessage[]
+  tools?: typeof TOOLS
+  toolChoice?: 'auto' | 'required'
+  timeoutMs?: number
+}): Promise<ChatCompletionResponse> {
+  if (isAnthropicEndpoint(params.engine, params.baseUrl)) {
+    return callAnthropicMessages({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      messages: params.messages,
+      tools: params.tools,
+      toolChoice: params.toolChoice,
+      timeoutMs: params.timeoutMs
+    })
+  }
+  return callChatCompletions({
+    apiKey: params.apiKey,
+    baseUrl: params.baseUrl,
+    model: params.model,
+    extraHeaders: params.extraHeaders,
+    messages: params.messages,
+    tools: params.tools,
+    toolChoice: params.toolChoice,
+    timeoutMs: params.timeoutMs
+  })
 }
 
 function flattenMessageContent(content: unknown): string {
@@ -1340,7 +1578,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       code: 'AGENT_UNSUPPORTED',
       message:
         'このエンドポイントはツール Agent 非対応です（Cloudflare Workers AI / Gemini など）。' +
-        '設定で OpenAI を選び、Base URL を https://api.openai.com/v1 にして再実行してください。'
+        '設定で OpenAI または Claude を選んで再実行してください。'
     })
     return
   }
@@ -1370,7 +1608,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     'verify: 編集ファイルを read_file で確認し、run_shell と get_problems で検証する。失敗したら errorExcerpt / Problems を読んで edit に戻り、修正後に再実行。',
     '重要: 修正内容を markdown のコードブロックで説明するだけでは終了しない。必ず edit_file ツールで Composer に載せる。',
     '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）と、依頼が修正なら edit_file + run_shell を行う。',
-    '禁止: set_phase / edit_file / read_file / run_shell を文章・bash・手順リストとして書くこと。必ず function/tool_calls で呼ぶ。',
+    '禁止: set_phase / edit_file / read_file / run_shell を文章・bash・手順リストとして書くこと。必ず tools / function 呼び出しで呼ぶ。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
     'MCP: list_mcp_tools / list_mcp_resources / list_mcp_prompts / call_mcp_tool / read_mcp_resource / get_mcp_prompt を使える（.saforall/mcp.json）。',
     `編集リカバリ上限: ${MAX_EDIT_RECOVERIES} 回まで verify 失敗→edit 自動復帰。`,
@@ -1466,7 +1704,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
     let completion: ChatCompletionResponse
     try {
-      completion = await callChatCompletions({
+      completion = await callAgentLlm({
+        engine,
         apiKey,
         baseUrl,
         model,
@@ -1490,7 +1729,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         content: `システム: LLM 呼び出し失敗（${message}）。これまでに分かったことと残作業を日本語で短くまとめてください。`
       })
       try {
-        const fallback = await callChatCompletions({
+        const fallback = await callAgentLlm({
+          engine,
           apiKey,
           baseUrl,
           model,

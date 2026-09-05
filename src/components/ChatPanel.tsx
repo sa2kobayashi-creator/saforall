@@ -1310,7 +1310,7 @@ export function ChatPanel({
                     : engine === 'gemini'
                       ? 'Gemini（ツール不可）'
                       : engine === 'claude'
-                        ? 'Claude（ツール不可）'
+                        ? 'Claude（ツール Agent 可）'
                         : engine === 'workers'
                           ? 'Workers（ツール不可）'
                           : 'OpenAI'}

@@ -132,7 +132,7 @@ Auto 既定の有効リスト: `["openai","gemini","claude"]`
 | 説明（中程度） | Gemini（ポリシー）または OpenAI |
 | コード生成 | OpenAI |
 | 設計 / 複数ファイル修正 / リポジトリ解析 / テスト直し | Claude |
-| Agent（ツール実行） | **OpenAI のみ**（他は Ask 向け） |
+| Agent（ツール実行） | **OpenAI または Claude**（Gemini / Workers 不可） |
 
 希望エンジンが無効・未設定・予算しきい値超過 → 有効な別エンジンへフォールバック。
 
@@ -161,12 +161,26 @@ Electron メインプロセスのみ `X-Saforall-Client: electron-main` で rout
 ## 7. 使用量記録
 
 `ai_usage` に engine / model / tokens / estimated_usd を記録。  
-Usage 画面のバーは 70% warn / 85%+ danger。ユーザープラン枠も表示。
+`ai_route_log` に Router 判定（engine / task / fallback / 推定コスト）を記録。  
+Usage 画面でエンジン別・タスク別集計と **振り分けヒント** を表示する。  
+バーは 70% warn / 85%+ danger。ユーザープラン枠も表示。
 
 ---
 
-## 8. V2 以降（未実装）
+## 8. 本格化ロードマップ
 
-- OpenAI Codex 専用モデル優先
-- Claude Code / 外部 Coding Agent 連携
+| 段階 | 内容 | 状態 |
+| --- | --- | --- |
+| A | Claude でも Agent ツール実行（Anthropic `tool_use`） | **実装中〜完了** |
+| B | OpenAI Codex 系モデルを Coding 優先候補に | **実装中〜完了** |
+| C | ルート／Agent の運用ログで振り分け改善 | **Usage 画面に集計・ヒント実装** |
+| D | マルチユーザー認証・販売課金 | 後続 |
+| E | Claude Code / Codex CLI 級の外部長時間 Agent 連携 | V2 |
+
+---
+
+## 9. V2 以降（外部 Agent）
+
+- Claude Code / Codex CLI を saforall から起動する「外部 Agent」連携
 - マルチユーザー認証とユーザ単位の `user_ai_usage` テーブル分離
+- 毎日使いの品質は Usage / Agent ログを見て Router ルールを調整する

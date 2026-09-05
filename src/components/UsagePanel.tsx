@@ -27,6 +27,45 @@ type ModelUsage = {
   output_tokens: number
 }
 
+type RouteHint = {
+  level: string
+  text: string
+}
+
+type RouteEngineStat = {
+  engine: string
+  count: number
+  estimated_usd: number
+}
+
+type RouteTaskStat = {
+  task_type: string
+  engine: string
+  count: number
+}
+
+type RouteRecent = {
+  id: number
+  engine: string
+  task_type: string
+  mode: string
+  model: string | null
+  estimated_usd: number
+  fallback_from: string | null
+  fallback_reason: string | null
+  created_at: string
+}
+
+type RouterInsight = {
+  total: number
+  fallbacks: number
+  fallback_rate: number
+  by_engine: RouteEngineStat[]
+  by_task: RouteTaskStat[]
+  recent: RouteRecent[]
+  hints: RouteHint[]
+}
+
 type UsagePayload = {
   month: string
   total: {
@@ -45,6 +84,7 @@ type UsagePayload = {
   }
   usage: Record<string, EngineUsage>
   models: ModelUsage[]
+  router?: RouterInsight
   note?: string
 }
 
@@ -262,6 +302,141 @@ export function UsagePanel({
                 </table>
               )}
             </section>
+
+            {data.router && (
+              <section className="usage-router">
+                <h3>Router 振り分け（今月）</h3>
+                <p className="usage-muted">
+                  {data.router.total} 件 · フォールバック {data.router.fallbacks} 件（
+                  {data.router.fallback_rate}%）
+                </p>
+
+                {data.router.hints.length > 0 && (
+                  <ul className="usage-hints">
+                    {data.router.hints.map((hint, index) => (
+                      <li
+                        key={`${hint.level}-${index}`}
+                        className={`usage-hint usage-hint--${hint.level}`}
+                      >
+                        {hint.text}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {data.router.by_engine.length > 0 && (
+                  <>
+                    <h4 className="usage-subhead">エンジン別回数</h4>
+                    <div className="usage-engine-grid">
+                      {data.router.by_engine.map((row) => {
+                        const label =
+                          ENGINE_LABELS[row.engine as keyof typeof ENGINE_LABELS] ?? row.engine
+                        const share =
+                          data.router!.total > 0
+                            ? Math.round((row.count / data.router!.total) * 1000) / 10
+                            : 0
+                        return (
+                          <article key={row.engine} className="usage-engine-card">
+                            <header>
+                              <strong>{label}</strong>
+                              <span>{row.count} 回</span>
+                            </header>
+                            <div className="usage-bar-track">
+                              <div className="usage-bar-fill" style={{ width: `${share}%` }} />
+                            </div>
+                            <footer>
+                              <span>{share}%</span>
+                              <span>est {formatUsd(row.estimated_usd)}</span>
+                            </footer>
+                          </article>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+
+                {data.router.by_task.length > 0 && (
+                  <>
+                    <h4 className="usage-subhead">タスク × エンジン</h4>
+                    <table className="usage-table">
+                      <thead>
+                        <tr>
+                          <th>タスク</th>
+                          <th>エンジン</th>
+                          <th>回数</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.router.by_task.slice(0, 15).map((row) => (
+                          <tr key={`${row.task_type}:${row.engine}`}>
+                            <td>{row.task_type}</td>
+                            <td>
+                              {ENGINE_LABELS[row.engine as keyof typeof ENGINE_LABELS] ??
+                                row.engine}
+                            </td>
+                            <td>{row.count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
+
+                {data.router.recent.length > 0 && (
+                  <>
+                    <h4 className="usage-subhead">直近の判定</h4>
+                    <table className="usage-table">
+                      <thead>
+                        <tr>
+                          <th>日時</th>
+                          <th>エンジン</th>
+                          <th>タスク</th>
+                          <th>est</th>
+                          <th>フォールバック</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.router.recent.slice(0, 12).map((row) => (
+                          <tr key={row.id}>
+                            <td className="usage-model-id" title={row.created_at}>
+                              {row.created_at.replace('T', ' ').slice(5, 16)}
+                            </td>
+                            <td>
+                              {ENGINE_LABELS[row.engine as keyof typeof ENGINE_LABELS] ??
+                                row.engine}
+                            </td>
+                            <td title={row.model ?? ''}>{row.task_type}</td>
+                            <td>{formatUsd(row.estimated_usd)}</td>
+                            <td className="usage-model-id" title={row.fallback_reason ?? ''}>
+                              {row.fallback_from
+                                ? `${row.fallback_from}→${row.engine}`
+                                : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
+
+                {onOpenSettings && (
+                  <p className="usage-footer">
+                    ヒントを見て Auto を直す場合は{' '}
+                    <button
+                      type="button"
+                      className="usage-link"
+                      onClick={() => {
+                        onClose()
+                        onOpenSettings()
+                      }}
+                    >
+                      設定（Auto パイプライン）
+                    </button>{' '}
+                    へ。
+                  </p>
+                )}
+              </section>
+            )}
 
             {data.note && <p className="usage-note">{data.note}</p>}
             {onOpenSettings && (
