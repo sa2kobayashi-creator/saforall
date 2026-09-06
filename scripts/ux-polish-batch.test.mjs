@@ -12,6 +12,16 @@ test('formatAiUserError guides rate limit / key / budget', async () => {
   assert.match(formatAiUserError('HTTP 429 Too Many Requests'), /レート制限/)
   assert.match(formatAiUserError('Invalid API key'), /API キー/)
   assert.match(formatAiUserError('USER_BUDGET_EXCEEDED'), /予算/)
+  assert.match(
+    formatAiUserError(
+      'LLM HTTP 400: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits. (invalid_request_error)'
+    ),
+    /クレジット|Anthropic|OpenAI/
+  )
+  assert.match(
+    formatAiUserError('session not found'),
+    /セッション|新規/
+  )
   assert.match(formatAiUserError('fetch failed'), /タイムアウト|通信/)
   assert.match(formatAiUserError(''), /再送/)
 })

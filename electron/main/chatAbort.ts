@@ -1,26 +1,42 @@
 /** Active chat stream abort controllers (Main process). */
 
 const controllers = new Map<string, AbortController>()
+/** Cancel requested before beginChatAbort (e.g. during renderer context prep). */
+const pendingCancelIds = new Set<string>()
 
 export function beginChatAbort(requestId: string): AbortSignal {
-  cancelChatAbort(requestId)
+  const existing = controllers.get(requestId)
+  if (existing) {
+    return existing.signal
+  }
   const controller = new AbortController()
+  if (pendingCancelIds.has(requestId)) {
+    pendingCancelIds.delete(requestId)
+    controller.abort()
+  }
   controllers.set(requestId, controller)
   return controller.signal
 }
 
 export function cancelChatAbort(requestId: string): boolean {
-  const controller = controllers.get(requestId)
-  if (!controller) return false
-  if (!controller.signal.aborted) {
-    controller.abort()
+  const id = String(requestId || '')
+  if (!id) return false
+  const controller = controllers.get(id)
+  if (controller) {
+    if (!controller.signal.aborted) {
+      controller.abort()
+    }
+    return true
   }
-  controllers.delete(requestId)
+  // Stream not started yet — remember so beginChatAbort aborts immediately.
+  pendingCancelIds.add(id)
   return true
 }
 
 export function endChatAbort(requestId: string): void {
-  controllers.delete(requestId)
+  const id = String(requestId || '')
+  controllers.delete(id)
+  pendingCancelIds.delete(id)
 }
 
 export function isChatAbortError(error: unknown): boolean {

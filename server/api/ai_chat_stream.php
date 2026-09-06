@@ -52,6 +52,7 @@ try {
         'engine' => $prepared['engine'],
         'task_type' => $prepared['task_type'],
         'model' => $prepared['model'],
+        'session_id' => $prepared['session_id'],
         'fallback_reason' => $prepared['fallback_reason'],
         'budget_warning' => $prepared['budget_warning'] ?? null,
         'estimated_usd' => $prepared['estimated_usd'] ?? 0,

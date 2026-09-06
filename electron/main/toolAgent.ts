@@ -1031,8 +1031,11 @@ async function runTool(
   verifyHint?: { primary: string; fallbacks: string[] } | null,
   problemsSnapshot: string[] = [],
   searchAnchors: Set<string> = new Set(),
-  sessionSearchTops: string[] = []
+  sessionSearchTops: string[] = [],
+  signal?: AbortSignal | null
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
+  const { throwIfChatAborted, isChatAbortError } = await import('./chatAbort')
+  throwIfChatAborted(signal)
   let args: Record<string, unknown> = {}
   // Never soft-repair truncated edit_file payloads — that queues broken full files.
   if (name === 'edit_file') {
@@ -1401,10 +1404,12 @@ async function runTool(
             ? args.timeoutMs
             : undefined
 
-      const runOnce = async (cmd: string) =>
-        withMaterializedEdits(workspacePath, pendingEdits, () =>
-          toolRunShell(workspacePath, cmd, { cwd, timeoutMs })
+      const runOnce = async (cmd: string) => {
+        throwIfChatAborted(signal)
+        return withMaterializedEdits(workspacePath, pendingEdits, () =>
+          toolRunShell(workspacePath, cmd, { cwd, timeoutMs, signal })
         )
+      }
 
       let activeCommand = command
       let result = await runOnce(activeCommand)
@@ -1416,6 +1421,7 @@ async function runTool(
       // Auto-chain verify fallbacks (typecheck → test → lint) before edit recovery.
       const autoTried: string[] = []
       while (!result.ok) {
+        throwIfChatAborted(signal)
         const next = nextVerifyFallback(
           activeCommand,
           verifyHint ?? null,
@@ -1730,6 +1736,9 @@ async function runTool(
       ok: false
     }
   } catch (error) {
+    if (isChatAbortError(error) || signal?.aborted) {
+      throw error
+    }
     const message = error instanceof Error ? error.message : String(error)
     onEvent({
       type: 'tool_result',
@@ -2017,7 +2026,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
                 verifySuggestion,
                 problemsSnapshot,
                 searchAnchors,
-                sessionSearchTops
+                sessionSearchTops,
+                signal
               )
               return { call, result, skippedDup: false as const }
             })
@@ -2057,7 +2067,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           verifySuggestion,
           problemsSnapshot,
           searchAnchors,
-          sessionSearchTops
+          sessionSearchTops,
+          signal
         )
         orderedResults.push({ call, result, skippedDup: false })
       }

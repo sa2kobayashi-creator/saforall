@@ -42,7 +42,19 @@ final class ChatService
         $check = $pdo->prepare('SELECT id FROM chat_sessions WHERE id = :id');
         $check->execute([':id' => $sessionId]);
         if (!$check->fetch()) {
-            Response::error('NOT_FOUND', 'session not found', 404);
+            // Stale client session id — create a fresh session instead of failing hard.
+            $workspaceId = isset($body['workspace_id']) ? (int) $body['workspace_id'] : null;
+            $insertSession = $pdo->prepare(
+                'INSERT INTO chat_sessions (workspace_id, title) VALUES (:workspace_id, :title)'
+            );
+            $insertSession->execute([
+                ':workspace_id' => $workspaceId && $workspaceId > 0 ? $workspaceId : null,
+                ':title' => 'New chat',
+            ]);
+            $sessionId = (int) $pdo->lastInsertId();
+            if ($sessionId <= 0) {
+                Response::error('NOT_FOUND', 'session not found', 404);
+            }
         }
 
         $settings = AppSettings::load($pdo);

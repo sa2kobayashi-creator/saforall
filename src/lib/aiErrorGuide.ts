@@ -19,6 +19,36 @@ export function formatAiUserError(raw: string | null | undefined): string {
   }
 
   if (
+    lower.includes('credit balance') ||
+    lower.includes('purchase credits') ||
+    lower.includes('plans & billing') ||
+    lower.includes('billing') ||
+    lower.includes('insufficient credit') ||
+    lower.includes('insufficient_quota') ||
+    lower.includes('payment required') ||
+    /\b402\b/.test(text) ||
+    text.includes('残高') ||
+    text.includes('クレジット')
+  ) {
+    return (
+      'Anthropic（Claude）の API クレジット残高が不足しています。' +
+      ' console.anthropic.com の Plans & Billing でチャージするか、' +
+      'チャットのエンジンを OpenAI / Gemini に切り替えて再送してください。'
+    )
+  }
+
+  if (
+    lower.includes('session not found') ||
+    text.includes('session_id is required') ||
+    text.includes('セッション')
+  ) {
+    return (
+      'チャットセッションが見つかりませんでした。' +
+      '「新規」で新しいチャットを開くか、もう一度送ってください（自動で作り直します）。'
+    )
+  }
+
+  if (
     lower.includes('api key') ||
     lower.includes('api_key') ||
     lower.includes('unauthorized') ||

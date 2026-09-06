@@ -39,6 +39,7 @@ export type ChatStreamEvent =
       engine: string
       task_type: string
       model: string
+      session_id?: number
       fallback_reason?: string | null
       budget_warning?: string | null
       estimated_usd?: number
@@ -558,9 +559,10 @@ const api = {
     ipcRenderer.invoke('api:request', method, path, body, options),
   chatStream: (
     body: unknown,
-    handlers: ChatStreamHandlers
+    handlers: ChatStreamHandlers,
+    options?: { requestId?: string }
   ): { requestId: string; done: Promise<void> } => {
-    const requestId = crypto.randomUUID()
+    const requestId = options?.requestId?.trim() || crypto.randomUUID()
 
     const done = new Promise<void>((resolve) => {
       const listener = (
@@ -593,6 +595,8 @@ const api = {
 
     return { requestId, done }
   },
+  beginChatStream: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke('api:chatStream:begin', requestId),
   cancelChatStream: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke('api:chatStream:cancel', requestId),
   createTerminal: (options?: {

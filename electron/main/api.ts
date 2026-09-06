@@ -226,6 +226,7 @@ export type ChatStreamEvent =
       engine: string
       task_type: string
       model: string
+      session_id?: number
       fallback_reason?: string | null
       budget_warning?: string | null
       estimated_usd?: number
@@ -388,6 +389,7 @@ async function streamChatInner(
         engine: decided.engine,
         task_type: decided.task_type,
         model: decided.model,
+        session_id: decided.session_id,
         fallback_reason: decided.fallback_reason ?? 'local_persistence',
         mode: decided.mode,
         usage: decided.usage
@@ -520,6 +522,7 @@ async function streamChatInner(
     engine: decided.engine,
     task_type: decided.task_type,
     model: decided.model,
+    session_id: decided.session_id,
     fallback_reason: decided.fallback_reason,
     budget_warning: decided.budget_warning,
     estimated_usd: decided.estimated_usd,

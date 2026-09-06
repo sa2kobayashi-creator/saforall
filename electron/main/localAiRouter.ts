@@ -3,7 +3,7 @@ import {
   getLocalSetting,
   getOpenAiKey
 } from './settingsStore'
-import { appendMessage, getSession, listMessages } from './chatStore'
+import { appendMessage, createSession, getSession, listMessages } from './chatStore'
 import { getLocalUsageSummary, recordLocalUsage, type MonthUsage } from './usageStore'
 import {
   agentPreferenceChain,
@@ -189,12 +189,26 @@ function buildHistoryMessages(
 
 export async function prepareLocalRoute(body: Record<string, unknown>): Promise<LocalRouteResult> {
   await ensureSettingsLoaded()
-  const sessionId = Number(body.session_id)
-  if (!Number.isFinite(sessionId) || sessionId <= 0) {
-    throw new Error('session_id is required')
+  let sessionId = Number(body.session_id)
+  const workspaceIdRaw = body.workspace_id
+  const workspaceId =
+    typeof workspaceIdRaw === 'number' && Number.isFinite(workspaceIdRaw) && workspaceIdRaw > 0
+      ? workspaceIdRaw
+      : typeof workspaceIdRaw === 'string' && Number(workspaceIdRaw) > 0
+        ? Number(workspaceIdRaw)
+        : null
+
+  let session =
+    Number.isFinite(sessionId) && sessionId > 0 ? await getSession(sessionId) : null
+
+  // Stale UI id after PHP↔local switch / deleted session / wiped local-db.
+  if (!session) {
+    session = await createSession({
+      title: 'New chat',
+      workspaceId
+    })
+    sessionId = session.id
   }
-  const session = await getSession(sessionId)
-  if (!session) throw new Error('session not found')
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   if (!message) throw new Error('message is required')

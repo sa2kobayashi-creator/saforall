@@ -559,14 +559,21 @@ export type ShellRunResult = {
 export async function toolRunShell(
   workspaceRoot: string,
   command: string,
-  options?: { cwd?: string; timeoutMs?: number }
+  options?: { cwd?: string; timeoutMs?: number; signal?: AbortSignal | null }
 ): Promise<ShellRunResult> {
   assertSafeShellCommand(command)
   const cwdRel = options?.cwd?.trim() || '.'
   const cwd = resolveWorkspacePath(workspaceRoot, cwdRel)
   const timeoutMs = Math.min(Math.max(options?.timeoutMs ?? 60_000, 5_000), 180_000)
+  const signal = options?.signal
 
-  return await new Promise((resolvePromise) => {
+  if (signal?.aborted) {
+    const err = new Error('Chat cancelled by user')
+    err.name = 'AbortError'
+    throw err
+  }
+
+  return await new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(command, {
       cwd,
       shell: true,
@@ -577,14 +584,46 @@ export async function toolRunShell(
     let stderr = ''
     let settled = false
     let timedOut = false
+    let aborted = false
+
+    const killChild = (): void => {
+      try {
+        if (process.platform === 'win32' && child.pid) {
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+            windowsHide: true,
+            stdio: 'ignore'
+          })
+        } else {
+          child.kill('SIGTERM')
+          setTimeout(() => {
+            try {
+              child.kill('SIGKILL')
+            } catch {
+              // ignore
+            }
+          }, 800)
+        }
+      } catch {
+        try {
+          child.kill()
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     const timer = setTimeout(() => {
       timedOut = true
-      try {
-        child.kill()
-      } catch {
-        // ignore
-      }
+      killChild()
     }, timeoutMs)
+
+    const onAbort = (): void => {
+      aborted = true
+      killChild()
+    }
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf-8')
@@ -595,10 +634,21 @@ export async function toolRunShell(
       if (stderr.length > 200_000) stderr = truncateShellOutput(stderr, 180_000)
     })
 
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      if (signal) signal.removeEventListener('abort', onAbort)
+    }
+
     const finish = (exitCode: number | null): void => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      cleanup()
+      if (aborted || signal?.aborted) {
+        const err = new Error('Chat cancelled by user')
+        err.name = 'AbortError'
+        rejectPromise(err)
+        return
+      }
       resolvePromise({
         ok: !timedOut && exitCode === 0,
         exitCode,
@@ -611,6 +661,10 @@ export async function toolRunShell(
     }
 
     child.on('error', (error) => {
+      if (aborted || signal?.aborted) {
+        finish(null)
+        return
+      }
       stderr += (stderr ? '\n' : '') + error.message
       finish(1)
     })

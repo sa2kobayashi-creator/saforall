@@ -192,6 +192,8 @@ export function ChatPanel({
   sessionIdRef.current = sessionId
   const prevChatWidthRef = useRef(width)
   const streamRequestIdRef = useRef<string | null>(null)
+  const stopRequestedRef = useRef(false)
+  const stopForceTimerRef = useRef<number | null>(null)
 
   // 幅を狭めたタイミングだけ履歴を自動で畳む
   useEffect(() => {
@@ -890,14 +892,27 @@ export function ChatPanel({
 
   const ensureSession = useCallback(async (): Promise<number | null> => {
     if (!backendConnected) return null
-    if (sessionId !== null) return sessionId
+    if (sessionId !== null) {
+      const known = sessions.some((row) => Number(row.id) === sessionId)
+      if (known) return sessionId
+      // Stale id (deleted / PHP↔local switch) — probe then recreate.
+      try {
+        const probe = await window.saforall.request<{ messages: ChatMessageRecord[] }>(
+          'GET',
+          `/chat/sessions/${sessionId}/messages`
+        )
+        if (probe.ok) return sessionId
+      } catch {
+        // recreate below
+      }
+    }
 
     const id = await createSession()
     if (id === null) return null
     setSessionId(id)
     writeLastSessionId(workspaceId, id)
     return id
-  }, [backendConnected, createSession, sessionId, workspaceId])
+  }, [backendConnected, createSession, sessionId, sessions, workspaceId])
 
   useEffect(() => {
     if (!backendConnected) {
@@ -991,6 +1006,17 @@ export function ChatPanel({
     setBusy({ phase: 'thinking', detail: backendConnected ? 'AI に問い合わせ中…' : 'ローカル LLM に問い合わせ中…' })
     setError(null)
     setInput('')
+    stopRequestedRef.current = false
+    if (stopForceTimerRef.current != null) {
+      window.clearTimeout(stopForceTimerRef.current)
+      stopForceTimerRef.current = null
+    }
+
+    const streamRequestId = crypto.randomUUID()
+    streamRequestIdRef.current = streamRequestId
+    if (typeof window.saforall.beginChatStream === 'function') {
+      void window.saforall.beginChatStream(streamRequestId)
+    }
 
     const localUser: ChatMessage = {
       id: crypto.randomUUID(),
@@ -1000,6 +1026,8 @@ export function ChatPanel({
     setMessages((prev) => [...prev.filter((m) => m.id !== 'welcome'), localUser])
 
     try {
+      if (stopRequestedRef.current) return
+
       let id: number | null = null
       if (backendConnected) {
         id = await ensureSession()
@@ -1007,6 +1035,8 @@ export function ChatPanel({
       } else {
         id = -1
       }
+
+      if (stopRequestedRef.current) return
 
       const payload = {
         session_id: id,
@@ -1018,9 +1048,12 @@ export function ChatPanel({
             ? undefined
             : modelChoice,
         workspace_path: workspacePath,
+        workspace_id: workspaceId,
         cursor_runtime: cursorRuntime,
         context: await buildContextPayload()
       }
+
+      if (stopRequestedRef.current) return
 
       if (typeof window.saforall.chatStream !== 'function') {
         const result = await window.saforall.request<{
@@ -1068,7 +1101,9 @@ export function ChatPanel({
       let streamFailed: string | null = null
       let streamCancelled = false
 
-      const { requestId, done } = window.saforall.chatStream(payload, {
+      const { requestId, done } = window.saforall.chatStream(
+        payload,
+        {
         onEvent: (event) => {
           if (event.type === 'user_message') {
             setBusy({ phase: 'thinking', detail: '応答生成を待機中…' })
@@ -1083,6 +1118,10 @@ export function ChatPanel({
 
           if (event.type === 'route') {
             usedEngine = event.engine
+            if (typeof event.session_id === 'number' && event.session_id > 0) {
+              setSessionId(event.session_id)
+              writeLastSessionId(workspaceId, event.session_id)
+            }
             const reason = event.fallback_reason ? `（${event.fallback_reason}）` : ''
             const warn = event.budget_warning ? ` ⚠${event.budget_warning}` : ''
             const est =
@@ -1270,6 +1309,11 @@ export function ChatPanel({
 
           if (event.type === 'cancelled') {
             streamCancelled = true
+            stopRequestedRef.current = false
+            if (stopForceTimerRef.current != null) {
+              window.clearTimeout(stopForceTimerRef.current)
+              stopForceTimerRef.current = null
+            }
             setError(null)
             const note = event.message?.trim() || '応答を取り消しました'
             setMessages((prev) => {
@@ -1312,7 +1356,9 @@ export function ChatPanel({
             })
           }
         }
-      })
+      },
+        { requestId: streamRequestId }
+      )
       streamRequestIdRef.current = requestId
       try {
         await done
@@ -1353,14 +1399,33 @@ export function ChatPanel({
         })
       }
     } finally {
+      if (stopForceTimerRef.current != null) {
+        window.clearTimeout(stopForceTimerRef.current)
+        stopForceTimerRef.current = null
+      }
+      stopRequestedRef.current = false
       setBusy(null)
     }
   }
 
   const stopChat = useCallback(() => {
+    stopRequestedRef.current = true
+    setBusy({ phase: 'thinking', detail: '停止中…' })
     const id = streamRequestIdRef.current
-    if (!id || typeof window.saforall.cancelChatStream !== 'function') return
-    void window.saforall.cancelChatStream(id)
+    if (id && typeof window.saforall.cancelChatStream === 'function') {
+      void window.saforall.cancelChatStream(id)
+    }
+    if (stopForceTimerRef.current != null) {
+      window.clearTimeout(stopForceTimerRef.current)
+    }
+    // Force-clear stuck UI if main process cannot unwind promptly (e.g. hung shell before fix).
+    stopForceTimerRef.current = window.setTimeout(() => {
+      stopForceTimerRef.current = null
+      if (stopRequestedRef.current) {
+        setBusy(null)
+        streamRequestIdRef.current = null
+      }
+    }, 2500)
   }, [])
 
   const busyLabel =
@@ -1653,7 +1718,7 @@ export function ChatPanel({
                 type="button"
                 className="chat-stop-btn"
                 onClick={stopChat}
-                title="応答を停止（Cursor の Stop と同じ）"
+                title="応答を停止"
               >
                 停止
               </button>
@@ -1811,15 +1876,19 @@ export function ChatPanel({
             <button
               type={busy ? 'button' : 'submit'}
               className={busy ? 'chat-stop-submit' : undefined}
-              disabled={
-                busy
-                  ? typeof window.saforall.cancelChatStream !== 'function'
-                  : !chatReady || loading || input.trim() === ''
-              }
+              disabled={busy ? false : !chatReady || loading || input.trim() === ''}
               onClick={busy ? stopChat : undefined}
               title={busy ? '応答を停止' : undefined}
             >
-              {busy ? '停止' : needsApiKeySetup ? 'キー未設定' : !chatReady ? '未接続' : '送信'}
+              {busy?.detail === '停止中…'
+                ? '停止中…'
+                : busy
+                  ? '停止'
+                  : needsApiKeySetup
+                    ? 'キー未設定'
+                    : !chatReady
+                      ? '未接続'
+                      : '送信'}
             </button>
           </form>        </div>
 

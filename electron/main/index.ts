@@ -447,6 +447,12 @@ ipcMain.handle(
   }
 )
 
+ipcMain.handle('api:chatStream:begin', async (_event, requestId: string) => {
+  const { beginChatAbort } = await import('./chatAbort')
+  beginChatAbort(String(requestId || ''))
+  return true
+})
+
 ipcMain.handle('api:chatStream:cancel', async (_event, requestId: string) => {
   const { cancelChatAbort } = await import('./chatAbort')
   return cancelChatAbort(String(requestId || ''))
