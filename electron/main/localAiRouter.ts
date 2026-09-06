@@ -5,6 +5,11 @@ import {
 } from './settingsStore'
 import { appendMessage, getSession, listMessages } from './chatStore'
 import { getLocalUsageSummary, recordLocalUsage, type MonthUsage } from './usageStore'
+import {
+  agentPreferenceChain,
+  classifyTask,
+  engineForTask
+} from './lib/taskClassify'
 
 export type LocalRouteResult = {
   engine: string
@@ -43,8 +48,21 @@ function parseModels(raw: string, fallback: string): string[] {
   return single ? [single] : []
 }
 
-function pickEngine(requested: string, mode: string): { engine: string; reason: string | null } {
-  if (requested && requested !== 'auto') return { engine: requested, reason: null }
+function pickEngine(
+  requested: string,
+  mode: string,
+  message: string,
+  context: Record<string, unknown> | null
+): { engine: string; reason: string | null; taskType: string } {
+  let taskType = classifyTask(message, context)
+  if (mode === 'agent' && (taskType === 'light_qa' || taskType === 'summarize')) {
+    taskType = 'codegen'
+  }
+
+  if (requested && requested !== 'auto') {
+    return { engine: requested, reason: null, taskType }
+  }
+
   const enabledRaw = getLocalSetting('router.enabled_engines', '["openai","gemini","claude"]')
   let enabled: string[] = ['openai', 'gemini', 'claude']
   try {
@@ -55,24 +73,54 @@ function pickEngine(requested: string, mode: string): { engine: string; reason: 
   } catch {
     // keep default
   }
+
+  const preferred = engineForTask(taskType, mode)
+
+  const hasKey = (engine: string): boolean => {
+    if (engine === 'openai') return Boolean(getOpenAiKey())
+    if (engine === 'claude') return Boolean(getLocalSetting('llm.claude.api_key'))
+    if (engine === 'gemini') return Boolean(getLocalSetting('llm.gemini.api_key'))
+    if (engine === 'cursor') return Boolean(getLocalSetting('llm.cursor.api_key'))
+    return false
+  }
+
   if (mode === 'agent') {
-    for (const engine of ['openai', 'claude', 'cursor']) {
-      if (enabled.includes(engine) || engine === 'openai') {
-        if (engine === 'openai' && getOpenAiKey()) return { engine, reason: 'auto_agent_openai' }
-        if (engine === 'claude' && getLocalSetting('llm.claude.api_key')) {
-          return { engine, reason: 'auto_agent_claude' }
-        }
-        if (engine === 'cursor' && getLocalSetting('llm.cursor.api_key')) {
-          return { engine, reason: 'auto_agent_cursor' }
+    for (const engine of agentPreferenceChain(preferred)) {
+      if ((enabled.includes(engine) || engine === 'openai' || engine === 'claude') && hasKey(engine)) {
+        return {
+          engine,
+          reason: preferred === engine ? `auto_agent_${engine}` : `auto_agent_fallback_${engine}`,
+          taskType
         }
       }
     }
   }
-  if (getOpenAiKey()) return { engine: 'openai', reason: 'auto_default_openai' }
-  if (getLocalSetting('llm.claude.api_key')) return { engine: 'claude', reason: 'auto_default_claude' }
-  if (getLocalSetting('llm.gemini.api_key')) return { engine: 'gemini', reason: 'auto_default_gemini' }
-  if (getLocalSetting('llm.cursor.api_key')) return { engine: 'cursor', reason: 'auto_default_cursor' }
-  return { engine: 'openai', reason: 'auto_fallback_openai' }
+
+  const askChain =
+    preferred === 'claude'
+      ? ['claude', 'openai', 'gemini', 'cursor']
+      : preferred === 'gemini'
+        ? ['gemini', 'openai', 'claude', 'cursor']
+        : ['openai', 'claude', 'gemini', 'cursor']
+
+  for (const engine of askChain) {
+    if (enabled.includes(engine) && hasKey(engine)) {
+      return {
+        engine,
+        reason: preferred === engine ? `auto_${taskType}_${engine}` : `auto_fallback_${engine}`,
+        taskType
+      }
+    }
+  }
+
+  if (getOpenAiKey()) return { engine: 'openai', reason: 'auto_fallback_openai', taskType }
+  if (getLocalSetting('llm.claude.api_key')) {
+    return { engine: 'claude', reason: 'auto_fallback_claude', taskType }
+  }
+  if (getLocalSetting('llm.gemini.api_key')) {
+    return { engine: 'gemini', reason: 'auto_fallback_gemini', taskType }
+  }
+  return { engine: 'openai', reason: 'auto_fallback_openai', taskType }
 }
 
 function buildHistoryMessages(
@@ -153,11 +201,11 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
 
   const mode = typeof body.mode === 'string' ? body.mode : 'ask'
   const requested = typeof body.engine === 'string' ? body.engine : 'auto'
-  const { engine, reason } = pickEngine(requested, mode)
   const context =
     typeof body.context === 'object' && body.context !== null
       ? (body.context as Record<string, unknown>)
       : null
+  const { engine, reason, taskType } = pickEngine(requested, mode, message, context)
 
   const userMessage = await appendMessage({
     sessionId,
@@ -229,7 +277,7 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
   return {
     engine,
     requested,
-    task_type: mode === 'agent' ? 'coding' : 'chat',
+    task_type: taskType,
     fallback_from: null,
     fallback_reason: reason,
     mode,

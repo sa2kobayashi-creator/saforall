@@ -33,11 +33,21 @@ test('AiRouter defaults to OpenAI/Gemini/Claude with budget levels', async () =>
   assert.match(router, /warn95/)
   assert.match(router, /'design' => 'claude'/)
   assert.match(router, /'patch_multi'.*'claude'/)
+  assert.match(router, /return \['claude', 'openai'\]/)
+  assert.match(router, /return \['openai', 'claude'\]/)
+  assert.match(router, /classifyCorpus/)
+  assert.match(router, /selection_present/)
+  assert.match(router, /problems_have_errors/)
 
   const usage = await read('server/src/UsageService.php')
   assert.match(usage, /'claude' => 10\.0/)
   assert.match(usage, /function budgetLevel/)
   assert.match(usage, /warn70/)
+})
+
+test('ChatService passes context into AiRouter::decide', async () => {
+  const chat = await read('server/src/ChatService.php')
+  assert.match(chat, /AiRouter::decide\(\$pdo, \$settings, \$requested, \$message, \$mode, \$contextForRoute\)/)
 })
 
 test('Chat / settings / APIs wire Claude', async () => {

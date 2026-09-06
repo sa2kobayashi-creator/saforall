@@ -35,7 +35,8 @@ final class AiRouter
         array $settings,
         string $requested,
         string $message,
-        string $mode = 'ask'
+        string $mode = 'ask',
+        ?array $context = null
     ): array {
         $requested = strtolower(trim($requested));
         if (!in_array($requested, self::ENGINES, true)) {
@@ -48,7 +49,11 @@ final class AiRouter
         }
 
         $policy = RouterPolicy::load($settings);
-        $taskType = self::classify($message, $policy);
+        $taskType = self::classify($message, $policy, $context);
+        // Agent では軽い Q&A / 要約扱いを避け、ツール付きコーディングレーンへ寄せる
+        if ($mode === 'agent' && in_array($taskType, ['light_qa', 'summarize'], true)) {
+            $taskType = 'codegen';
+        }
         $enabled = self::enabledEngines($settings);
         $ready = self::readyMap($settings);
 
@@ -274,9 +279,12 @@ final class AiRouter
      */
     private static function preferenceChain(string $preferred, array $policy, string $mode = 'ask'): array
     {
-        // Agent は OpenAI function calling（Composer / edit_file）が必要。
+        // Agent はツール実行可能な OpenAI / Claude のみ（Gemini・Workers・Cursor は明示選択）。
         if ($mode === 'agent') {
-            return ['openai'];
+            if ($preferred === 'claude') {
+                return ['claude', 'openai'];
+            }
+            return ['openai', 'claude'];
         }
 
         $cheapMid = !empty($policy['gemini_for_mid_tasks']);
@@ -472,45 +480,70 @@ final class AiRouter
 
     /**
      * @param array<string, mixed> $policy
+     * @param array<string, mixed>|null $context Chat context (selection / problems / files / index)
      */
-    public static function classify(string $message, array $policy = []): string
+    public static function classify(string $message, array $policy = [], ?array $context = null): string
     {
-        $text = mb_strtolower($message);
+        $corpus = self::classifyCorpus($message, $context);
+        $text = mb_strtolower($corpus);
         $fixToCursor = !empty($policy['fix_words_to_cursor']);
         $workersMax = isset($policy['workers_max_chars']) ? (int) $policy['workers_max_chars'] : 200;
 
-        if (self::matches($text, ['テストして', 'テストを通', '失敗するまで', 'test and fix', 'make tests pass'])) {
+        if (self::matches($text, [
+            'テストして', 'テストを通', '失敗するまで', 'test and fix', 'make tests pass',
+            '型エラー', 'type error', 'typecheck', 'tsc ', 'compile error', 'ビルドエラー',
+        ])) {
             return 'test_fix';
         }
-        if (self::matches($text, ['時間かけて', 'じっくり', 'long running', 'thorough'])) {
+        if (self::matches($text, ['時間かけて', 'じっくり', 'long running', 'thorough', '大規模リファクタ'])) {
             return 'long_dev';
         }
-        if (self::matches($text, ['複数ファイル', '一式', 'ログイン全体', 'リファクタ', 'refactor', 'across files'])) {
+        if (self::matches($text, [
+            '複数ファイル', '一式', 'ログイン全体', 'リファクタ', 'refactor', 'across files',
+            'multi_file_context', 'まとめて直', '一括で直',
+        ])) {
             return 'patch_multi';
         }
-        if (self::matches($text, ['リポジトリ', 'コードベース全体', 'プロジェクト全体', 'analyze repo'])) {
+        if (self::matches($text, [
+            'リポジトリ', 'コードベース全体', 'プロジェクト全体', 'analyze repo', 'codebase_context',
+        ])) {
             return 'repo_analysis';
         }
 
         // 標準では「直して」だけでは Cursor にしない（軽い修正扱いに落とす）
-        if ($fixToCursor && self::matches($text, ['直して', '修正して', 'バグ', '実装して', 'fix', 'implement', 'バグを直'])) {
+        if ($fixToCursor && self::matches($text, [
+            '直して', 'なおして', '修正して', 'バグ', '実装して', 'fix', 'implement', 'バグを直',
+            'エラーを直', 'problems_have_errors',
+        ])) {
             return 'patch_small';
         }
-        if (!$fixToCursor && self::matches($text, ['直して', '修正して', 'バグを直', 'fix this', 'fix bug'])) {
-            // 単発修正っぽい語は OpenAI/Gemini レーン（codegen 寄り）へ
+        if (!$fixToCursor && self::matches($text, [
+            '直して', 'なおして', '修正して', 'バグを直', 'fix this', 'fix bug', 'fix the',
+            'バグ', 'エラーを', '直す', '直し', '実装して', '実装する', '追加して',
+            'problems_have_errors', 'selection_present',
+        ])) {
+            // 単発修正・選択範囲・Problems 付きはコーディングレーンへ
             return 'codegen';
         }
 
-        if (self::matches($text, ['設計', 'アーキテクチャ', '方針', 'architecture', 'design'])) {
+        if (self::matches($text, [
+            '設計', 'アーキテクチャ', '方針', 'architecture', 'design', 'レビューして', 'code review',
+        ])) {
             return 'design';
         }
-        if (self::matches($text, ['説明して', '何をしている', 'なぜ', 'explain', 'what does'])) {
+        if (self::matches($text, [
+            '説明して', '何をしている', 'なぜ', 'explain', 'what does', 'どう動く', '仕組み',
+        ])) {
             return 'explain';
         }
-        if (self::matches($text, ['要約', '翻訳', '短く', 'ドキュメント', 'コメントを書いて', 'summarize', 'translate', 'docs'])) {
+        if (self::matches($text, [
+            '要約', '翻訳', '短く', 'ドキュメント', 'コメントを書いて', 'summarize', 'translate', 'docs',
+        ])) {
             return 'summarize';
         }
-        if (str_contains($message, '```') || self::matches($text, ['コードを書いて', '生成して', '実装して', 'write code', 'implement'])) {
+        if (str_contains($message, '```') || self::matches($text, [
+            'コードを書いて', '生成して', '実装して', 'write code', 'implement', '書いて',
+        ])) {
             return 'codegen';
         }
 
@@ -521,6 +554,51 @@ final class AiRouter
         }
 
         return 'explain';
+    }
+
+    /**
+     * Fold editor context into classify corpus (keywords + short excerpts).
+     *
+     * @param array<string, mixed>|null $context
+     */
+    public static function classifyCorpus(string $message, ?array $context): string
+    {
+        $parts = [$message];
+        if (!is_array($context)) {
+            return $message;
+        }
+
+        $selection = $context['selection'] ?? null;
+        if (is_array($selection)
+            && isset($selection['text'])
+            && is_string($selection['text'])
+            && trim($selection['text']) !== ''
+        ) {
+            $parts[] = 'selection_present';
+            $parts[] = mb_substr($selection['text'], 0, 500);
+        }
+
+        $problems = $context['problems'] ?? null;
+        if (is_array($problems) && $problems !== []) {
+            $joined = implode("\n", array_map(static fn ($row) => (string) $row, array_slice($problems, 0, 20)));
+            $parts[] = 'problems_present';
+            $parts[] = $joined;
+            if (preg_match('/\berror\b|severity:\s*error|❌/i', $joined) === 1) {
+                $parts[] = 'problems_have_errors';
+            }
+        }
+
+        $files = $context['files'] ?? null;
+        if (is_array($files) && count($files) >= 2) {
+            $parts[] = 'multi_file_context';
+        }
+
+        $indexSummary = $context['index_summary'] ?? null;
+        if (is_string($indexSummary) && mb_strlen(trim($indexSummary)) > 200) {
+            $parts[] = 'codebase_context';
+        }
+
+        return implode("\n", $parts);
     }
 
     /**

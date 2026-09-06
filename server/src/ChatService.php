@@ -55,7 +55,8 @@ final class ChatService
         }
 
         if ($userMessageId <= 0) {
-            $decision = AiRouter::decide($pdo, $settings, $requested, $message, $mode);
+            $contextForRoute = isset($body['context']) && is_array($body['context']) ? $body['context'] : null;
+            $decision = AiRouter::decide($pdo, $settings, $requested, $message, $mode, $contextForRoute);
             $insertUser = $pdo->prepare(
                 'INSERT INTO chat_messages (session_id, role, content)
                  VALUES (:session_id, :role, :content)'
