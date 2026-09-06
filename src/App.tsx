@@ -213,15 +213,26 @@ export default function App() {
         connected: result.connected,
         checking: false,
         message: result.message,
-        baseUrl: result.baseUrl
+        baseUrl: result.baseUrl,
+        mode: result.mode
       })
-      if (result.connected && typeof window.saforall.syncLocalSettings === 'function') {
+      if (
+        result.connected &&
+        result.mode === 'php' &&
+        typeof window.saforall.syncLocalSettings === 'function'
+      ) {
         void window.saforall.syncLocalSettings().catch(() => undefined)
       }
       if (!result.connected) {
         setStatus((current) =>
           current.startsWith('バックエンド') || current === 'フォルダを開いて始めましょう'
             ? `${result.message}（編集は利用できます）`
+            : current
+        )
+      } else if (result.mode === 'local') {
+        setStatus((current) =>
+          current.startsWith('バックエンド') || current === 'フォルダを開いて始めましょう'
+            ? result.message
             : current
         )
       }

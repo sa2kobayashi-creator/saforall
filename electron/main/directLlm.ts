@@ -213,6 +213,35 @@ function resolveLocalEngine(requested: string): {
   return null
 }
 
+export async function generateAssistantText(params: {
+  engine: string
+  apiKey: string
+  model: string
+  baseUrl?: string
+  messages: ProviderMessage[]
+}): Promise<string> {
+  if (params.engine === 'claude') {
+    return callClaude({
+      apiKey: params.apiKey,
+      model: params.model,
+      messages: params.messages
+    })
+  }
+  if (params.engine === 'gemini') {
+    return callGemini({
+      apiKey: params.apiKey,
+      model: params.model,
+      messages: params.messages
+    })
+  }
+  return callOpenAiCompatible({
+    apiKey: params.apiKey,
+    baseUrl: params.baseUrl || 'https://api.openai.com/v1',
+    model: params.model,
+    messages: params.messages
+  })
+}
+
 /**
  * Backend-down chat path. Keys stay in Main (settingsStore). Returns true if handled.
  */

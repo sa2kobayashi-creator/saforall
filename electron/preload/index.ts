@@ -10,6 +10,7 @@ export type HealthResult = {
   connected: boolean
   baseUrl: string
   message: string
+  mode?: 'php' | 'local'
   data?: {
     service: string
     status: string

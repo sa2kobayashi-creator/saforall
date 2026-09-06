@@ -13,28 +13,26 @@
 
 ## 一言でいうと
 
-Electron がローカルファイルを編集し、XAMPP の Apache（PHP）+ MySQL が設定・会話などの永続化と（将来）LLM プロキシを担う。
+Electron パッケージアプリが本体。設定・会話・usage は **userData のローカル JSON** に永続化し、XAMPP なしでも完結できる。開発時は任意で XAMPP（PHP/MySQL）にも接続できる。
 
 ```
-Electron (UI + ローカル fs + Cursor SDK)
-        │ HTTP (localhost)
-        ▼
-Apache / PHP  AI Router  ──► MySQL（会話・usage）
+Electron（UI + ローカル fs + LLM 直呼び / Cursor SDK）
         │
-        ├─► OpenAI   （説明・設計・単発生成）
-        ├─► Gemini   （要約・軽い質問）
-        └─► Cursor   （コード開発 Agent。実行は Electron メイン）
+        ├─► userData/local-db（sessions / messages / usage）
+        ├─► userData/settings-cache.json（API キー含む・Main のみ）
+        │
+        └─（任意）XAMPP PHP/MySQL ── 開発用の互換バックエンド
 ```
 
 ## 役割分担
 
 | 層 | 技術 | 役割 |
 | --- | --- | --- |
-| クライアント | Electron + React + Monaco | 編集 UI、ソースファイルの読み書き |
-| API | Apache + PHP（XAMPP） | REST、設定・会話の CRUD、AI プロキシ |
-| DB | MySQL（XAMPP） | メタデータ・会話・設定 |
+| クライアント | Electron + React + Monaco | 編集 UI、ソース読み書き、ローカル永続化、LLM 呼び出し |
+| API（任意） | Apache + PHP（XAMPP） | 開発時の互換 REST |
+| 永続化（配布） | userData JSON | 設定・会話・usage |
 
-ソースコード本体は **MySQL に保存しない**（常にローカルディスク）。
+ソースコード本体は **DB に保存しない**（常にローカルディスク）。
 
 ## ディレクトリ（現行）
 
@@ -55,4 +53,4 @@ saforall/
 - Electron: `contextIsolation: true` / `nodeIntegration: false`
 - API キーは PHP / MySQL 側に置き、レンダラへ生値を渡さない
 - `server/config/database.php` と `.env` はコミットしない
-- バックエンドは当面 localhost 専用
+- バックエンドは当面 localhost 専用（配布時は Electron 内ローカル永続化が正本）

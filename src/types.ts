@@ -46,6 +46,7 @@ export type BackendStatus = {
   checking: boolean
   message: string
   baseUrl: string
+  mode?: 'php' | 'local'
 }
 
 export type WorkspaceRecord = {

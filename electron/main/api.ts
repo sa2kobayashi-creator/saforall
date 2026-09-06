@@ -19,6 +19,8 @@ export type HealthResult = {
   baseUrl: string
   message: string
   data?: HealthData
+  /** php = XAMPP backend, local = packaged JSON store */
+  mode?: 'php' | 'local'
 }
 
 export type ApiRequestOptions = {
@@ -27,6 +29,13 @@ export type ApiRequestOptions = {
 
 const DEFAULT_BASE_URL = 'http://localhost:8081/saforall/api'
 const DEFAULT_TIMEOUT_MS = 3000
+
+/** True when last health check reached MySQL-backed PHP. */
+let phpOnline = false
+
+export function isPhpBackendOnline(): boolean {
+  return phpOnline
+}
 
 export function getApiBaseUrl(): string {
   return (process.env.SAFORALL_API_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '')
@@ -83,36 +92,40 @@ export async function checkHealth(): Promise<HealthResult> {
       'GET',
       '/health'
     )
-    if (!result.ok || !result.data) {
-      const raw = result.error?.message ?? 'バックエンド未接続'
-      const looksDb =
-        /DB_|database|mysql|SQLSTATE/i.test(raw) || result.error?.code === 'DB_CONNECTION_FAILED'
+    if (result.ok && result.data && result.data.database === 'connected') {
+      phpOnline = true
       return {
-        connected: false,
+        connected: true,
+        mode: 'php',
         baseUrl,
-        message: looksDb
-          ? `MySQL 未接続 — XAMPP で MySQL を Start（${baseUrl}）`
-          : `API 応答エラー — Apache / パスを確認（${baseUrl}）: ${raw}`
+        message: 'バックエンド接続済み（XAMPP）',
+        data: result.data
       }
     }
+  } catch {
+    // fall through to local
+  }
 
-    const dbOk = result.data.database === 'connected'
-    return {
-      connected: dbOk,
-      baseUrl,
-      message: dbOk
-        ? 'バックエンド接続済み'
-        : `MySQL 未接続 — XAMPP で MySQL を Start（${baseUrl}）`,
-      data: result.data
-    }
-  } catch (error) {
-    const timedOut = error instanceof Error && error.name === 'AbortError'
-    return {
-      connected: false,
-      baseUrl,
-      message: timedOut
-        ? `Apache 応答なし — XAMPP で Apache を Start（${baseUrl}）`
-        : `Apache 未接続 — XAMPP で Apache を Start（${baseUrl}）`
+  phpOnline = false
+  try {
+    const { ensureLocalDbReady } = await import('./localDb')
+    await ensureLocalDbReady()
+    const { ensureSettingsLoaded } = await import('./settingsStore')
+    await ensureSettingsLoaded()
+  } catch {
+    // still report local mode
+  }
+
+  return {
+    connected: true,
+    mode: 'local',
+    baseUrl: 'local://userData',
+    message: 'ローカルモード（XAMPP 不要・パッケージ完結）',
+    data: {
+      service: 'saforall-local',
+      status: 'ok',
+      database: 'local',
+      time: new Date().toISOString()
     }
   }
 }
@@ -123,44 +136,40 @@ export async function apiRequest<T = unknown>(
   body?: unknown,
   options?: ApiRequestOptions
 ): Promise<ApiResponse<T>> {
-  try {
-    const result = await fetchJson<T>(method, path, body, options)
-    // Keep a local mirror so offline LLM / settings UI can work without Apache.
-    if (result.ok && method.toUpperCase() === 'PUT' && path.replace(/^\//, '') === 'settings') {
-      const settings =
-        typeof body === 'object' &&
-        body !== null &&
-        typeof (body as { settings?: unknown }).settings === 'object' &&
-        (body as { settings: Record<string, string> }).settings !== null
-          ? (body as { settings: Record<string, string> }).settings
-          : null
-      if (settings) {
-        const { mergeLocalSettings, markLocalSettingsClean } = await import('./settingsStore')
-        await mergeLocalSettings(settings, { markDirty: false })
-        await markLocalSettingsClean()
+  if (phpOnline) {
+    try {
+      const result = await fetchJson<T>(method, path, body, options)
+      if (result.ok) {
+        if (method.toUpperCase() === 'PUT' && path.replace(/^\//, '') === 'settings') {
+          const settings =
+            typeof body === 'object' &&
+            body !== null &&
+            typeof (body as { settings?: unknown }).settings === 'object' &&
+            (body as { settings: Record<string, string> }).settings !== null
+              ? (body as { settings: Record<string, string> }).settings
+              : null
+          if (settings) {
+            const { mergeLocalSettings, markLocalSettingsClean } = await import('./settingsStore')
+            await mergeLocalSettings(settings, { markDirty: false })
+            await markLocalSettingsClean()
+          }
+        }
+        return result
       }
-    }
-    return result
-  } catch (error) {
-    const message =
-      error instanceof Error && error.name === 'AbortError'
-        ? 'バックエンド応答タイムアウト'
-        : error instanceof Error
-          ? error.message
-          : 'バックエンド未接続'
-
-    return {
-      ok: false,
-      error: {
-        code: 'NETWORK_ERROR',
-        message
-      }
+    } catch {
+      phpOnline = false
     }
   }
+
+  const { localApiRequest } = await import('./localApi')
+  return localApiRequest<T>(method, path, body)
 }
 
 /** Pull full settings (incl. secrets) from PHP into local store. Main-only. */
 export async function syncSettingsFromServer(): Promise<{ ok: boolean; message: string }> {
+  if (!phpOnline) {
+    return { ok: true, message: 'ローカルモードのためサーバ同期は不要です' }
+  }
   const { mergeLocalSettings, markLocalSettingsClean, getLocalSettingsRaw, isLocalSettingsDirty } =
     await import('./settingsStore')
   const exported = await fetchJson<{ settings: Record<string, string> }>(
@@ -303,17 +312,124 @@ export async function streamChat(
   }
 
   if (!route.ok || !route.data) {
-    const { streamChatDirect } = await import('./directLlm')
-    const handled = await streamChatDirect(requestBody, onEvent)
-    if (handled) return
-    onEvent({
-      type: 'error',
-      code: route.error?.code ?? 'ROUTE_FAILED',
-      message:
-        (route.error?.message ?? 'AI Router に失敗しました') +
-        '。オフライン用に Settings で API キーを保存してください。'
-    })
-    return
+    try {
+      const { prepareLocalRoute, completeLocalRoute } = await import('./localAiRouter')
+      const local = await prepareLocalRoute(requestBody)
+      const decided = local as unknown as RouteData
+      onEvent({
+        type: 'user_message',
+        message: decided.user_message
+      })
+      onEvent({
+        type: 'route',
+        engine: decided.engine,
+        task_type: decided.task_type,
+        model: decided.model,
+        fallback_reason: decided.fallback_reason ?? 'local_persistence',
+        mode: decided.mode,
+        usage: decided.usage
+      })
+
+      if (decided.engine === 'cursor') {
+        await runCursorStream(requestBody, decided, onEvent, async (content) => {
+          return completeLocalRoute({
+            sessionId: decided.session_id,
+            content,
+            engine: decided.engine,
+            model: decided.model
+          })
+        })
+        return
+      }
+
+      const mode = typeof decided.mode === 'string' ? decided.mode : 'ask'
+      const workspacePath =
+        typeof requestBody.workspace_path === 'string' ? requestBody.workspace_path : ''
+      const canToolAgent =
+        mode === 'agent' &&
+        workspacePath.trim() !== '' &&
+        Boolean(decided.provider?.api_key) &&
+        (decided.engine === 'openai' || decided.engine === 'claude')
+
+      if (mode === 'agent' && !canToolAgent) {
+        onEvent({
+          type: 'error',
+          code: 'AGENT_TOOLS_UNAVAILABLE',
+          message:
+            'ローカル Agent は OpenAI / Claude とワークスペースが必要です。Ask に切り替えるかキーを確認してください。'
+        })
+        return
+      }
+
+      if (canToolAgent && decided.provider) {
+        const { runToolAgent } = await import('./toolAgent')
+        await runToolAgent({
+          workspacePath,
+          apiKey: decided.provider.api_key,
+          baseUrl: decided.provider.base_url,
+          model: decided.model,
+          extraHeaders: decided.provider.extra_headers ?? [],
+          messages: decided.provider.messages ?? [],
+          engine: decided.engine,
+          taskType: decided.task_type,
+          sessionId: decided.session_id,
+          problems: [],
+          onEvent,
+          complete: async (content) =>
+            completeLocalRoute({
+              sessionId: decided.session_id,
+              content,
+              engine: decided.engine,
+              model: decided.model
+            })
+        })
+        return
+      }
+
+      if (!decided.provider?.api_key) {
+        onEvent({
+          type: 'error',
+          code: 'NO_API_KEY',
+          message: 'ローカルモード: Settings に API キーを保存してください'
+        })
+        return
+      }
+
+      const { generateAssistantText } = await import('./directLlm')
+      const content = await generateAssistantText({
+        engine: decided.engine,
+        apiKey: decided.provider!.api_key,
+        model: decided.model,
+        baseUrl: decided.provider!.base_url,
+        messages: decided.provider!.messages ?? []
+      })
+      onEvent({ type: 'delta', text: content })
+      const completed = await completeLocalRoute({
+        sessionId: decided.session_id,
+        content,
+        engine: decided.engine,
+        model: decided.model
+      })
+      onEvent({
+        type: 'done',
+        model: decided.model,
+        engine: decided.engine,
+        task_type: decided.task_type,
+        estimated_usd: completed.estimated_usd,
+        usage: completed.usage,
+        assistant_message: completed.assistant_message
+      })
+      return
+    } catch (error) {
+      onEvent({
+        type: 'error',
+        code: route.error?.code ?? 'ROUTE_FAILED',
+        message:
+          (error instanceof Error ? error.message : route.error?.message) ||
+          'ローカル AI の準備に失敗しました。Settings で API キーを確認してください。'
+      })
+      return
+    }
   }
 
   const decided = route.data
@@ -480,7 +596,14 @@ export async function streamChat(
 async function runCursorStream(
   requestBody: Record<string, unknown>,
   decided: RouteData,
-  onEvent: (event: ChatStreamEvent) => void
+  onEvent: (event: ChatStreamEvent) => void,
+  completeOverride?: (
+    content: string
+  ) => Promise<{
+    assistant_message: Record<string, unknown>
+    estimated_usd?: number
+    usage?: MonthUsage
+  } | null>
 ): Promise<void> {
   const cwd =
     typeof requestBody.workspace_path === 'string'
@@ -579,33 +702,37 @@ async function runCursorStream(
 
     const finalContent = `${result.text}${verifyAppendix}`.trim()
 
-    const completed = await fetchJson<{
-      assistant_message: Record<string, unknown>
-      estimated_usd: number
-      usage: MonthUsage
-    }>(
-      'POST',
-      '/ai/complete',
-      {
-        session_id: decided.session_id,
-        content: finalContent,
-        engine: 'cursor',
-        task_type: decided.task_type,
-        model: decided.model,
-        cursor_run_id: decided.cursor_run_id,
-        agent_id: result.agentId,
-        sdk_run_id: result.runId,
-        status: result.status === 'error' ? 'error' : 'done',
-        fallback_from: decided.fallback_from
-      },
-      { timeoutMs: 15_000 }
-    )
+    const completed = completeOverride
+      ? await completeOverride(finalContent)
+      : (
+          await fetchJson<{
+            assistant_message: Record<string, unknown>
+            estimated_usd: number
+            usage: MonthUsage
+          }>(
+            'POST',
+            '/ai/complete',
+            {
+              session_id: decided.session_id,
+              content: finalContent,
+              engine: 'cursor',
+              task_type: decided.task_type,
+              model: decided.model,
+              cursor_run_id: decided.cursor_run_id,
+              agent_id: result.agentId,
+              sdk_run_id: result.runId,
+              status: result.status === 'error' ? 'error' : 'done',
+              fallback_from: decided.fallback_from
+            },
+            { timeoutMs: 15_000 }
+          )
+        ).data ?? null
 
-    if (!completed.ok || !completed.data) {
+    if (!completed) {
       onEvent({
         type: 'error',
-        code: completed.error?.code ?? 'COMPLETE_FAILED',
-        message: completed.error?.message ?? 'Cursor 結果の保存に失敗しました'
+        code: 'COMPLETE_FAILED',
+        message: 'Cursor 結果の保存に失敗しました'
       })
       return
     }
@@ -615,9 +742,9 @@ async function runCursorStream(
       model: decided.model,
       engine: 'cursor',
       task_type: decided.task_type,
-      estimated_usd: completed.data.estimated_usd,
-      usage: completed.data.usage,
-      assistant_message: completed.data.assistant_message
+      estimated_usd: completed.estimated_usd,
+      usage: completed.usage,
+      assistant_message: completed.assistant_message
     })
   } catch (error) {
     onEvent({

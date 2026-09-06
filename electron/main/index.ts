@@ -102,6 +102,10 @@ app.whenReady().then(() => {
   const userData = app.getPath('userData')
   configureJobsPersistence(join(userData, 'background-jobs.json'))
   configureIndexCache(join(userData, 'workspace-index-cache.json'))
+  void import('./localDb').then(({ configureLocalDb, ensureLocalDbReady }) => {
+    configureLocalDb(join(userData, 'local-db'))
+    void ensureLocalDbReady()
+  })
   void import('./settingsStore').then(({ configureSettingsStore, ensureSettingsLoaded }) => {
     configureSettingsStore(join(userData, 'settings-cache.json'))
     void ensureSettingsLoaded()

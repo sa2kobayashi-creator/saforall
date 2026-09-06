@@ -13,6 +13,10 @@
   background: #007acc;
 }
 
+.status-bar.local {
+  background: #2f5f8f;
+}
+
 .status-bar.offline {
   background: #6b4f00;
 }
@@ -69,6 +73,10 @@
 
 .backend-status.ok {
   border-color: rgba(180, 255, 180, 0.5);
+}
+
+.backend-status.local {
+  border-color: rgba(160, 210, 255, 0.7);
 }
 
 .backend-status.ng {

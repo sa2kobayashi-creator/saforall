@@ -14,11 +14,17 @@ export function StatusBar({ message, dirty, backend, onRecheckBackend }: Props) 
   const backendLabel = backend.checking
     ? t('status.checking')
     : backend.connected
-      ? t('status.connected')
+      ? backend.mode === 'local'
+        ? 'ローカル'
+        : t('status.connected')
       : t('status.disconnectedHint')
 
   return (
-    <footer className={`status-bar ${backend.connected ? 'online' : 'offline'}`}>
+    <footer
+      className={`status-bar ${
+        backend.connected ? (backend.mode === 'local' ? 'local' : 'online') : 'offline'
+      }`}
+    >
       <span className="status-message">{message}</span>
       <div className="status-meta">
         <label className="status-locale" title={t('status.locale')}>
@@ -37,7 +43,9 @@ export function StatusBar({ message, dirty, backend, onRecheckBackend }: Props) 
         </label>
         <button
           type="button"
-          className={`backend-status ${backend.connected ? 'ok' : 'ng'}`}
+          className={`backend-status ${
+            backend.connected ? (backend.mode === 'local' ? 'local' : 'ok') : 'ng'
+          }`}
           title={`${backend.message}\n${backend.baseUrl}\n${t('status.recheck')}`}
           onClick={onRecheckBackend}
         >
