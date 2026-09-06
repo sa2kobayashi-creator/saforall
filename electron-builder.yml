@@ -4,6 +4,9 @@ copyright: Copyright © sa2kobayashi-creator
 directories:
   output: release
   buildResources: build
+# If pack fails with "app.asar ... being used by another process", close saforall.exe
+# (and Explorer windows on release\win-unpacked), then retry — or temporarily set
+# output: release-build and run npm run pack again.
 files:
   - out/**/*
   - package.json

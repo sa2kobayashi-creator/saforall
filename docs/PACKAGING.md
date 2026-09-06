@@ -39,3 +39,19 @@ npm run pack
 - エンドユーザー向け配布では **XAMPP は不要**です。設定に API キーを入れればローカルモードで Chat / Tab / Agent が動きます。
 - 開発時のみ任意で `server/` を XAMPP DocumentRoot に置けます。
 - `node-pty` は native モジュールのため、ビルド環境の Electron 向け rebuild が必要な場合があります（実行中の Electron を止めてから pack）。
+
+## トラブル: app.asar が削除できない
+
+```
+remove ...\release\win-unpacked\resources\app.asar:
+The process cannot access the file because it is being used by another process
+```
+
+**原因:** 前回の `pack` / インストール済み／起動中の saforall が `app.asar` を掴んでいる。
+
+**対処:**
+
+1. タスクマネージャーで **saforall.exe** / 関連 Electron を終了  
+2. `release\win-unpacked` を開いているエクスプローラーを閉じる  
+3. まだダメなら `release\win-unpacked` フォルダごと削除（または PC 再起動）  
+4. 再度 `npm run pack` / `npm run dist`
