@@ -32,3 +32,17 @@ test('Ask mode auto-attaches light codebase search', () => {
 test('App wires ChatPanel recheck to checkBackend', () => {
   assert.match(app, /onRecheckBackend=\{\(\) => void checkBackend\(\)\}/)
 })
+
+test('local mode UX: badge, setup banner, Welcome checklist', () => {
+  const welcome = readFileSync(join(root, 'src/components/WelcomeScreen.tsx'), 'utf8')
+  assert.match(chat, /backendMode/)
+  assert.match(chat, /needsApiKeySetup/)
+  assert.match(chat, /API キー未設定/)
+  assert.match(chat, /ローカルモード: 履歴はアプリ内に保存/)
+  assert.match(chat, /onOpenSettings/)
+  assert.match(app, /backendMode=\{backend\.mode\}/)
+  assert.match(app, /onOpenSettings=\{\(\) => setSettingsOpen\(true\)\}/)
+  assert.match(welcome, /ローカルモードで使えます/)
+  assert.match(welcome, /API キーを保存/)
+  assert.match(welcome, /XAMPP 不要/)
+})

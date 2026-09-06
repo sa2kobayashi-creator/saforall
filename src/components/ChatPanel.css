@@ -499,6 +499,28 @@
   background: #4a3c1e;
 }
 
+.chat-setup-banner {
+  background: #1a2838;
+  border-color: #3a5a7a;
+  color: #cfe4ff;
+}
+
+.chat-setup-banner .chat-offline-recheck {
+  border-color: #3a5a7a;
+  background: #243448;
+  color: #cfe4ff;
+}
+
+.chat-setup-banner .chat-offline-recheck:hover {
+  background: #2e4158;
+}
+
+.chat-local-hint {
+  margin: 6px 12px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .chat-context-chip.is-mention {
   background: #243044;
   color: #9ec5ff;

@@ -13,6 +13,7 @@ type Props = {
   backendConnected: boolean
   backendMessage: string
   backendBaseUrl?: string
+  backendMode?: 'php' | 'local'
   onOpenFolder: () => void
   onOpenRecent: (path: string) => void
   onClone: () => void
@@ -24,6 +25,7 @@ export function WelcomeScreen({
   backendConnected,
   backendMessage,
   backendBaseUrl = '',
+  backendMode,
   onOpenFolder,
   onOpenRecent,
   onClone,
@@ -32,10 +34,35 @@ export function WelcomeScreen({
 }: Props) {
   const { t } = useI18n()
   const [recents, setRecents] = useState<RecentWorkspace[]>(() => loadRecentWorkspaces())
+  const [localLlmReady, setLocalLlmReady] = useState(false)
 
   useEffect(() => {
     setRecents(loadRecentWorkspaces())
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      if (typeof window.saforall.hasLocalLlm !== 'function') return
+      try {
+        const ok = await window.saforall.hasLocalLlm()
+        if (!cancelled) setLocalLlmReady(ok)
+      } catch {
+        if (!cancelled) setLocalLlmReady(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [backendConnected, backendMode])
+
+  const isLocal = backendMode === 'local' || (backendConnected && backendBaseUrl.startsWith('local://'))
+  const statusClass = !backendConnected ? 'ng' : isLocal ? 'local' : 'ok'
+  const statusLabel = !backendConnected
+    ? backendMessage || t('status.disconnected')
+    : isLocal
+      ? 'ローカルモード（XAMPP 不要）'
+      : t('status.connected')
 
   return (
     <div className="welcome-screen" aria-label="スタート">
@@ -56,12 +83,47 @@ export function WelcomeScreen({
             設定
           </button>
         </div>
-        <p className={`welcome-backend ${backendConnected ? 'ok' : 'ng'}`}>
-          {backendConnected ? t('status.connected') : backendMessage || t('status.disconnected')}
-        </p>
-        {!backendConnected && (
+        <p className={`welcome-backend ${statusClass}`}>{statusLabel}</p>
+
+        {isLocal && (
+          <div className="welcome-local" role="status">
+            <strong>ローカルモードで使えます</strong>
+            <ol>
+              <li>
+                <button type="button" className="welcome-inline-link" onClick={onOpenFolder}>
+                  フォルダを開く
+                </button>
+              </li>
+              <li>
+                {localLlmReady ? (
+                  <>API キーは保存済みです。チャットを使えます。</>
+                ) : (
+                  <>
+                    <button type="button" className="welcome-inline-link" onClick={onOpenSettings}>
+                      設定
+                    </button>
+                    で OpenAI / Claude / Gemini などの API キーを保存
+                  </>
+                )}
+              </li>
+              <li>会話履歴はアプリ内に保存されます（XAMPP 不要）</li>
+            </ol>
+            <div className="welcome-xampp-actions">
+              <button type="button" className="welcome-secondary" onClick={onOpenSettings}>
+                {localLlmReady ? '設定を確認' : 'API キーを設定'}
+              </button>
+              {onRecheckBackend && (
+                <button type="button" className="welcome-secondary" onClick={onRecheckBackend}>
+                  再確認
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!backendConnected && !isLocal && (
           <div className="welcome-xampp" role="status">
-            <strong>バックエンド起動手順（XAMPP）</strong>
+            <strong>バックエンド起動手順（XAMPP・任意）</strong>
             <ol>
               <li>XAMPP Control Panel を開く</li>
               <li>
@@ -74,8 +136,7 @@ export function WelcomeScreen({
               <li>この画面の「再確認」でステータスを更新</li>
             </ol>
             <p className="welcome-xampp-note">
-              既定は <code>http://localhost:8081/saforall/api</code> です。ポートが違う場合は環境変数{' '}
-              <code>SAFORALL_API_BASE_URL</code> を合わせてください。
+              配布版では XAMPP は不要です。ローカルモードで設定の API キーから直接使えます。
             </p>
             <div className="welcome-xampp-actions">
               {onRecheckBackend && (

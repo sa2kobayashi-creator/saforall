@@ -78,8 +78,46 @@
   color: #9fdfb0;
 }
 
+.welcome-backend.local {
+  color: #9ec5ff;
+}
+
 .welcome-backend.ng {
   color: #f0d48a;
+}
+
+.welcome-local {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #3a5a7a;
+  border-radius: 10px;
+  background: #1a2838;
+  color: #cfe4ff;
+  text-align: left;
+  max-width: 520px;
+}
+
+.welcome-local strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.welcome-local ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.welcome-inline-link {
+  border: none;
+  background: none;
+  color: #9ec5ff;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
 }
 
 .welcome-xampp {

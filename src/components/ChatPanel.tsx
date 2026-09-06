@@ -33,12 +33,14 @@ type Props = {
   selection: EditorSelection | null
   problems?: ProblemItem[]
   backendConnected: boolean
+  backendMode?: 'php' | 'local'
   workspaceId: number | null
   workspacePath: string | null
   width: number
   pendingPrompt?: string | null
   onPendingPromptConsumed?: () => void
   onRecheckBackend?: () => void
+  onOpenSettings?: () => void
   onApplyCode: (
     code: string,
     pathHint?: string,
@@ -124,12 +126,14 @@ export function ChatPanel({
   selection,
   problems = [],
   backendConnected,
+  backendMode,
   workspaceId,
   workspacePath,
   width,
   pendingPrompt = null,
   onPendingPromptConsumed,
   onRecheckBackend,
+  onOpenSettings,
   onApplyCode,
   onAgentNeedsReview
 }: Props) {
@@ -223,7 +227,11 @@ export function ChatPanel({
     }
   }, [backendConnected])
 
-  const chatReady = backendConnected || localLlmReady
+  const isLocalMode = backendMode === 'local'
+  const needsApiKeySetup = isLocalMode && !localLlmReady
+  const chatReady = isLocalMode
+    ? localLlmReady
+    : backendConnected || localLlmReady
 
   const activeSession = useMemo(
     () => sessions.find((row) => Number(row.id) === sessionId) ?? null,
@@ -1346,8 +1354,20 @@ export function ChatPanel({
                   Agent
                 </button>
               </div>
-              <span className={`chat-backend ${backendConnected ? 'ok' : localLlmReady ? 'local' : 'ng'}`}>
-                {backendConnected ? '接続' : localLlmReady ? 'ローカル' : '未接続'}
+              <span
+                className={`chat-backend ${
+                  isLocalMode || (!backendConnected && localLlmReady)
+                    ? 'local'
+                    : backendConnected
+                      ? 'ok'
+                      : 'ng'
+                }`}
+              >
+                {isLocalMode || (!backendConnected && localLlmReady)
+                  ? 'ローカル'
+                  : backendConnected
+                    ? '接続'
+                    : '未接続'}
               </span>
             </div>
             <div className="chat-context-line">{contextLabel}</div>
@@ -1404,6 +1424,22 @@ export function ChatPanel({
           )}
           {usageText && <div className="usage-bar">今月 {usageText}</div>}
 
+          {needsApiKeySetup && (
+            <div className="chat-offline-banner chat-setup-banner" role="status">
+              <div className="chat-offline-banner-main">
+                <strong>API キー未設定</strong>
+                <span>
+                  ローカルモードです。Settings で API キーを保存するとチャットできます（XAMPP 不要）。
+                </span>
+              </div>
+              {onOpenSettings && (
+                <button type="button" className="chat-offline-recheck" onClick={onOpenSettings}>
+                  設定を開く
+                </button>
+              )}
+            </div>
+          )}
+
           {!backendConnected && (
             <div className="chat-offline-banner" role="status">
               <div className="chat-offline-banner-main">
@@ -1419,6 +1455,12 @@ export function ChatPanel({
                   再チェック
                 </button>
               )}
+            </div>
+          )}
+
+          {isLocalMode && localLlmReady && (
+            <div className="chat-local-hint" role="status">
+              ローカルモード: 履歴はアプリ内に保存されます（XAMPP 不要）
             </div>
           )}
 
@@ -1558,17 +1600,21 @@ export function ChatPanel({
                   void refreshMentionSuggestions(value, cursor)
                 }}
                 placeholder={
-                  !backendConnected && !localLlmReady
-                    ? 'バックエンド未接続 — 編集は可能。Settings に API キーを保存するとローカル LLM が使えます'
-                    : !backendConnected && localLlmReady
-                      ? 'ローカル LLM: 質問する…（履歴は未同期）'
-                      : busy
-                        ? busyLabel ?? '実行中…'
-                        : loading
-                          ? '履歴読み込み中…'
-                          : mode === 'agent'
-                            ? 'Agent: 修正を依頼…（ツールで edit → verify。@file @codebase）'
-                            : 'Ask: 質問する…（適用前に確認。関連コードは自動検索。@ で追加）'
+                  needsApiKeySetup
+                    ? 'Settings で API キーを保存するとチャットできます（XAMPP 不要）'
+                    : !backendConnected && !localLlmReady
+                      ? 'バックエンド未接続 — 編集は可能。Settings に API キーを保存するとローカル LLM が使えます'
+                      : isLocalMode && localLlmReady
+                        ? 'ローカル: 質問する…（履歴はアプリ内に保存）'
+                        : !backendConnected && localLlmReady
+                          ? 'ローカル LLM: 質問する…（履歴は未同期）'
+                          : busy
+                            ? busyLabel ?? '実行中…'
+                            : loading
+                              ? '履歴読み込み中…'
+                              : mode === 'agent'
+                                ? 'Agent: 修正を依頼…（ツールで edit → verify。@file @codebase）'
+                                : 'Ask: 質問する…（適用前に確認。関連コードは自動検索。@ で追加）'
                 }
                 rows={3}
                 disabled={!chatReady || busy !== null || loading}
@@ -1608,7 +1654,7 @@ export function ChatPanel({
               type="submit"
               disabled={!chatReady || busy !== null || loading || input.trim() === ''}
             >
-              {busy ? '実行中…' : !chatReady ? '未接続' : '送信'}
+              {busy ? '実行中…' : needsApiKeySetup ? 'キー未設定' : !chatReady ? '未接続' : '送信'}
             </button>
           </form>        </div>
 

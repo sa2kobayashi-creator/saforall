@@ -1580,6 +1580,7 @@ export default function App() {
             backendConnected={backend.connected}
             backendMessage={backend.message}
             backendBaseUrl={backend.baseUrl}
+            backendMode={backend.mode}
             onOpenFolder={() => void openWorkspace()}
             onOpenRecent={(path) => void openWorkspaceAt(path)}
             onClone={() => setCloneOpen(true)}
@@ -2039,12 +2040,14 @@ export default function App() {
                 selection={editorSelection}
                 problems={problems}
                 backendConnected={backend.connected}
+                backendMode={backend.mode}
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
                 width={chatWidth}
                 pendingPrompt={pendingChatPrompt}
                 onPendingPromptConsumed={() => setPendingChatPrompt(null)}
                 onRecheckBackend={() => void checkBackend()}
+                onOpenSettings={() => setSettingsOpen(true)}
                 onApplyCode={applyCode}
                 onAgentNeedsReview={({ editCount, engine }) => {
                   if (editCount > 0) {
