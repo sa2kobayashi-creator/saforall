@@ -169,11 +169,48 @@ export async function localApiRequest<T = unknown>(
       }) as ApiResponse<T>
     }
 
-    if ((pathname === '/ai/inline' || pathname === '/ai/edit') && m === 'POST') {
-      return fail(
-        'LOCAL_UNSUPPORTED',
-        'この操作はローカルモードでは未対応です。バックエンド接続時に利用してください。'
-      ) as ApiResponse<T>
+    if (pathname === '/ai/inline' && m === 'POST') {
+      await ensureSettingsLoaded()
+      const bodyObj =
+        typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {}
+      try {
+        const { completeInlineLocal } = await import('./directLlm')
+        const { recordLocalUsage } = await import('./usageStore')
+        const result = await completeInlineLocal(bodyObj)
+        await recordLocalUsage({ engine: result.engine, estimatedUsd: 0.0004 })
+        return ok({
+          completion: result.completion,
+          model: result.model,
+          engine: result.engine
+        }) as ApiResponse<T>
+      } catch (error) {
+        return fail(
+          'INLINE_FAILED',
+          error instanceof Error ? error.message : String(error)
+        ) as ApiResponse<T>
+      }
+    }
+
+    if (pathname === '/ai/edit' && m === 'POST') {
+      await ensureSettingsLoaded()
+      const bodyObj =
+        typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {}
+      try {
+        const { completeEditLocal } = await import('./directLlm')
+        const { recordLocalUsage } = await import('./usageStore')
+        const result = await completeEditLocal(bodyObj)
+        await recordLocalUsage({ engine: result.engine, estimatedUsd: 0.001 })
+        return ok({
+          edited: result.edited,
+          model: result.model,
+          engine: result.engine
+        }) as ApiResponse<T>
+      } catch (error) {
+        return fail(
+          'EDIT_FAILED',
+          error instanceof Error ? error.message : String(error)
+        ) as ApiResponse<T>
+      }
     }
 
     if (pathname === '/ai/chat' && m === 'POST') {

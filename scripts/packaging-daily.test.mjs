@@ -100,6 +100,12 @@ test('packaging: electron-builder.yml and scripts exist', async () => {
   assert.match(pkg.scripts.dist, /electron-builder/)
   assert.match(pkg.scripts.pack, /electron-builder/)
   assert.ok(pkg.devDependencies['electron-builder'])
+  const yml = await readFile(join(root, 'electron-builder.yml'), 'utf8')
+  assert.match(yml, /signAndEditExecutable:\s*false/)
+  const packDoc = await readFile(join(root, 'docs/PACKAGING.md'), 'utf8')
+  assert.match(packDoc, /SmartScreen/)
+  assert.match(packDoc, /未署名/)
+  assert.match(packDoc, /electron-updater/)
 })
 
 test('daily: resolveProblemOpenPath joins relative paths', () => {

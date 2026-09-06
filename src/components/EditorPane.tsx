@@ -114,6 +114,29 @@ export function EditorPane({
   >(new Map())
   const backendConnectedRef = useRef(backendConnected)
   backendConnectedRef.current = backendConnected
+  const llmReadyRef = useRef(true)
+
+  useEffect(() => {
+    let cancelled = false
+    const refresh = async () => {
+      if (typeof window.saforall?.hasLocalLlm !== 'function') {
+        llmReadyRef.current = true
+        return
+      }
+      try {
+        const ok = await window.saforall.hasLocalLlm()
+        if (!cancelled) llmReadyRef.current = ok
+      } catch {
+        if (!cancelled) llmReadyRef.current = false
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 15_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [backendConnected])
   const selectionHandlerRef = useRef(onSelectionChange)
   selectionHandlerRef.current = onSelectionChange
   const diagnosticsHandlerRef = useRef(onDiagnostics)
@@ -474,6 +497,7 @@ export function EditorPane({
     if (registerProviders) {
       registerTabCompletions(monaco, () => fileMetaRef.current, {
         isBackendConnected: () => backendConnectedRef.current,
+        isLlmReady: () => llmReadyRef.current,
         getRelatedFiles: () =>
           tabsRef.current.map((tab) => ({
             path: tab.path,

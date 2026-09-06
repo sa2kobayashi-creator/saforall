@@ -214,6 +214,152 @@ function resolveLocalEngine(requested: string): {
   return null
 }
 
+/** Tab / Ctrl+K: prefer fast chat APIs (skip Cursor Agent). */
+export function resolveCompletionEngine(): {
+  engine: string
+  model: string
+  apiKey: string
+  baseUrl?: string
+} | null {
+  for (const engine of ['openai', 'gemini', 'claude']) {
+    const resolved = resolveLocalEngine(engine)
+    if (resolved) return resolved
+  }
+  return null
+}
+
+function stripCodeFences(text: string): string {
+  let out = text.trim()
+  if (out.startsWith('```')) {
+    out = out.replace(/^```[a-zA-Z0-9_+-]*\n?/, '').replace(/\n?```$/, '')
+  }
+  return out.trim()
+}
+
+export async function completeInlineLocal(body: Record<string, unknown>): Promise<{
+  completion: string
+  model: string
+  engine: string
+}> {
+  await ensureSettingsLoaded()
+  if (!hasUsableLocalLlm()) {
+    throw new Error('API キーがありません。設定で OpenAI / Gemini / Claude を保存してください。')
+  }
+  const resolved = resolveCompletionEngine()
+  if (!resolved) {
+    throw new Error('Tab 補完用の LLM がありません（Cursor のみでは未対応です）')
+  }
+
+  let prefix = typeof body.prefix === 'string' ? body.prefix : ''
+  let suffix = typeof body.suffix === 'string' ? body.suffix : ''
+  let nearby = typeof body.nearby === 'string' ? body.nearby.trim() : ''
+  const language = typeof body.language === 'string' ? body.language : 'plaintext'
+  const path = typeof body.path === 'string' ? body.path : ''
+  if (prefix.length > 3500) prefix = prefix.slice(-3500)
+  if (suffix.length > 1200) suffix = suffix.slice(0, 1200)
+  if (nearby.length > 600) nearby = nearby.slice(0, 600)
+  if (!prefix.trim() && !suffix.trim()) {
+    throw new Error('prefix or suffix is required')
+  }
+
+  const system = [
+    'You are a code completion engine like Cursor Tab.',
+    'Return ONLY the text that should be inserted at the cursor.',
+    'Do not repeat the prefix. Do not wrap in markdown fences.',
+    'Prefer a short continuation (1-12 lines). Stop early when a statement/block completes.',
+    'Match indentation and style of the surrounding code.',
+    `Language: ${language}`,
+    path ? `File: ${path}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const userParts = [`PREFIX:\n${prefix}`, `SUFFIX:\n${suffix}`]
+  if (nearby) userParts.push(`NEARBY SYMBOLS:\n${nearby}`)
+  userParts.push('Insert completion now:')
+
+  const raw = await generateAssistantText({
+    engine: resolved.engine,
+    apiKey: resolved.apiKey,
+    model: resolved.model,
+    baseUrl: resolved.baseUrl,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: userParts.join('\n\n') }
+    ]
+  })
+  let completion = stripCodeFences(raw)
+  if (completion.length > 1200) completion = completion.slice(0, 1200)
+  return { completion, model: resolved.model, engine: resolved.engine }
+}
+
+export async function completeEditLocal(body: Record<string, unknown>): Promise<{
+  edited: string
+  model: string
+  engine: string
+}> {
+  await ensureSettingsLoaded()
+  if (!hasUsableLocalLlm()) {
+    throw new Error('API キーがありません。設定で OpenAI / Gemini / Claude を保存してください。')
+  }
+  const resolved = resolveCompletionEngine()
+  if (!resolved) {
+    throw new Error('インライン編集用の LLM がありません（Cursor のみでは未対応です）')
+  }
+
+  const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : ''
+  let selection = typeof body.selection === 'string' ? body.selection : ''
+  let prefix = typeof body.prefix === 'string' ? body.prefix : ''
+  let suffix = typeof body.suffix === 'string' ? body.suffix : ''
+  const language = typeof body.language === 'string' ? body.language : 'plaintext'
+  const path = typeof body.path === 'string' ? body.path : ''
+  if (!instruction) throw new Error('instruction is required')
+  if (!selection.trim()) throw new Error('selection is required')
+  if (selection.length > 12000) selection = selection.slice(0, 12000)
+  if (prefix.length > 2500) prefix = prefix.slice(-2500)
+  if (suffix.length > 1500) suffix = suffix.slice(0, 1500)
+
+  const system = [
+    'You are an inline code editor like Cursor Ctrl+K.',
+    'Rewrite ONLY the selected code according to the user instruction.',
+    'Return ONLY the replacement code for the selection.',
+    'Do not wrap in markdown fences. Do not add explanations.',
+    'Preserve indentation style of the selection unless asked otherwise.',
+    `Language: ${language}`,
+    path ? `File: ${path}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const user = [
+    'INSTRUCTION:',
+    instruction,
+    '',
+    'PREFIX (context before selection):',
+    prefix || '(none)',
+    '',
+    'SELECTION:',
+    selection,
+    '',
+    'SUFFIX (context after selection):',
+    suffix || '(none)',
+    '',
+    'Return the edited selection now:'
+  ].join('\n')
+
+  const raw = await generateAssistantText({
+    engine: resolved.engine,
+    apiKey: resolved.apiKey,
+    model: resolved.model,
+    baseUrl: resolved.baseUrl,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user }
+    ]
+  })
+  return { edited: stripCodeFences(raw), model: resolved.model, engine: resolved.engine }
+}
+
 export async function generateAssistantText(params: {
   engine: string
   apiKey: string

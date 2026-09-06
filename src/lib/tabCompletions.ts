@@ -71,10 +71,14 @@ export function registerTabCompletions(
   getMeta: () => { path: string; language: string } | null,
   options?: {
     isBackendConnected?: () => boolean
+    /** When false, skip calling /ai/inline (no keys). */
+    isLlmReady?: () => boolean
     getRelatedFiles?: () => RelatedFile[]
   }
 ): void {
   disposeTabCompletions()
+
+  let failUntil = 0
 
   providerDisposable = monaco.languages.registerInlineCompletionsProvider(
     { pattern: '**' },
@@ -96,9 +100,15 @@ export function registerTabCompletions(
         if (options?.isBackendConnected && !options.isBackendConnected()) {
           return { items: [] }
         }
+        if (options?.isLlmReady && !options.isLlmReady()) {
+          return { items: [] }
+        }
+        if (Date.now() < failUntil) {
+          return { items: [] }
+        }
 
         const requestId = ++seq
-        const waitMs = context?.triggerKind === 1 ? 160 : 240
+        const waitMs = context?.triggerKind === 1 ? 120 : 180
         await delay(waitMs)
         if (token.isCancellationRequested || requestId !== seq) {
           return { items: [] }
@@ -156,12 +166,22 @@ export function registerTabCompletions(
             'POST',
             '/ai/inline',
             payload,
-            { timeoutMs: 10_000 }
+            { timeoutMs: 8_000 }
           )
           if (token.isCancellationRequested || requestId !== seq) {
             return { items: [] }
           }
           if (!result.ok || !result.data?.completion) {
+            const code = result.error?.code ?? ''
+            if (
+              code === 'INLINE_FAILED' ||
+              code === 'LLM_NOT_CONFIGURED' ||
+              /キー|API key|未対応/i.test(result.error?.message ?? '')
+            ) {
+              failUntil = Date.now() + 20_000
+            } else {
+              failUntil = Date.now() + 4_000
+            }
             return { items: [] }
           }
 
@@ -178,6 +198,7 @@ export function registerTabCompletions(
           lastKey = key
           lastCompletion = insertText
           lastAt = Date.now()
+          failUntil = 0
 
           return {
             items: [
@@ -193,6 +214,7 @@ export function registerTabCompletions(
             ]
           }
         } catch {
+          failUntil = Date.now() + 6_000
           return { items: [] }
         }
       }

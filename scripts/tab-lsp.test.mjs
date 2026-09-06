@@ -47,4 +47,17 @@ test('tabCompletions exports multi-file helper', async () => {
   const source = await readFile(join(__dirname, '../src/lib/tabCompletions.ts'), 'utf8')
   assert.match(source, /export function buildMultiFileTabContext/)
   assert.match(source, /getRelatedFiles/)
+  assert.match(source, /isLlmReady/)
+  assert.match(source, /failUntil/)
+})
+
+test('localApi implements /ai/inline and /ai/edit', async () => {
+  const localApi = await readFile(join(__dirname, '../electron/main/localApi.ts'), 'utf8')
+  const direct = await readFile(join(__dirname, '../electron/main/directLlm.ts'), 'utf8')
+  assert.match(localApi, /completeInlineLocal/)
+  assert.match(localApi, /completeEditLocal/)
+  assert.doesNotMatch(localApi, /LOCAL_UNSUPPORTED/)
+  assert.match(direct, /export async function completeInlineLocal/)
+  assert.match(direct, /export async function completeEditLocal/)
+  assert.match(direct, /resolveCompletionEngine/)
 })

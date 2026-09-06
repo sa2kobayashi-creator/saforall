@@ -137,6 +137,8 @@ export function WelcomeScreen({
             </ol>
             <p className="welcome-xampp-note">
               配布版では XAMPP は不要です。ローカルモードで設定の API キーから直接使えます。
+              未署名インストーラでは SmartScreen が出ることがあります（詳細情報→実行）。
+              Tab 補完（入力中の提案）と Ctrl+K も、キー保存後にローカルで利用できます。
             </p>
             <div className="welcome-xampp-actions">
               {onRecheckBackend && (
