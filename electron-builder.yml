@@ -11,6 +11,7 @@ asar: true
 asarUnpack:
   - node_modules/node-pty/**/*
 win:
+  signAndEditExecutable: false
   target:
     - target: nsis
       arch:
