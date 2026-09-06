@@ -111,20 +111,11 @@ export function SettingsPanel({
   }, [open])
 
   useEffect(() => {
-    if (!open || !backendConnected) return
+    if (!open) return
 
     let cancelled = false
     ;(async () => {
-      const [settingsResult, usageResult] = await Promise.all([
-        window.saforall.request<{ settings: SettingsMap }>('GET', '/settings'),
-        window.saforall.request<{
-          usage: Record<string, { spent: number; limit: number; remaining: number }>
-        }>('GET', '/ai/usage')
-      ])
-      if (cancelled) return
-
-      if (settingsResult.ok && settingsResult.data?.settings) {
-        const settings = settingsResult.data.settings
+      const applySettings = (settings: SettingsMap) => {
         const base =
           (typeof settings['llm.openai.base_url'] === 'string' && settings['llm.openai.base_url']) ||
           (typeof settings['llm.base_url'] === 'string' ? settings['llm.base_url'] : '')
@@ -212,6 +203,30 @@ export function SettingsPanel({
         setRouterPolicy(parseRouterAutoPolicy(settings['router.auto_policy'], profile))
       }
 
+      if (!backendConnected) {
+        if (typeof window.saforall.getLocalSettings === 'function') {
+          const local = await window.saforall.getLocalSettings()
+          if (!cancelled && local) applySettings(local)
+          if (!cancelled) {
+            setStatus('オフライン: ローカル退避の設定を表示しています（保存可）')
+            setUsageText(null)
+          }
+        }
+        return
+      }
+
+      const [settingsResult, usageResult] = await Promise.all([
+        window.saforall.request<{ settings: SettingsMap }>('GET', '/settings'),
+        window.saforall.request<{
+          usage: Record<string, { spent: number; limit: number; remaining: number }>
+        }>('GET', '/ai/usage')
+      ])
+      if (cancelled) return
+
+      if (settingsResult.ok && settingsResult.data?.settings) {
+        applySettings(settingsResult.data.settings)
+      }
+
       if (usageResult.ok && usageResult.data?.usage) {
         const parts = USAGE_ENGINE_KEYS.map((key) => {
           const row = usageResult.data!.usage[key]
@@ -226,7 +241,7 @@ export function SettingsPanel({
     return () => {
       cancelled = true
     }
-  }, [open, backendConnected])
+  }, [open, backendConnected, setLocale])
 
   useEffect(() => {
     if (!open) return
@@ -339,10 +354,6 @@ export function SettingsPanel({
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!backendConnected) {
-      setStatus(t('settings.offlineSave'))
-      return
-    }
 
     if (routerEngines.length === 0) {
       setStatus('Auto パイプラインは 1 つ以上の AI を有効にしてください')
@@ -401,6 +412,42 @@ export function SettingsPanel({
       settings['llm.simple.api_token'] = workersToken.trim()
     }
 
+    if (!backendConnected) {
+      if (typeof window.saforall.putLocalSettings !== 'function') {
+        setSaving(false)
+        setStatus(t('settings.offlineSave'))
+        return
+      }
+      const local = await window.saforall.putLocalSettings(settings)
+      setSaving(false)
+      if (!local.ok) {
+        setStatus(t('settings.saveFailed'))
+        return
+      }
+      if (openaiKey.trim() !== '') {
+        setOpenaiKeySet(true)
+        setOpenaiKey('')
+      }
+      if (geminiKey.trim() !== '') {
+        setGeminiKeySet(true)
+        setGeminiKey('')
+      }
+      if (claudeKey.trim() !== '') {
+        setClaudeKeySet(true)
+        setClaudeKey('')
+      }
+      if (cursorKey.trim() !== '') {
+        setCursorKeySet(true)
+        setCursorKey('')
+      }
+      if (workersToken.trim() !== '') {
+        setWorkersTokenSet(true)
+        setWorkersToken('')
+      }
+      setStatus('ローカルに保存しました（サーバ復帰時に同期します）')
+      return
+    }
+
     const result = await window.saforall.request('PUT', '/settings', { settings })
     setSaving(false)
 
@@ -440,7 +487,10 @@ export function SettingsPanel({
         </div>
 
         {!backendConnected && (
-          <p className="settings-warning">{t('settings.backendWarning')}</p>
+          <p className="settings-warning">
+            バックエンド未接続です。設定はローカルに退避できます。API キーを保存するとチャットのローカル LLM
+            が使えます。復帰後に自動同期します。
+          </p>
         )}
 
         <form className="settings-form" onSubmit={(event) => void onSubmit(event)}>

@@ -215,6 +215,9 @@ export default function App() {
         message: result.message,
         baseUrl: result.baseUrl
       })
+      if (result.connected && typeof window.saforall.syncLocalSettings === 'function') {
+        void window.saforall.syncLocalSettings().catch(() => undefined)
+      }
       if (!result.connected) {
         setStatus((current) =>
           current.startsWith('バックエンド') || current === 'フォルダを開いて始めましょう'
@@ -2030,6 +2033,7 @@ export default function App() {
                 width={chatWidth}
                 pendingPrompt={pendingChatPrompt}
                 onPendingPromptConsumed={() => setPendingChatPrompt(null)}
+                onRecheckBackend={() => void checkBackend()}
                 onApplyCode={applyCode}
                 onAgentNeedsReview={({ editCount, engine }) => {
                   if (editCount > 0) {

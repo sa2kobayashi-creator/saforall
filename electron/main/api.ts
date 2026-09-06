@@ -124,7 +124,23 @@ export async function apiRequest<T = unknown>(
   options?: ApiRequestOptions
 ): Promise<ApiResponse<T>> {
   try {
-    return await fetchJson<T>(method, path, body, options)
+    const result = await fetchJson<T>(method, path, body, options)
+    // Keep a local mirror so offline LLM / settings UI can work without Apache.
+    if (result.ok && method.toUpperCase() === 'PUT' && path.replace(/^\//, '') === 'settings') {
+      const settings =
+        typeof body === 'object' &&
+        body !== null &&
+        typeof (body as { settings?: unknown }).settings === 'object' &&
+        (body as { settings: Record<string, string> }).settings !== null
+          ? (body as { settings: Record<string, string> }).settings
+          : null
+      if (settings) {
+        const { mergeLocalSettings, markLocalSettingsClean } = await import('./settingsStore')
+        await mergeLocalSettings(settings, { markDirty: false })
+        await markLocalSettingsClean()
+      }
+    }
+    return result
   } catch (error) {
     const message =
       error instanceof Error && error.name === 'AbortError'
@@ -141,6 +157,35 @@ export async function apiRequest<T = unknown>(
       }
     }
   }
+}
+
+/** Pull full settings (incl. secrets) from PHP into local store. Main-only. */
+export async function syncSettingsFromServer(): Promise<{ ok: boolean; message: string }> {
+  const { mergeLocalSettings, markLocalSettingsClean, getLocalSettingsRaw, isLocalSettingsDirty } =
+    await import('./settingsStore')
+  const exported = await fetchJson<{ settings: Record<string, string> }>(
+    'GET',
+    '/settings/export',
+    undefined,
+    { timeoutMs: 10_000 },
+    { 'X-Saforall-Client': 'electron-main' }
+  )
+  if (!exported.ok || !exported.data?.settings) {
+    return {
+      ok: false,
+      message: exported.error?.message ?? '設定の同期に失敗しました'
+    }
+  }
+  await mergeLocalSettings(exported.data.settings, { markDirty: false })
+
+  if (isLocalSettingsDirty()) {
+    const local = await getLocalSettingsRaw()
+    const push = await fetchJson('PUT', '/settings', { settings: local }, { timeoutMs: 15_000 })
+    if (push.ok) await markLocalSettingsClean()
+  } else {
+    await markLocalSettingsClean()
+  }
+  return { ok: true, message: '設定をローカルに同期しました' }
 }
 
 export type MonthUsage = Record<
@@ -238,19 +283,35 @@ export async function streamChat(
       ? (body as Record<string, unknown>)
       : {}
 
-  const route = await fetchJson<RouteData>(
-    'POST',
-    '/ai/route',
-    requestBody,
-    { timeoutMs: 20_000 },
-    { 'X-Saforall-Client': 'electron-main' }
-  )
+  let route: ApiResponse<RouteData>
+  try {
+    route = await fetchJson<RouteData>(
+      'POST',
+      '/ai/route',
+      requestBody,
+      { timeoutMs: 20_000 },
+      { 'X-Saforall-Client': 'electron-main' }
+    )
+  } catch (error) {
+    route = {
+      ok: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        message: error instanceof Error ? error.message : 'バックエンド未接続'
+      }
+    }
+  }
 
   if (!route.ok || !route.data) {
+    const { streamChatDirect } = await import('./directLlm')
+    const handled = await streamChatDirect(requestBody, onEvent)
+    if (handled) return
     onEvent({
       type: 'error',
       code: route.error?.code ?? 'ROUTE_FAILED',
-      message: route.error?.message ?? 'AI Router に失敗しました'
+      message:
+        (route.error?.message ?? 'AI Router に失敗しました') +
+        '。オフライン用に Settings で API キーを保存してください。'
     })
     return
   }

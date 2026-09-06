@@ -43,6 +43,10 @@ if ($path === '/api/settings') {
     require dirname(__DIR__) . '/api/settings.php';
 }
 
+if ($path === '/api/settings/export') {
+    require dirname(__DIR__) . '/api/settings_export.php';
+}
+
 if ($path === '/api/workspaces') {
     require dirname(__DIR__) . '/api/workspaces.php';
 }

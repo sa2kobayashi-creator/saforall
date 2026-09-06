@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { dirname, join } from 'path'
 import { watch, type FSWatcher } from 'fs'
 import { mkdir, readFile, writeFile, readdir, stat, unlink, rename, rm } from 'fs/promises'
-import { apiRequest, checkHealth, streamChat } from './api'
+import { apiRequest, checkHealth, streamChat, syncSettingsFromServer } from './api'
 import {
   cloneRepository,
   commitChanges,
@@ -52,6 +52,8 @@ import {
 import {
   ensureWorkspaceIndex,
   invalidateWorkspaceIndex,
+  patchWorkspaceIndex,
+  configureIndexCache,
   searchIndexedSymbols
 } from './workspaceIndex'
 import { listWorkspaceMcpTools, mcpManager } from './mcpClient'
@@ -97,7 +99,13 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  configureJobsPersistence(join(app.getPath('userData'), 'background-jobs.json'))
+  const userData = app.getPath('userData')
+  configureJobsPersistence(join(userData, 'background-jobs.json'))
+  configureIndexCache(join(userData, 'workspace-index-cache.json'))
+  void import('./settingsStore').then(({ configureSettingsStore, ensureSettingsLoaded }) => {
+    configureSettingsStore(join(userData, 'settings-cache.json'))
+    void ensureSettingsLoaded()
+  })
   void loadPersistedJobs()
   setupApplicationMenu('ja')
   createWindow()
@@ -292,9 +300,12 @@ ipcMain.handle('fs:watchWorkspace', async (event, cwd: string) => {
       if (!filename) return
       if (watchDebounce) clearTimeout(watchDebounce)
       watchDebounce = setTimeout(() => {
-        invalidateWorkspaceIndex(cwd)
+        const changed = join(cwd, filename.toString())
+        void patchWorkspaceIndex(cwd, changed).catch(() => {
+          invalidateWorkspaceIndex(cwd)
+        })
         event.sender.send('fs:workspaceChanged', {
-          path: join(cwd, filename.toString())
+          path: changed
         })
       }, 400)
     })
@@ -313,6 +324,25 @@ ipcMain.handle('fs:unwatchWorkspace', async () => {
 })
 
 ipcMain.handle('api:health', async () => checkHealth())
+
+ipcMain.handle('settings:getLocal', async () => {
+  const { getLocalSettingsMasked } = await import('./settingsStore')
+  return getLocalSettingsMasked()
+})
+
+ipcMain.handle('settings:putLocal', async (_event, settings: Record<string, string>) => {
+  const { mergeLocalSettings, maskSettingsForRenderer } = await import('./settingsStore')
+  const merged = await mergeLocalSettings(settings, { markDirty: true })
+  return { ok: true as const, settings: maskSettingsForRenderer(merged) }
+})
+
+ipcMain.handle('settings:hasLocalLlm', async () => {
+  const { ensureSettingsLoaded, hasUsableLocalLlm } = await import('./settingsStore')
+  await ensureSettingsLoaded()
+  return hasUsableLocalLlm()
+})
+
+ipcMain.handle('settings:syncFromServer', async () => syncSettingsFromServer())
 
 ipcMain.handle(
   'api:request',

@@ -24,6 +24,7 @@ import {
   parseMentionTokens,
   type MentionSuggestion
 } from '../lib/chatMentions'
+import { buildBackendOfflineMessage } from '../lib/backendGuide'
 import './ChatPanel.css'
 
 type Props = {
@@ -37,6 +38,7 @@ type Props = {
   width: number
   pendingPrompt?: string | null
   onPendingPromptConsumed?: () => void
+  onRecheckBackend?: () => void
   onApplyCode: (
     code: string,
     pathHint?: string,
@@ -127,6 +129,7 @@ export function ChatPanel({
   width,
   pendingPrompt = null,
   onPendingPromptConsumed,
+  onRecheckBackend,
   onApplyCode,
   onAgentNeedsReview
 }: Props) {
@@ -145,6 +148,7 @@ export function ChatPanel({
   const [enabledByEngine, setEnabledByEngine] = useState<Record<ProviderEngine, string[]>>({
     ...DEFAULT_ENABLED_MODELS
   })
+  const [localLlmReady, setLocalLlmReady] = useState(false)
   const [routeLabel, setRouteLabel] = useState<string | null>(null)
   const [usageText, setUsageText] = useState<string | null>(null)
   const [cursorRuntime, setCursorRuntime] = useState<'auto' | 'local' | 'cloud'>('auto')
@@ -198,6 +202,28 @@ export function ChatPanel({
       // ignore
     }
   }, [bannerDismissed])
+
+  useEffect(() => {
+    let cancelled = false
+    const refresh = async () => {
+      if (typeof window.saforall.hasLocalLlm !== 'function') {
+        if (!cancelled) setLocalLlmReady(false)
+        return
+      }
+      try {
+        const ok = await window.saforall.hasLocalLlm()
+        if (!cancelled) setLocalLlmReady(ok)
+      } catch {
+        if (!cancelled) setLocalLlmReady(false)
+      }
+    }
+    void refresh()
+    return () => {
+      cancelled = true
+    }
+  }, [backendConnected])
+
+  const chatReady = backendConnected || localLlmReady
 
   const activeSession = useMemo(
     () => sessions.find((row) => Number(row.id) === sessionId) ?? null,
@@ -263,6 +289,17 @@ export function ChatPanel({
     setModelChoice('auto-within-engine')
   }
 
+  const mentionTokens = useMemo(() => parseMentionTokens(input), [input])
+  const mentionFlags = useMemo(
+    () => ({
+      selection: hasSpecialMention(mentionTokens, 'selection'),
+      problems: hasSpecialMention(mentionTokens, 'problems'),
+      rules: hasSpecialMention(mentionTokens, 'rules'),
+      codebase: hasSpecialMention(mentionTokens, 'codebase')
+    }),
+    [mentionTokens]
+  )
+
   const contextLabel = useMemo(() => {
     const bits: string[] = []
     if (selection?.text) {
@@ -276,8 +313,13 @@ export function ChatPanel({
     if (attachedPaths.length > 0) {
       bits.push(`+${attachedPaths.length} ファイル`)
     }
+    if (mentionFlags.selection) bits.push('@selection')
+    if (mentionFlags.problems) bits.push('@problems')
+    if (mentionFlags.rules) bits.push('@rules')
+    if (mentionFlags.codebase) bits.push('@codebase')
+    else if (mode === 'ask') bits.push('Ask: 自動検索あり')
     return bits.length > 0 ? bits.join(' · ') : 'コンテキストなし'
-  }, [file, selection, attachedPaths])
+  }, [file, selection, attachedPaths, mentionFlags, mode])
 
   const toggleAttached = useCallback((path: string) => {
     setAttachedPaths((current) =>
@@ -291,13 +333,32 @@ export function ChatPanel({
     const wantProblems = hasSpecialMention(tokens, 'problems')
     const wantRules = hasSpecialMention(tokens, 'rules')
     const wantCodebase = hasSpecialMention(tokens, 'codebase')
+    // Ask: @codebase なしでもキーワードがあれば軽量検索
+    const autoNeedles = extractCodebaseNeedles(input)
+    const autoCodebase = !wantCodebase && mode === 'ask' && autoNeedles.length > 0
 
     let indexSummary: string | null = null
-    if (wantCodebase && workspacePath && typeof window.saforall.ensureIndex === 'function') {
+    if (
+      (wantCodebase || autoCodebase) &&
+      workspacePath &&
+      typeof window.saforall.ensureIndex === 'function'
+    ) {
       try {
+        if (autoCodebase && !wantCodebase) {
+          setBusy((prev) =>
+            prev ? { ...prev, detail: 'リポジトリを軽量検索中…' } : prev
+          )
+        } else if (wantCodebase) {
+          setBusy((prev) =>
+            prev ? { ...prev, detail: 'codebase 索引を準備中…' } : prev
+          )
+        }
         const summary = await window.saforall.ensureIndex(workspacePath)
-        const needles = extractCodebaseNeedles(input)
+        const needles = wantCodebase ? extractCodebaseNeedles(input) : autoNeedles
         const hitBlocks: string[] = []
+        const needleLimit = wantCodebase ? 4 : 2
+        const lineLimit = wantCodebase ? 12 : 8
+        const summaryLimit = wantCodebase ? 6000 : 3500
         if (typeof window.saforall.searchCode === 'function') {
           const anchors: string[] = []
           const root = workspacePath.replace(/\\/g, '/').replace(/\/$/, '')
@@ -314,11 +375,13 @@ export function ChatPanel({
             const rel = toRel(tab.path)
             if (rel && !anchors.includes(rel)) anchors.push(rel)
           }
-          for (const needle of needles.slice(0, 4)) {
+          for (const needle of needles.slice(0, needleLimit)) {
             try {
               const hits = await window.saforall.searchCode(workspacePath, needle, anchors)
               if (hits && hits !== '一致なし') {
-                hitBlocks.push(`## ${needle}\n${hits.split('\n').slice(0, 12).join('\n')}`)
+                hitBlocks.push(
+                  `## ${needle}\n${hits.split('\n').slice(0, lineLimit).join('\n')}`
+                )
               }
             } catch {
               // ignore
@@ -326,9 +389,12 @@ export function ChatPanel({
           }
         }
         if (summary.ok) {
+          const header = wantCodebase
+            ? `codebase index: files=${summary.files ?? 0}, symbols=${summary.symbols ?? 0}`
+            : `auto codebase (ask): files=${summary.files ?? 0}, symbols=${summary.symbols ?? 0}`
           indexSummary = [
-            `codebase index: files=${summary.files ?? 0}, symbols=${summary.symbols ?? 0}`,
-            hitBlocks.length > 0 ? hitBlocks.join('\n\n').slice(0, 6000) : null
+            header,
+            hitBlocks.length > 0 ? hitBlocks.join('\n\n').slice(0, summaryLimit) : null
           ]
             .filter(Boolean)
             .join('\n\n')
@@ -428,7 +494,9 @@ export function ChatPanel({
       problemLines.length === 0 &&
       !wantSelection &&
       !wantProblems &&
-      !wantRules
+      !wantRules &&
+      !wantCodebase &&
+      !indexSummary
     ) {
       return null
     }
@@ -445,11 +513,11 @@ export function ChatPanel({
         selection: wantSelection,
         problems: wantProblems,
         rules: wantRules,
-        codebase: wantCodebase
+        codebase: wantCodebase || Boolean(indexSummary && autoCodebase)
       },
       index_summary: indexSummary
     }
-  }, [attachedPaths, file, input, openFiles, problems, selection, workspacePath])
+  }, [attachedPaths, file, input, mode, openFiles, problems, selection, workspacePath])
 
   const refreshMentionSuggestions = useCallback(
     async (value: string, cursor: number) => {
@@ -852,7 +920,12 @@ export function ChatPanel({
     const text = input.trim()
     if (!text || busy || loading) return
 
-    setBusy({ phase: 'thinking', detail: 'AI に問い合わせ中…' })
+    if (!backendConnected && !localLlmReady) {
+      setError(buildBackendOfflineMessage())
+      return
+    }
+
+    setBusy({ phase: 'thinking', detail: backendConnected ? 'AI に問い合わせ中…' : 'ローカル LLM に問い合わせ中…' })
     setError(null)
     setInput('')
 
@@ -864,20 +937,13 @@ export function ChatPanel({
     setMessages((prev) => [...prev.filter((m) => m.id !== 'welcome'), localUser])
 
     try {
-      if (!backendConnected) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: `（オフライン）「${text}」を受け取りました。XAMPP を起動し、設定で API キーを保存してください。`
-          }
-        ])
-        return
+      let id: number | null = null
+      if (backendConnected) {
+        id = await ensureSession()
+        if (id === null) return
+      } else {
+        id = -1
       }
-
-      const id = await ensureSession()
-      if (id === null) return
 
       const payload = {
         session_id: id,
@@ -1280,8 +1346,8 @@ export function ChatPanel({
                   Agent
                 </button>
               </div>
-              <span className={`chat-backend ${backendConnected ? 'ok' : 'ng'}`}>
-                {backendConnected ? '接続' : '未接続'}
+              <span className={`chat-backend ${backendConnected ? 'ok' : localLlmReady ? 'local' : 'ng'}`}>
+                {backendConnected ? '接続' : localLlmReady ? 'ローカル' : '未接続'}
               </span>
             </div>
             <div className="chat-context-line">{contextLabel}</div>
@@ -1338,6 +1404,24 @@ export function ChatPanel({
           )}
           {usageText && <div className="usage-bar">今月 {usageText}</div>}
 
+          {!backendConnected && (
+            <div className="chat-offline-banner" role="status">
+              <div className="chat-offline-banner-main">
+                <strong>{localLlmReady ? 'ローカル LLM モード' : '編集専用モード'}</strong>
+                <span>
+                  {localLlmReady
+                    ? 'バックエンド未接続です。保存済み API キーで直接 LLM に問い合わせます（会話履歴は未同期）。'
+                    : buildBackendOfflineMessage()}
+                </span>
+              </div>
+              {onRecheckBackend && (
+                <button type="button" className="chat-offline-recheck" onClick={onRecheckBackend}>
+                  再チェック
+                </button>
+              )}
+            </div>
+          )}
+
           {error && <div className="chat-error">{error}</div>}
 
           <div className="chat-messages">
@@ -1384,6 +1468,30 @@ export function ChatPanel({
               <span className="chat-context-chip is-selection" title={selection.path}>
                 選択 L{selection.startLine}
                 {selection.endLine !== selection.startLine ? `-${selection.endLine}` : ''}
+              </span>
+            ) : null}
+            {mentionFlags.selection && (
+              <span className="chat-context-chip is-mention" title="入力中の @selection">
+                @selection
+              </span>
+            )}
+            {mentionFlags.problems && (
+              <span className="chat-context-chip is-mention" title="入力中の @problems">
+                @problems
+              </span>
+            )}
+            {mentionFlags.rules && (
+              <span className="chat-context-chip is-mention" title="入力中の @rules">
+                @rules
+              </span>
+            )}
+            {mentionFlags.codebase ? (
+              <span className="chat-context-chip is-mention" title="入力中の @codebase">
+                @codebase
+              </span>
+            ) : mode === 'ask' ? (
+              <span className="chat-context-chip is-auto" title="Ask では関連コードを自動で軽量検索します">
+                自動検索
               </span>
             ) : null}
             {openFiles.map((open) => {
@@ -1450,16 +1558,20 @@ export function ChatPanel({
                   void refreshMentionSuggestions(value, cursor)
                 }}
                 placeholder={
-                  busy
-                    ? busyLabel ?? '実行中…'
-                    : loading
-                      ? '履歴読み込み中…'
-                      : mode === 'agent'
-                        ? 'Agent: 修正を依頼…（ツールで edit → verify。@file @codebase）'
-                        : 'Ask: 質問する…（適用前に確認。@ でコンテキスト）'
+                  !backendConnected && !localLlmReady
+                    ? 'バックエンド未接続 — 編集は可能。Settings に API キーを保存するとローカル LLM が使えます'
+                    : !backendConnected && localLlmReady
+                      ? 'ローカル LLM: 質問する…（履歴は未同期）'
+                      : busy
+                        ? busyLabel ?? '実行中…'
+                        : loading
+                          ? '履歴読み込み中…'
+                          : mode === 'agent'
+                            ? 'Agent: 修正を依頼…（ツールで edit → verify。@file @codebase）'
+                            : 'Ask: 質問する…（適用前に確認。関連コードは自動検索。@ で追加）'
                 }
                 rows={3}
-                disabled={busy !== null || loading}
+                disabled={!chatReady || busy !== null || loading}
                 onKeyDown={(event) => {
                   if (mentionOpen && mentionItems.length > 0) {
                     if (event.key === 'ArrowDown') {
@@ -1492,8 +1604,11 @@ export function ChatPanel({
                 }}
               />
             </div>
-            <button type="submit" disabled={busy !== null || loading || input.trim() === ''}>
-              {busy ? '実行中…' : '送信'}
+            <button
+              type="submit"
+              disabled={!chatReady || busy !== null || loading || input.trim() === ''}
+            >
+              {busy ? '実行中…' : !chatReady ? '未接続' : '送信'}
             </button>
           </form>        </div>
 

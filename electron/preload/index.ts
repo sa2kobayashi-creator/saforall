@@ -526,6 +526,15 @@ const api = {
   stat: (filePath: string): Promise<{ isDirectory: boolean; size: number; mtimeMs: number }> =>
     ipcRenderer.invoke('fs:stat', filePath),
   health: (): Promise<HealthResult> => ipcRenderer.invoke('api:health'),
+  getLocalSettings: (): Promise<Record<string, string | boolean>> =>
+    ipcRenderer.invoke('settings:getLocal'),
+  putLocalSettings: (
+    settings: Record<string, string>
+  ): Promise<{ ok: boolean; settings?: Record<string, string | boolean> }> =>
+    ipcRenderer.invoke('settings:putLocal', settings),
+  hasLocalLlm: (): Promise<boolean> => ipcRenderer.invoke('settings:hasLocalLlm'),
+  syncLocalSettings: (): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke('settings:syncFromServer'),
   request: <T = unknown>(
     method: string,
     path: string,

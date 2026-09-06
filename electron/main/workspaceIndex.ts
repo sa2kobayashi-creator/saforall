@@ -1,5 +1,5 @@
-import { readdir, readFile, stat } from 'fs/promises'
-import { join, relative, resolve, sep } from 'path'
+import { readdir, readFile, stat, mkdir, writeFile } from 'fs/promises'
+import { dirname, join, relative, resolve, sep } from 'path'
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -14,6 +14,8 @@ const SKIP_DIRS = new Set([
 
 const TEXT_EXT =
   /\.(ts|tsx|js|jsx|mjs|cjs|json|md|css|scss|html|py|rs|go|java|kt|php|rb|vue|svelte|yml|yaml|toml|txt)$/i
+
+const CACHE_VERSION = 1
 
 export type CodeSymbol = {
   name: string
@@ -31,10 +33,74 @@ export type WorkspaceIndex = {
   texts: Map<string, string>
   /** relative path -> imported relative paths (resolved best-effort) */
   imports: Map<string, string[]>
+  /** relative path -> mtimeMs */
+  mtimes: Map<string, number>
+}
+
+type DiskCache = {
+  version: number
+  root: string
+  builtAt: number
+  files: string[]
+  symbols: CodeSymbol[]
+  texts: Record<string, string>
+  imports: Record<string, string[]>
+  mtimes: Record<string, number>
 }
 
 let active: WorkspaceIndex | null = null
 let building: Promise<WorkspaceIndex> | null = null
+let cacheFilePath: string | null = null
+
+export function configureIndexCache(filePath: string): void {
+  cacheFilePath = filePath
+}
+
+function toDisk(index: WorkspaceIndex): DiskCache {
+  return {
+    version: CACHE_VERSION,
+    root: index.root,
+    builtAt: index.builtAt,
+    files: index.files,
+    symbols: index.symbols,
+    texts: Object.fromEntries(index.texts),
+    imports: Object.fromEntries(index.imports),
+    mtimes: Object.fromEntries(index.mtimes)
+  }
+}
+
+function fromDisk(raw: DiskCache): WorkspaceIndex {
+  return {
+    root: raw.root,
+    builtAt: raw.builtAt,
+    files: raw.files ?? [],
+    symbols: raw.symbols ?? [],
+    texts: new Map(Object.entries(raw.texts ?? {})),
+    imports: new Map(Object.entries(raw.imports ?? {})),
+    mtimes: new Map(Object.entries(raw.mtimes ?? {}).map(([k, v]) => [k, Number(v) || 0]))
+  }
+}
+
+async function saveIndexCache(index: WorkspaceIndex): Promise<void> {
+  if (!cacheFilePath) return
+  try {
+    await mkdir(dirname(cacheFilePath), { recursive: true })
+    await writeFile(cacheFilePath, JSON.stringify(toDisk(index)), 'utf-8')
+  } catch {
+    // cache is best-effort
+  }
+}
+
+async function loadIndexCache(root: string): Promise<WorkspaceIndex | null> {
+  if (!cacheFilePath) return null
+  try {
+    const raw = JSON.parse(await readFile(cacheFilePath, 'utf-8')) as DiskCache
+    if (raw?.version !== CACHE_VERSION || resolve(raw.root) !== root) return null
+    return fromDisk(raw)
+  } catch {
+    return null
+  }
+}
 
 /** Extract relative import/require targets from source text (no node_modules). */
 export function extractImportSpecifiers(content: string): string[] {
@@ -179,42 +245,176 @@ async function walkFiles(root: string): Promise<string[]> {
   return files
 }
 
-export async function buildWorkspaceIndex(workspaceRoot: string): Promise<WorkspaceIndex> {
-  const root = resolve(workspaceRoot)
-  const absFiles = await walkFiles(root)
-  const texts = new Map<string, string>()
-  const symbols: CodeSymbol[] = []
-  const files: string[] = []
-  const imports = new Map<string, string[]>()
-
-  for (const full of absFiles) {
-    const rel = relative(root, full).split(sep).join('/')
-    files.push(rel)
-    const st = await stat(full).catch(() => null)
-    if (!st || !st.isFile() || st.size > 500_000) continue
-    let text = ''
-    try {
-      text = await readFile(full, 'utf-8')
-    } catch {
-      continue
-    }
-    if (text.length > 200_000) text = text.slice(0, 200_000)
-    texts.set(rel, text)
-    symbols.push(...extractSymbols(rel, text).slice(0, 80))
+async function readIndexedFile(
+  root: string,
+  full: string
+): Promise<{ rel: string; text: string; mtimeMs: number } | null> {
+  const rel = relative(root, full).split(sep).join('/')
+  const st = await stat(full).catch(() => null)
+  if (!st || !st.isFile() || st.size > 500_000) return null
+  let text = ''
+  try {
+    text = await readFile(full, 'utf-8')
+  } catch {
+    return null
   }
+  if (text.length > 200_000) text = text.slice(0, 200_000)
+  return { rel, text, mtimeMs: st.mtimeMs }
+}
 
-  const known = new Set(files)
-  for (const [rel, text] of Array.from(texts.entries())) {
+function rebuildImports(index: WorkspaceIndex): void {
+  const known = new Set(index.files)
+  index.imports.clear()
+  for (const [rel, text] of Array.from(index.texts.entries())) {
     if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(rel)) continue
     const resolved: string[] = []
     for (const spec of extractImportSpecifiers(text).slice(0, 40)) {
       const target = resolveImportToIndexedPath(rel, spec, known)
       if (target && target !== rel) resolved.push(target)
     }
-    if (resolved.length > 0) imports.set(rel, Array.from(new Set(resolved)))
+    if (resolved.length > 0) index.imports.set(rel, Array.from(new Set(resolved)))
+  }
+}
+
+function rebuildSymbols(index: WorkspaceIndex): void {
+  const symbols: CodeSymbol[] = []
+  for (const [rel, text] of Array.from(index.texts.entries())) {
+    symbols.push(...extractSymbols(rel, text).slice(0, 80))
+  }
+  index.symbols = symbols
+}
+
+export async function buildWorkspaceIndex(workspaceRoot: string): Promise<WorkspaceIndex> {
+  const root = resolve(workspaceRoot)
+  const absFiles = await walkFiles(root)
+  const texts = new Map<string, string>()
+  const mtimes = new Map<string, number>()
+  const files: string[] = []
+
+  for (const full of absFiles) {
+    const row = await readIndexedFile(root, full)
+    if (!row) {
+      files.push(relative(root, full).split(sep).join('/'))
+      continue
+    }
+    files.push(row.rel)
+    texts.set(row.rel, row.text)
+    mtimes.set(row.rel, row.mtimeMs)
   }
 
-  return { root, builtAt: Date.now(), files, symbols, texts, imports }
+  const index: WorkspaceIndex = {
+    root,
+    builtAt: Date.now(),
+    files,
+    symbols: [],
+    texts,
+    imports: new Map(),
+    mtimes
+  }
+  rebuildSymbols(index)
+  rebuildImports(index)
+  return index
+}
+
+/** Re-walk disk and only re-read files whose mtime changed (or are new). */
+export async function refreshWorkspaceIndex(index: WorkspaceIndex): Promise<WorkspaceIndex> {
+  const root = index.root
+  const absFiles = await walkFiles(root)
+  const nextFiles: string[] = []
+  const seen = new Set<string>()
+  let changed = false
+
+  for (const full of absFiles) {
+    const rel = relative(root, full).split(sep).join('/')
+    nextFiles.push(rel)
+    seen.add(rel)
+    const st = await stat(full).catch(() => null)
+    const prevMtime = index.mtimes.get(rel)
+    if (st && prevMtime !== undefined && st.mtimeMs === prevMtime && index.texts.has(rel)) {
+      continue
+    }
+    const row = await readIndexedFile(root, full)
+    if (!row) {
+      if (index.texts.has(rel) || index.mtimes.has(rel)) {
+        index.texts.delete(rel)
+        index.mtimes.delete(rel)
+        changed = true
+      }
+      continue
+    }
+    index.texts.set(row.rel, row.text)
+    index.mtimes.set(row.rel, row.mtimeMs)
+    changed = true
+  }
+
+  for (const rel of Array.from(index.texts.keys())) {
+    if (!seen.has(rel)) {
+      index.texts.delete(rel)
+      index.mtimes.delete(rel)
+      changed = true
+    }
+  }
+
+  index.files = nextFiles
+  if (changed) {
+    rebuildSymbols(index)
+    rebuildImports(index)
+    index.builtAt = Date.now()
+  }
+  return index
+}
+
+/** Patch one changed path (from fs.watch). Falls back to full refresh if needed. */
+export async function patchWorkspaceIndex(
+  workspaceRoot: string,
+  changedPath?: string | null
+): Promise<WorkspaceIndex | null> {
+  const root = resolve(workspaceRoot)
+  if (!active || active.root !== root) {
+    invalidateWorkspaceIndex(root)
+    return null
+  }
+
+  if (!changedPath) {
+    active = await refreshWorkspaceIndex(active)
+    await saveIndexCache(active)
+    return active
+  }
+
+  const abs = resolve(changedPath)
+  const rel = relative(root, abs).split(sep).join('/')
+  if (rel.startsWith('..')) {
+    active = await refreshWorkspaceIndex(active)
+    await saveIndexCache(active)
+    return active
+  }
+
+  const st = await stat(abs).catch(() => null)
+  if (!st || !st.isFile()) {
+    if (active.texts.has(rel) || active.files.includes(rel)) {
+      active.texts.delete(rel)
+      active.mtimes.delete(rel)
+      active.files = active.files.filter((row) => row !== rel)
+      rebuildSymbols(active)
+      rebuildImports(active)
+      active.builtAt = Date.now()
+      await saveIndexCache(active)
+    }
+    return active
+  }
+
+  if (!TEXT_EXT.test(rel)) return active
+
+  const row = await readIndexedFile(root, abs)
+  if (!row) return active
+  active.texts.set(row.rel, row.text)
+  active.mtimes.set(row.rel, row.mtimeMs)
+  if (!active.files.includes(row.rel)) active.files.push(row.rel)
+  rebuildSymbols(active)
+  rebuildImports(active)
+  active.builtAt = Date.now()
+  await saveIndexCache(active)
+  return active
 }
 
 export async function ensureWorkspaceIndex(
@@ -224,9 +424,22 @@ export async function ensureWorkspaceIndex(
   const root = resolve(workspaceRoot)
   if (!force && active && active.root === root) return active
   if (building) return building
-  building = buildWorkspaceIndex(root)
+  building = (async () => {
+    if (!force) {
+      const cached = await loadIndexCache(root)
+      if (cached) {
+        const refreshed = await refreshWorkspaceIndex(cached)
+        active = refreshed
+        await saveIndexCache(refreshed)
+        return refreshed
+      }
+    }
+    const index = await buildWorkspaceIndex(root)
+    active = index
+    await saveIndexCache(index)
+    return index
+  })()
     .then((index) => {
-      active = index
       building = null
       return index
     })
