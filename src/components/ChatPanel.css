@@ -562,6 +562,39 @@
   gap: 10px;
 }
 
+.chat-examples {
+  border: 1px dashed #3a5a7a;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #152030;
+}
+
+.chat-examples-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chat-examples-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-examples-list button {
+  border: 1px solid #3a5a7a;
+  background: #1a2838;
+  color: #cfe4ff;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-examples-list button:hover {
+  background: #243448;
+}
+
 .chat-bubble {
   border: 1px solid var(--border);
   border-radius: 10px;

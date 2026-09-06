@@ -61,6 +61,7 @@ type Props = {
   onCommandSent: () => void
   onClose: () => void
   onOpenFile: (path: string, line?: number) => void
+  onAskAiFix?: (item: ProblemItem) => void
   newTerminalTrigger?: number
 }
 
@@ -82,6 +83,7 @@ export function BottomPanel({
   onCommandSent,
   onClose,
   onOpenFile,
+  onAskAiFix,
   newTerminalTrigger = 0
 }: Props) {
   const { t } = useI18n()
@@ -186,7 +188,7 @@ export function BottomPanel({
           hidden={activeTab !== 'problems'}
           style={{ display: activeTab === 'problems' ? 'flex' : 'none' }}
         >
-          <ProblemsPanel problems={problems} onOpenFile={onOpenFile} />
+          <ProblemsPanel problems={problems} onOpenFile={onOpenFile} onAskAi={onAskAiFix} />
         </div>
         <div
           className="bottom-panel-page"

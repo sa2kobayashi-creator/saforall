@@ -7,9 +7,10 @@ export type ProblemItem = ProblemLike
 type Props = {
   problems: ProblemItem[]
   onOpenFile?: (path: string, line?: number) => void
+  onAskAi?: (item: ProblemItem) => void
 }
 
-export function ProblemsPanel({ problems, onOpenFile }: Props) {
+export function ProblemsPanel({ problems, onOpenFile, onAskAi }: Props) {
   const groups = useMemo(() => groupProblemsByPath(problems), [problems])
 
   return (
@@ -47,6 +48,16 @@ export function ProblemsPanel({ problems, onOpenFile }: Props) {
                           <span className="problems-path">:{item.line}</span>
                         ) : null}
                       </span>
+                    )}
+                    {onAskAi && (
+                      <button
+                        type="button"
+                        className="problems-ask-ai"
+                        title="AI に修正を依頼"
+                        onClick={() => onAskAi(item)}
+                      >
+                        AI
+                      </button>
                     )}
                   </li>
                 ))}

@@ -107,6 +107,7 @@ export function SettingsPanel({
   const [testingEngine, setTestingEngine] = useState<ProviderEngine | null>(null)
   const [autoSave, setAutoSave] = useState(true)
   const [autoSaveDelay, setAutoSaveDelay] = useState(1500)
+  const [settingsTab, setSettingsTab] = useState<'keys' | 'auto' | 'budget' | 'advanced'>('keys')
 
   useEffect(() => {
     if (!open) return
@@ -501,6 +502,29 @@ export function SettingsPanel({
         )}
 
         <form className="settings-form" onSubmit={(event) => void onSubmit(event)}>
+          <div className="settings-tabs" role="tablist" aria-label="設定カテゴリ">
+            {(
+              [
+                ['keys', 'API キー'],
+                ['auto', 'Auto'],
+                ['budget', '予算'],
+                ['advanced', '詳細']
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={settingsTab === id}
+                className={settingsTab === id ? 'is-active' : undefined}
+                onClick={() => setSettingsTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div hidden={settingsTab !== 'advanced'}>
           <h3 className="settings-section-title">{t('settings.localeSection')}</h3>
           <p className="settings-hint">{t('settings.localeHint')}</p>
           <label>
@@ -517,6 +541,60 @@ export function SettingsPanel({
             </select>
           </label>
 
+          <div className="settings-backup">
+            <h3 className="settings-section-title">バックアップ</h3>
+            <p className="settings-hint">
+              API キーを含む設定を JSON で書き出し／読み込みできます。ファイルの取り扱いに注意してください。
+            </p>
+            <div className="settings-backup-actions">
+              <button
+                type="button"
+                className="settings-close"
+                onClick={() => {
+                  void (async () => {
+                    if (typeof window.saforall.exportSettingsFile !== 'function') {
+                      setStatus('エクスポート機能がありません')
+                      return
+                    }
+                    const result = await window.saforall.exportSettingsFile()
+                    if (!result.ok) {
+                      setStatus(result.message ?? 'エクスポートをキャンセルしました')
+                      return
+                    }
+                    setStatus(`エクスポートしました: ${result.path}`)
+                    onStatusMessage?.(`設定をエクスポート: ${result.path}`)
+                  })()
+                }}
+              >
+                エクスポート…
+              </button>
+              <button
+                type="button"
+                className="settings-close"
+                onClick={() => {
+                  void (async () => {
+                    if (typeof window.saforall.importSettingsFile !== 'function') {
+                      setStatus('インポート機能がありません')
+                      return
+                    }
+                    const result = await window.saforall.importSettingsFile()
+                    if (!result.ok) {
+                      setStatus(result.message ?? 'インポートをキャンセルしました')
+                      return
+                    }
+                    setStatus(`インポートしました: ${result.path}`)
+                    onStatusMessage?.(`設定をインポート: ${result.path}`)
+                    onSaved?.()
+                  })()
+                }}
+              >
+                インポート…
+              </button>
+            </div>
+          </div>
+          </div>
+
+          <div hidden={settingsTab !== 'auto'}>
           <h3 className="settings-section-title">Auto パイプライン</h3>
           <p className="settings-hint">
             チャットで「自動」を選んだときの振り分け方針です。標準は「バランス（おすすめ）」＝安価分散の改善版です。
@@ -612,6 +690,9 @@ export function SettingsPanel({
             ))}
           </div>
 
+          </div>
+
+          <div hidden={settingsTab !== 'budget'}>
           <h3 className="settings-section-title">月額上限</h3>
           <p className="settings-hint">
             Provider 上限（開発者側の API 予算）と、ユーザープラン上限（販売時の利用者枠）を分けて管理します。
@@ -669,6 +750,9 @@ export function SettingsPanel({
             <input value={limitWorkers} onChange={(event) => setLimitWorkers(event.target.value)} />
           </label>
 
+          </div>
+
+          <div hidden={settingsTab !== 'keys'}>
           <div className="settings-section-head">
             <h3 className="settings-section-title">Workers AI モデル（複数選択）</h3>
             <button
@@ -903,6 +987,9 @@ export function SettingsPanel({
 
           {status && <p className="settings-status">{status}</p>}
 
+          </div>
+
+          <div hidden={settingsTab !== 'advanced'}>
           <div className="settings-section">
             <h3>エディタ</h3>
             <label className="settings-check">
@@ -937,11 +1024,13 @@ export function SettingsPanel({
             <KeybindingsEditor workspacePath={workspacePath} onStatusMessage={onStatusMessage} />
           </div>
 
+          </div>
+
           <div className="settings-actions">
             <button type="button" className="settings-close" onClick={onClose}>
               閉じる
             </button>
-            <button type="submit" className="settings-save" disabled={saving || !backendConnected}>
+            <button type="submit" className="settings-save" disabled={saving}>
               {saving ? t('common.saving') : t('common.save')}
             </button>
           </div>

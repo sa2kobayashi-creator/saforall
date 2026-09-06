@@ -35,8 +35,10 @@ test('Composer accept-all shortcut and PendingEditsBar primary CTA', () => {
   assert.match(composer, /event\.shiftKey\) onAcceptAll/)
   assert.match(composer, /Ctrl\+Shift\+Enter すべて適用/)
   assert.match(bar, /すべて適用[\s\S]*差分を確認/)
-  assert.match(app, /Ctrl\+Shift\+Enter で一括適用/)
+  assert.match(app, /event\.shiftKey/)
   assert.match(app, /applyQueue\.length > 0/)
+  assert.match(app, /acceptAllProposals/)
+  assert.match(app, /すべて適用/)
 })
 
 test('Empty editor hints depend on workspace', () => {

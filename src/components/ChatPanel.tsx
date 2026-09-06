@@ -1471,6 +1471,52 @@ export function ChatPanel({
           {error && <div className="chat-error">{error}</div>}
 
           <div className="chat-messages">
+            {chatReady &&
+              workspacePath &&
+              messages.length === 1 &&
+              messages[0]?.id === 'welcome' && (
+                <div className="chat-examples" role="group" aria-label="例プロンプト">
+                  <p className="chat-examples-label">例プロンプト</p>
+                  <div className="chat-examples-list">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        changeMode('ask')
+                        setInput('このプロジェクトの構成と主な技術スタックを説明して')
+                      }}
+                    >
+                      Ask: 構成を説明
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        changeMode('ask')
+                        setInput('最近の変更点を要約して。改善できそうなところも教えて')
+                      }}
+                    >
+                      Ask: 改善点を聞く
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        changeMode('agent')
+                        setInput('README を現状の構成に合わせて更新して')
+                      }}
+                    >
+                      Agent: README 更新
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        changeMode('agent')
+                        setInput('型エラーや lint を確認して、直せるところを直して')
+                      }}
+                    >
+                      Agent: エラー修正
+                    </button>
+                  </div>
+                </div>
+              )}
             {messages.map((message) => (
               <div key={message.id} className={`chat-bubble ${message.role}`}>
                 <div className="chat-role">{message.role === 'user' ? 'You' : 'AI'}</div>

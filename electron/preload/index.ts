@@ -536,6 +536,14 @@ const api = {
   hasLocalLlm: (): Promise<boolean> => ipcRenderer.invoke('settings:hasLocalLlm'),
   syncLocalSettings: (): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke('settings:syncFromServer'),
+  exportSettingsFile: (): Promise<{ ok: boolean; path?: string; message?: string }> =>
+    ipcRenderer.invoke('settings:exportFile'),
+  importSettingsFile: (): Promise<{
+    ok: boolean
+    path?: string
+    message?: string
+    settings?: Record<string, string | boolean>
+  }> => ipcRenderer.invoke('settings:importFile'),
   request: <T = unknown>(
     method: string,
     path: string,

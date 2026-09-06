@@ -348,6 +348,62 @@ ipcMain.handle('settings:hasLocalLlm', async () => {
 
 ipcMain.handle('settings:syncFromServer', async () => syncSettingsFromServer())
 
+ipcMain.handle('settings:exportFile', async () => {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+  const picked = await dialog.showSaveDialog(win ?? undefined, {
+    title: '設定をエクスポート',
+    defaultPath: 'saforall-settings.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  })
+  if (picked.canceled || !picked.filePath) {
+    return { ok: false as const, message: 'キャンセルしました' }
+  }
+  const { getLocalSettingsRaw } = await import('./settingsStore')
+  const settings = await getLocalSettingsRaw()
+  const payload = {
+    version: 1 as const,
+    exportedAt: new Date().toISOString(),
+    warning: 'API キー等の秘密情報が含まれます。共有しないでください。',
+    settings
+  }
+  await writeFile(picked.filePath, JSON.stringify(payload, null, 2), 'utf8')
+  return { ok: true as const, path: picked.filePath }
+})
+
+ipcMain.handle('settings:importFile', async () => {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+  const picked = await dialog.showOpenDialog(win ?? undefined, {
+    title: '設定をインポート',
+    properties: ['openFile'],
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  })
+  if (picked.canceled || !picked.filePaths[0]) {
+    return { ok: false as const, message: 'キャンセルしました' }
+  }
+  const raw = await readFile(picked.filePaths[0], 'utf8')
+  let parsed: { settings?: Record<string, string> }
+  try {
+    parsed = JSON.parse(raw) as { settings?: Record<string, string> }
+  } catch {
+    return { ok: false as const, message: 'JSON の解析に失敗しました' }
+  }
+  const settings = parsed.settings
+  if (!settings || typeof settings !== 'object') {
+    return { ok: false as const, message: 'settings オブジェクトがありません' }
+  }
+  const flat: Record<string, string> = {}
+  for (const [key, value] of Object.entries(settings)) {
+    if (typeof value === 'string') flat[key] = value
+  }
+  const { mergeLocalSettings, maskSettingsForRenderer } = await import('./settingsStore')
+  const merged = await mergeLocalSettings(flat, { markDirty: true })
+  return {
+    ok: true as const,
+    path: picked.filePaths[0],
+    settings: maskSettingsForRenderer(merged)
+  }
+})
+
 ipcMain.handle(
   'api:request',
   async (

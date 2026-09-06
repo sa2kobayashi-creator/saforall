@@ -206,6 +206,31 @@ export function UsagePanel({
               <div className="usage-total-meta">
                 リクエスト {data.total.requests.toLocaleString()} 回 · 使用率 {totalPct}%
               </div>
+              {(() => {
+                const ranked = USAGE_ENGINE_KEYS.map((key) => ({
+                  key,
+                  spent: data.usage[key]?.spent ?? 0
+                }))
+                  .filter((row) => row.spent > 0)
+                  .sort((a, b) => b.spent - a.spent)
+                const top = ranked[0]
+                if (!top) {
+                  return (
+                    <p className="usage-summary-line">
+                      まだ課金概算はありません。チャットを使うとエンジン別に積み上がります。
+                    </p>
+                  )
+                }
+                return (
+                  <p className="usage-summary-line">
+                    いま一番使っているのは <strong>{ENGINE_LABELS[top.key] ?? top.key}</strong>
+                    （{formatUsd(top.spent)}）
+                    {ranked.length > 1
+                      ? ` · ついで ${ENGINE_LABELS[ranked[1].key] ?? ranked[1].key}`
+                      : ''}
+                  </p>
+                )
+              })()}
             </section>
 
             {data.user && (

@@ -55,6 +55,35 @@
   gap: 12px;
 }
 
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.settings-tabs button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-tabs button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #d7ecff;
+}
+
+.settings-backup-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .settings-section-title {
   margin: 8px 0 0;
   font-size: 13px;

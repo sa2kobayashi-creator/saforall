@@ -124,6 +124,7 @@ export default function App() {
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(() => loadAutoSaveEnabled())
   const [autoSaveDelayMs, setAutoSaveDelayMs] = useState(() => loadAutoSaveDelayMs())
   const [composerOpen, setComposerOpen] = useState(true)
+  const [forceDiffDialog, setForceDiffDialog] = useState(false)
   const [reviewIndex, setReviewIndex] = useState(0)
   const [quickOpen, setQuickOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
@@ -168,7 +169,11 @@ export default function App() {
   const [symbolPicker, setSymbolPicker] = useState<'document' | 'workspace' | null>(null)
   const [splitPath, setSplitPath] = useState<string | null>(null)
   const [editorFocusGroup, setEditorFocusGroup] = useState<'primary' | 'secondary'>('primary')
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{
+    message: string
+    actionLabel?: string
+    onAction?: () => void
+  } | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
   const [sidebarWidth, setSidebarWidth] = useState(initialLayout.sidebarWidth)
@@ -552,13 +557,34 @@ export default function App() {
     [tabs, activePath]
   )
 
-  const showNotice = useCallback((message: string) => {
-    setNotice(message)
-    setStatus(message)
-    window.setTimeout(() => {
-      setNotice((current) => (current === message ? null : current))
-    }, 4000)
-  }, [])
+  const showNotice = useCallback(
+    (
+      input:
+        | string
+        | {
+            message: string
+            actionLabel?: string
+            onAction?: () => void
+            durationMs?: number
+          }
+    ) => {
+      const next =
+        typeof input === 'string'
+          ? { message: input }
+          : {
+              message: input.message,
+              actionLabel: input.actionLabel,
+              onAction: input.onAction
+            }
+      setNotice(next)
+      setStatus(next.message)
+      const duration = typeof input === 'string' ? 4000 : (input.durationMs ?? 6000)
+      window.setTimeout(() => {
+        setNotice((current) => (current?.message === next.message ? null : current))
+      }, duration)
+    },
+    []
+  )
 
   const applyLspEdits = useCallback(
     async (
@@ -1202,6 +1228,7 @@ export default function App() {
     if (queue.length === 0) return
     setApplyQueue([])
     setReviewIndex(0)
+    setForceDiffDialog(false)
     const result = await acceptAllProposalsCollected(
       queue,
       async (proposal) => {
@@ -1233,6 +1260,7 @@ export default function App() {
   const rejectAllProposals = useCallback(() => {
     setApplyQueue([])
     setReviewIndex(0)
+    setForceDiffDialog(false)
     showNotice('変更候補をすべて却下しました')
   }, [showNotice])
 
@@ -1753,11 +1781,10 @@ export default function App() {
                 currentPath={currentProposal?.targetPath ?? null}
                 onReview={() => {
                   setComposerOpen(true)
-                  showNotice(
-                    applyQueue.length > 0
-                      ? 'Composer または差分ダイアログで確認できます'
-                      : '変更候補はありません'
-                  )
+                  setForceDiffDialog(true)
+                  if (applyQueue.length === 0) {
+                    showNotice('変更候補はありません')
+                  }
                 }}
                 onAcceptAll={() => {
                   void acceptAllProposals()
@@ -1886,12 +1913,15 @@ export default function App() {
                     </>
                   )}
                 </div>
-                {composerOpen && (
+                {composerOpen && applyQueue.length > 1 && (
                   <ComposerPanel
                     proposals={applyQueue}
                     activeIndex={Math.min(reviewIndex, Math.max(0, applyQueue.length - 1))}
                     dirtyPaths={tabs.filter((tab) => tab.dirty).map((tab) => tab.path)}
-                    onSelect={(index) => setReviewIndex(index)}
+                    onSelect={(index) => {
+                      setReviewIndex(index)
+                      setForceDiffDialog(true)
+                    }}
                     onAcceptOne={(index) => {
                       void acceptProposalAt(index)
                     }}
@@ -1931,6 +1961,19 @@ export default function App() {
                   pendingCommand={pendingCommand}
                   newTerminalTrigger={newTerminalTrigger}
                   problems={problems}
+                  onAskAiFix={(item) => {
+                    const where = item.path
+                      ? `${item.path}${item.line ? `:${item.line}` : ''}`
+                      : '(workspace)'
+                    setChatOpen(true)
+                    setTerminalOpen(true)
+                    setBottomTab('problems')
+                    if (item.path) void openFileAt(item.path, item.line)
+                    setPendingChatPrompt(
+                      `次の問題を直してください（Agent）。\n${where}\n[${item.severity}] ${item.source}: ${item.message}`
+                    )
+                    showNotice('Problems の内容をチャットに送りました')
+                  }}
                   references={{
                     hits: referenceHits,
                     symbolLabel: referenceSymbol,
@@ -2063,9 +2106,22 @@ export default function App() {
                 onAgentNeedsReview={({ editCount, engine }) => {
                   if (editCount > 0) {
                     setComposerOpen(true)
-                    showNotice(
-                      `変更候補 ${editCount} 件。上部の「すべて適用」または Ctrl+Shift+Enter で一括適用できます`
-                    )
+                    showNotice({
+                      message:
+                        editCount === 1
+                          ? '変更候補が 1 件あります。差分を確認して適用できます'
+                          : `変更候補 ${editCount} 件。一覧から確認するか、一括適用できます`,
+                      actionLabel: editCount === 1 ? '差分を開く' : 'すべて適用',
+                      onAction: () => {
+                        setComposerOpen(true)
+                        if (editCount === 1) {
+                          setForceDiffDialog(true)
+                          return
+                        }
+                        void acceptAllProposals()
+                      },
+                      durationMs: 8000
+                    })
                     return
                   }
                   if (engine === 'cursor') {
@@ -2180,7 +2236,10 @@ export default function App() {
         }}
       />
       <ApplyDiffDialog
-        open={currentProposal !== null}
+        open={
+          currentProposal !== null &&
+          (applyQueue.length === 1 || forceDiffDialog)
+        }
         proposal={currentProposal}
         queueCount={applyQueue.length}
         queueIndex={Math.min(reviewIndex, Math.max(0, applyQueue.length - 1))}
@@ -2245,7 +2304,31 @@ export default function App() {
           void openWorkspaceAt(path)
         }}
       />
-      {notice && <div className="app-notice">{notice}</div>}
+      {notice && (
+        <div
+          className={`app-notice${notice.onAction ? ' is-actionable' : ''}`}
+          role={notice.onAction ? 'button' : 'status'}
+          tabIndex={notice.onAction ? 0 : undefined}
+          onClick={() => {
+            if (!notice.onAction) return
+            notice.onAction()
+            setNotice(null)
+          }}
+          onKeyDown={(event) => {
+            if (!notice.onAction) return
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              notice.onAction()
+              setNotice(null)
+            }
+          }}
+        >
+          <span>{notice.message}</span>
+          {notice.actionLabel && (
+            <span className="app-notice-action">{notice.actionLabel}</span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
