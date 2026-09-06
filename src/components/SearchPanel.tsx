@@ -92,7 +92,7 @@ export function SearchPanel({
           ? window.saforall.searchFiles(workspacePath, q).then((rows) => {
               if (!cancelled) setFileHits(rows)
             })
-          : window.saforall.searchCode(workspacePath, q).then((raw) => {
+          : window.saforall.searchCode(workspacePath, q, undefined, 'search_panel').then((raw) => {
               if (!cancelled) setContentHits(parseContentHits(raw))
             })
       void run

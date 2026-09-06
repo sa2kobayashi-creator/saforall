@@ -66,6 +66,21 @@ type RouterInsight = {
   hints: RouteHint[]
 }
 
+type FeedbackSummary = {
+  windowDays: number
+  searches: number
+  searchWithHits: number
+  editsQueued: number
+  editsRejected: number
+  emptyToolRetries: number
+  verifyIncomplete: number
+  verifyPass: number
+  agentRuns: number
+  agentTopHit: number
+  agentTopHitRate: number | null
+  readRequired: number
+}
+
 type UsagePayload = {
   month: string
   total: {
@@ -85,6 +100,7 @@ type UsagePayload = {
   usage: Record<string, EngineUsage>
   models: ModelUsage[]
   router?: RouterInsight
+  feedback?: FeedbackSummary
   note?: string
 }
 
@@ -254,6 +270,40 @@ export function UsagePanel({
                     style={{ width: `${percent(data.user.spent, data.user.limit)}%` }}
                   />
                 </div>
+              </section>
+            )}
+
+            {data.feedback && (
+              <section className="usage-feedback">
+                <h3>検索 / Agent フィードバック（{data.feedback.windowDays}日）</h3>
+                <p className="usage-summary-line">
+                  検索 {data.feedback.searches} 回
+                  {data.feedback.searches > 0
+                    ? `（ヒット ${data.feedback.searchWithHits}）`
+                    : ''}
+                  {' · '}
+                  編集キュー {data.feedback.editsQueued}
+                  {data.feedback.editsRejected > 0
+                    ? ` / 却下 ${data.feedback.editsRejected}`
+                    : ''}
+                </p>
+                <p className="usage-summary-line">
+                  Agent 完了 {data.feedback.agentRuns} 回
+                  {data.feedback.agentTopHitRate != null
+                    ? ` · topヒット率 ${data.feedback.agentTopHitRate}%`
+                    : ''}
+                  {' · '}
+                  verify 成功 {data.feedback.verifyPass} / 未完了 {data.feedback.verifyIncomplete}
+                </p>
+                {(data.feedback.emptyToolRetries > 0 || data.feedback.readRequired > 0) && (
+                  <p className="usage-muted">
+                    空 tool_calls {data.feedback.emptyToolRetries} · read必須拒否{' '}
+                    {data.feedback.readRequired}
+                  </p>
+                )}
+                <p className="usage-muted">
+                  userData/local-db/feedback-events.json に蓄積（ランキング調整の根拠）
+                </p>
               </section>
             )}
 

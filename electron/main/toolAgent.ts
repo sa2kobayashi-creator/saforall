@@ -4,6 +4,11 @@ import {
   MAX_EDIT_RECOVERIES,
   problemsAffectEditedPaths
 } from './lib/agentVerify'
+import {
+  extractTopPathsFromSearchResult,
+  pathInTopHits,
+  recordFeedback
+} from './feedbackStore'
 import { mcpManager, type McpToolInfo } from './mcpClient'
 import {
   excerptShellFailure,
@@ -987,7 +992,8 @@ async function runTool(
   },
   verifyHint?: { primary: string; fallbacks: string[] } | null,
   problemsSnapshot: string[] = [],
-  searchAnchors: Set<string> = new Set()
+  searchAnchors: Set<string> = new Set(),
+  sessionSearchTops: string[] = []
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
   let args: Record<string, unknown> = {}
   // Never soft-repair truncated edit_file payloads — that queues broken full files.
@@ -1131,8 +1137,12 @@ async function runTool(
         workspacePath,
         query,
         glob,
-        Array.from(searchAnchors).slice(0, 12)
+        Array.from(searchAnchors).slice(0, 12),
+        'toolAgent'
       )
+      for (const path of extractTopPathsFromSearchResult(result, 5)) {
+        if (!sessionSearchTops.includes(path)) sessionSearchTops.push(path)
+      }
       onEvent({
         type: 'tool_result',
         id: callId,
@@ -1219,6 +1229,15 @@ async function runTool(
           ok: false,
           summary: `read required before edit ${path}`
         })
+        recordFeedback({
+          kind: 'tool',
+          source: 'toolAgent',
+          tool: 'edit_file',
+          phase,
+          path,
+          ok: false,
+          detail: 'read_required'
+        })
         return {
           content: JSON.stringify({
             ok: false,
@@ -1237,6 +1256,15 @@ async function runTool(
           name,
           ok: false,
           summary: `rejected short edit ${path}`
+        })
+        recordFeedback({
+          kind: 'tool',
+          source: 'toolAgent',
+          tool: 'edit_file',
+          phase,
+          path,
+          ok: false,
+          detail: 'incomplete_edit'
         })
         return {
           content: JSON.stringify({
@@ -1272,6 +1300,18 @@ async function runTool(
         name,
         ok: true,
         summary: warning ? `queued edit ${path} (warning)` : `queued edit ${path}`
+      })
+      recordFeedback({
+        kind: 'tool',
+        source: 'toolAgent',
+        tool: 'edit_file',
+        phase,
+        path,
+        ok: true,
+        detail: warning ? 'queued_warning' : 'queued',
+        topHit:
+          sessionSearchTops.length > 0 ? pathInTopHits(path, sessionSearchTops.slice(0, 5)) : undefined,
+        searchTopPaths: sessionSearchTops.slice(0, 8)
       })
       return {
         content: JSON.stringify({
@@ -1685,6 +1725,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       .map((row) => row.replace(/\\/g, '/').replace(/^\.\//, '').trim())
       .filter(Boolean)
   )
+  const sessionSearchTops: string[] = []
+  const sessionKey = `agent-${Date.now()}`
 
   if (!isToolAgentCompatibleEndpoint(engine, baseUrl, model)) {
     onEvent({
@@ -1937,7 +1979,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
                 shellState,
                 verifySuggestion,
                 problemsSnapshot,
-                searchAnchors
+                searchAnchors,
+                sessionSearchTops
               )
               return { call, result, skippedDup: false as const }
             })
@@ -1976,7 +2019,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           shellState,
           verifySuggestion,
           problemsSnapshot,
-          searchAnchors
+          searchAnchors,
+          sessionSearchTops
         )
         orderedResults.push({ call, result, skippedDup: false })
       }
@@ -2202,6 +2246,14 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     // Empty tool_calls: dedicated retry before treating as prose-only answer.
     if (toolCalls.length === 0 && emptyToolRetries < MAX_EMPTY_TOOL_RETRIES) {
       emptyToolRetries += 1
+      recordFeedback({
+        kind: 'agent_signal',
+        source: 'toolAgent',
+        detail: 'empty_tool_calls',
+        ok: false,
+        sessionKey,
+        phase
+      })
       messages.push({
         role: 'assistant',
         content: message.content ?? null
@@ -2393,6 +2445,47 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     } catch {
       // memory write is best-effort
     }
+  }
+
+  const editedList = Array.from(editedPaths)
+  const topHit =
+    editedList.length > 0 && sessionSearchTops.length > 0
+      ? editedList.some((path) => pathInTopHits(path, sessionSearchTops.slice(0, 5)))
+      : undefined
+  let outcomeDetail = 'completed'
+  if (verifyIncomplete || shellIncomplete || (editedList.length > 0 && !shellState.passed)) {
+    outcomeDetail = 'verify_incomplete'
+  } else if (editedList.length > 0 && shellState.passed) {
+    outcomeDetail = 'verify_pass'
+  } else if (editedList.length === 0) {
+    outcomeDetail = 'no_edits'
+  }
+  recordFeedback({
+    kind: 'agent_outcome',
+    source: 'toolAgent',
+    ok: outcomeDetail === 'verify_pass' || outcomeDetail === 'completed',
+    detail: outcomeDetail,
+    editedPaths: editedList,
+    searchTopPaths: sessionSearchTops.slice(0, 12),
+    topHit,
+    sessionKey
+  })
+  if (outcomeDetail === 'verify_incomplete') {
+    recordFeedback({
+      kind: 'agent_signal',
+      source: 'toolAgent',
+      detail: 'verify_incomplete',
+      ok: false,
+      sessionKey
+    })
+  } else if (outcomeDetail === 'verify_pass') {
+    recordFeedback({
+      kind: 'agent_signal',
+      source: 'toolAgent',
+      detail: 'verify_pass',
+      ok: true,
+      sessionKey
+    })
   }
 
   const chunkSize = 120

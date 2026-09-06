@@ -221,8 +221,20 @@ ipcMain.handle('fs:searchFiles', async (_event, cwd: string, query: string) => {
 
 ipcMain.handle(
   'fs:searchCode',
-  async (_event, cwd: string, query: string, anchorPaths?: string[]) => {
-    return toolSearch(cwd, query, undefined, anchorPaths)
+  async (
+    _event,
+    cwd: string,
+    query: string,
+    anchorPaths?: string[],
+    source?: string
+  ) => {
+    return toolSearch(
+      cwd,
+      query,
+      undefined,
+      anchorPaths,
+      typeof source === 'string' && source.trim() ? source.trim() : 'search_panel'
+    )
   }
 )
 

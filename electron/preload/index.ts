@@ -112,8 +112,12 @@ const api = {
   ): Promise<DirEntry[]> => ipcRenderer.invoke('fs:readDir', dirPath, options),
   searchFiles: (cwd: string, query: string): Promise<string[]> =>
     ipcRenderer.invoke('fs:searchFiles', cwd, query),
-  searchCode: (cwd: string, query: string, anchorPaths?: string[]): Promise<string> =>
-    ipcRenderer.invoke('fs:searchCode', cwd, query, anchorPaths),
+  searchCode: (
+    cwd: string,
+    query: string,
+    anchorPaths?: string[],
+    source?: string
+  ): Promise<string> => ipcRenderer.invoke('fs:searchCode', cwd, query, anchorPaths, source),
   replaceInFiles: (params: {
     cwd: string
     query: string

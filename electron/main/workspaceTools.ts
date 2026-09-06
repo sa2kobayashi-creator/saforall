@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { searchIndexedContent } from './workspaceIndex'
 import { readTextFile } from './textEncoding'
+import { recordSearchFeedback } from './feedbackStore'
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -49,16 +50,22 @@ export async function toolSearch(
   workspaceRoot: string,
   query: string,
   globHint?: string,
-  anchorPaths?: string[]
+  anchorPaths?: string[],
+  source = 'toolSearch'
 ): Promise<string> {
   const needle = query.trim()
   if (needle.length < 2) {
     return 'query は 2 文字以上にしてください'
   }
 
+  const finish = (resultText: string): string => {
+    recordSearchFeedback({ source, query: needle, resultText })
+    return resultText
+  }
+
   try {
     const indexed = await searchIndexedContent(workspaceRoot, needle, globHint, 40, anchorPaths)
-    if (indexed.length > 0) return indexed.join('\n')
+    if (indexed.length > 0) return finish(indexed.join('\n'))
   } catch {
     // fall through to walk
   }
@@ -109,7 +116,7 @@ export async function toolSearch(
   }
 
   await walk(root, 0)
-  return hits.length > 0 ? hits.join('\n') : '一致なし'
+  return finish(hits.length > 0 ? hits.join('\n') : '一致なし')
 }
 
 export type ReplaceInFilesResult = {

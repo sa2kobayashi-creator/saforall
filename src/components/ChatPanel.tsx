@@ -395,7 +395,12 @@ export function ChatPanel({
           }
           for (const needle of needles.slice(0, needleLimit)) {
             try {
-              const hits = await window.saforall.searchCode(workspacePath, needle, anchors)
+              const hits = await window.saforall.searchCode(
+                workspacePath,
+                needle,
+                anchors,
+                'chat_codebase'
+              )
               if (hits && hits !== '一致なし') {
                 hitBlocks.push(
                   `## ${needle}\n${hits.split('\n').slice(0, lineLimit).join('\n')}`

@@ -156,6 +156,21 @@ export async function apiRequest<T = unknown>(
             await markLocalSettingsClean()
           }
         }
+        if (method.toUpperCase() === 'GET' && path.replace(/^\//, '') === 'ai/usage' && result.data) {
+          try {
+            const { getFeedbackSummary } = await import('./feedbackStore')
+            const feedback = await getFeedbackSummary(7)
+            return {
+              ...result,
+              data: {
+                ...(result.data as Record<string, unknown>),
+                feedback
+              } as T
+            }
+          } catch {
+            return result
+          }
+        }
         return result
       }
     } catch {

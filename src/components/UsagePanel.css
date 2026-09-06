@@ -128,6 +128,20 @@
   color: #cfe4ff;
 }
 
+.usage-feedback {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #1a1a1a;
+}
+
+.usage-feedback h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .usage-bar-track {
   height: 8px;
   border-radius: 999px;

@@ -6,6 +6,7 @@ import {
   listSessions
 } from './chatStore'
 import { getLocalUsageSummary } from './usageStore'
+import { getFeedbackSummary } from './feedbackStore'
 import { upsertWorkspaceByPath } from './workspaceStore'
 import {
   ensureSettingsLoaded,
@@ -122,7 +123,33 @@ export async function localApiRequest<T = unknown>(
 
     if (pathname === '/ai/usage' && m === 'GET') {
       const summary = await getLocalUsageSummary()
-      return ok(summary) as ApiResponse<T>
+      const feedback = await getFeedbackSummary(7)
+      const usage = summary.usage
+      let totalSpent = 0
+      let totalLimit = 0
+      for (const row of Object.values(usage)) {
+        totalSpent += row.spent
+        totalLimit += row.limit
+      }
+      return ok({
+        month: summary.month,
+        usage,
+        models: [],
+        total: {
+          spent: totalSpent,
+          limit: totalLimit,
+          remaining: Math.max(0, totalLimit - totalSpent),
+          requests: 0
+        },
+        feedback,
+        note: 'ローカル usage + 直近7日の検索/Agentフィードバック'
+      }) as ApiResponse<T>
+    }
+
+    if (pathname === '/ai/feedback' && m === 'GET') {
+      const days = Number(query.get('days') || 7)
+      const feedback = await getFeedbackSummary(Number.isFinite(days) ? days : 7)
+      return ok(feedback) as ApiResponse<T>
     }
 
     if (pathname === '/ai/models' && m === 'GET') {
