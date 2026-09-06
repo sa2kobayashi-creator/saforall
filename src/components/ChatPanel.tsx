@@ -329,7 +329,7 @@ export function ChatPanel({
     if (mentionFlags.problems) bits.push('@problems')
     if (mentionFlags.rules) bits.push('@rules')
     if (mentionFlags.codebase) bits.push('@codebase')
-    else if (mode === 'ask') bits.push('Ask: 自動検索あり')
+    else if (mode === 'ask' || mode === 'agent') bits.push(`${mode === 'agent' ? 'Agent' : 'Ask'}: 自動検索あり`)
     return bits.length > 0 ? bits.join(' · ') : 'コンテキストなし'
   }, [file, selection, attachedPaths, mentionFlags, mode])
 
@@ -345,9 +345,10 @@ export function ChatPanel({
     const wantProblems = hasSpecialMention(tokens, 'problems')
     const wantRules = hasSpecialMention(tokens, 'rules')
     const wantCodebase = hasSpecialMention(tokens, 'codebase')
-    // Ask: @codebase なしでもキーワードがあれば軽量検索
+    // Ask / Agent: @codebase なしでもキーワードがあれば軽量検索
     const autoNeedles = extractCodebaseNeedles(input)
-    const autoCodebase = !wantCodebase && mode === 'ask' && autoNeedles.length > 0
+    const autoCodebase =
+      !wantCodebase && (mode === 'ask' || mode === 'agent') && autoNeedles.length > 0
 
     let indexSummary: string | null = null
     if (
@@ -408,7 +409,7 @@ export function ChatPanel({
         if (summary.ok) {
           const header = wantCodebase
             ? `codebase index: files=${summary.files ?? 0}, symbols=${summary.symbols ?? 0}`
-            : `auto codebase (ask): files=${summary.files ?? 0}, symbols=${summary.symbols ?? 0}`
+            : `auto codebase (${mode}): files=${summary.files ?? 0}, symbols=${summary.symbols ?? 0}`
           indexSummary = [
             header,
             hitBlocks.length > 0 ? hitBlocks.join('\n\n').slice(0, summaryLimit) : null
@@ -452,6 +453,19 @@ export function ChatPanel({
 
     const filePaths = new Set<string>([...attachedPaths, ...Array.from(mentioned)])
     if (file?.path) filePaths.delete(file.path)
+
+    // Agent: 開いている他タブを少量自動添付（明示 @ なしでも周辺を見せる）
+    if (mode === 'agent') {
+      let softCount = 0
+      for (const open of openFiles) {
+        if (softCount >= 3) break
+        if (file?.path && open.path === file.path) continue
+        if (filePaths.has(open.path)) continue
+        if (open.content.length > 10_000) continue
+        filePaths.add(open.path)
+        softCount += 1
+      }
+    }
 
     const files: Array<{ path: string; content: string; language?: string }> = []
     for (const open of openFiles) {
@@ -527,8 +541,8 @@ export function ChatPanel({
       rules,
       problems: problemLines,
       mention_flags: {
-        selection: wantSelection,
-        problems: wantProblems,
+        selection: wantSelection || (mode === 'agent' && Boolean(selectionPayload)),
+        problems: wantProblems || (mode === 'agent' && problemLines.length > 0),
         rules: wantRules,
         codebase: wantCodebase || Boolean(indexSummary && autoCodebase)
       },
@@ -1586,8 +1600,11 @@ export function ChatPanel({
               <span className="chat-context-chip is-mention" title="入力中の @codebase">
                 @codebase
               </span>
-            ) : mode === 'ask' ? (
-              <span className="chat-context-chip is-auto" title="Ask では関連コードを自動で軽量検索します">
+            ) : mode === 'ask' || mode === 'agent' ? (
+              <span
+                className="chat-context-chip is-auto"
+                title={`${mode === 'agent' ? 'Agent' : 'Ask'} では関連コードを自動で軽量検索します`}
+              >
                 自動検索
               </span>
             ) : null}
@@ -1668,7 +1685,7 @@ export function ChatPanel({
                             : loading
                               ? '履歴読み込み中…'
                               : mode === 'agent'
-                                ? 'Agent: 修正を依頼…（ツールで edit → verify。@file @codebase）'
+                                ? 'Agent: 修正を依頼…（関連コードは自動検索。ツールで edit → verify。@ で追加）'
                                 : 'Ask: 質問する…（適用前に確認。関連コードは自動検索。@ で追加）'
                 }
                 rows={3}

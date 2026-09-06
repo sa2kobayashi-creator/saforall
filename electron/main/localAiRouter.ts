@@ -91,6 +91,38 @@ function buildHistoryMessages(
     if (typeof context.content === 'string' && context.content.trim()) {
       systemParts.push(`\`\`\`\n${String(context.content).slice(0, 12000)}\n\`\`\``)
     }
+    const selection = context.selection
+    if (selection && typeof selection === 'object') {
+      const sel = selection as {
+        path?: string
+        text?: string
+        start_line?: number
+        end_line?: number
+      }
+      if (typeof sel.text === 'string' && sel.text.trim()) {
+        systemParts.push(
+          `# Selection ${sel.path ?? ''} ${sel.start_line ?? ''}-${sel.end_line ?? ''}\n\`\`\`\n${sel.text.slice(0, 4000)}\n\`\`\``
+        )
+      }
+    }
+    if (Array.isArray(context.problems) && context.problems.length > 0) {
+      systemParts.push(
+        `# Problems\n${context.problems
+          .slice(0, 30)
+          .map((row) => String(row))
+          .join('\n')}`
+      )
+    }
+    if (Array.isArray(context.files)) {
+      for (const row of context.files.slice(0, 4)) {
+        if (!row || typeof row !== 'object') continue
+        const file = row as { path?: string; content?: string }
+        if (!file.path || typeof file.content !== 'string') continue
+        systemParts.push(
+          `# File ${file.path}\n\`\`\`\n${file.content.slice(0, 6000)}\n\`\`\``
+        )
+      }
+    }
     if (typeof context.index_summary === 'string' && context.index_summary.trim()) {
       systemParts.push(`# Codebase\n${String(context.index_summary).slice(0, 6000)}`)
     }

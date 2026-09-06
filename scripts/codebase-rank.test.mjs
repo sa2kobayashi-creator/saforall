@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -65,4 +66,84 @@ test('ChatPanel puts selection path first in codebase anchors', async () => {
   const chat = await readFile(join(__dirname, '../src/components/ChatPanel.tsx'), 'utf8')
   assert.match(chat, /Primary: selection path/)
   assert.match(chat, /selection\?\.path/)
+})
+
+async function withRankFixture(run) {
+  const dir = await mkdtemp(join(tmpdir(), 'saforall-rank-'))
+  try {
+    const files = {
+      'src/auth/AuthService.ts':
+        'export class AuthService {\n  login() {\n    return true\n  }\n}\n',
+      'src/auth/login.ts':
+        "import { AuthService } from './AuthService'\n\nexport function login() {\n  return new AuthService().login()\n}\n",
+      'src/unrelated/notes.ts':
+        '// somehow mentions AuthService in a comment only\nexport const note = 1\n',
+      'docs/guide.md': '# AuthService overview\n\nSee AuthService for details.\n',
+      'tests/AuthService.test.ts':
+        "import { AuthService } from '../src/auth/AuthService'\n\ndescribe('AuthService', () => {\n  it('works', () => {\n    expect(new AuthService().login()).toBe(true)\n  })\n})\n"
+    }
+    for (const [rel, body] of Object.entries(files)) {
+      const abs = join(dir, rel)
+      await mkdir(dirname(abs), { recursive: true })
+      await writeFile(abs, body, 'utf8')
+    }
+    await run(dir)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+test('eval: AuthService definition ranks above docs and unrelated mentions', async () => {
+  const {
+    invalidateWorkspaceIndex,
+    searchIndexedContent
+  } = await import('../electron/main/workspaceIndex.ts')
+
+  await withRankFixture(async (ws) => {
+    invalidateWorkspaceIndex()
+    const hits = await searchIndexedContent(ws, 'AuthService', undefined, 12)
+    assert.ok(hits.length > 0, 'expected hits')
+    const top = hits[0]
+    assert.match(top, /src\/auth\/AuthService\.ts/)
+    assert.doesNotMatch(hits[0], /docs\/guide\.md/)
+    const paths = hits.map((row) => row.split(':')[0])
+    assert.ok(paths.includes('src/auth/AuthService.ts'))
+  })
+})
+
+test('eval: anchor on login.ts still prefers AuthService definition', async () => {
+  const {
+    invalidateWorkspaceIndex,
+    searchIndexedContent
+  } = await import('../electron/main/workspaceIndex.ts')
+
+  await withRankFixture(async (ws) => {
+    invalidateWorkspaceIndex()
+    const hits = await searchIndexedContent(ws, 'AuthService', undefined, 12, [
+      'src/auth/login.ts'
+    ])
+    assert.ok(hits.length > 0)
+    assert.match(hits[0], /src\/auth\/AuthService\.ts|src\/auth\/login\.ts/)
+    const joined = hits.join('\n')
+    assert.match(joined, /src\/auth\/AuthService\.ts/)
+    const defIndex = hits.findIndex((row) => row.includes('src/auth/AuthService.ts'))
+    const docsIndex = hits.findIndex((row) => row.includes('docs/guide.md'))
+    if (docsIndex >= 0) {
+      assert.ok(defIndex >= 0 && defIndex < docsIndex)
+    }
+  })
+})
+
+test('eval: per-path diversification keeps multiple files in top hits', async () => {
+  const {
+    invalidateWorkspaceIndex,
+    searchIndexedContent
+  } = await import('../electron/main/workspaceIndex.ts')
+
+  await withRankFixture(async (ws) => {
+    invalidateWorkspaceIndex()
+    const hits = await searchIndexedContent(ws, 'AuthService', undefined, 10)
+    const uniquePaths = new Set(hits.map((row) => row.split(':')[0]))
+    assert.ok(uniquePaths.size >= 2, `expected diversified paths, got ${[...uniquePaths]}`)
+  })
 })
