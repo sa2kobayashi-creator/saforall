@@ -279,9 +279,22 @@ function rebuildImports(index: WorkspaceIndex): void {
 function rebuildSymbols(index: WorkspaceIndex): void {
   const symbols: CodeSymbol[] = []
   for (const [rel, text] of Array.from(index.texts.entries())) {
-    symbols.push(...extractSymbols(rel, text).slice(0, 80))
+    symbols.push(...selectIndexedSymbols(extractSymbols(rel, text), 250))
   }
   index.symbols = symbols
+}
+
+function selectIndexedSymbols(symbols: CodeSymbol[], limit = 250): CodeSymbol[] {
+  if (symbols.length <= limit) return symbols
+  // Prefer longer / CamelCase names (likely public API) when truncating large files.
+  const ranked = [...symbols].sort((a, b) => {
+    const score = (row: CodeSymbol) =>
+      (row.kind === 'class' || row.kind === 'type' ? 4 : 0) +
+      (/^[A-Z]/.test(row.name) ? 3 : 0) +
+      Math.min(row.name.length, 24) / 8
+    return score(b) - score(a) || a.line - b.line
+  })
+  return ranked.slice(0, limit)
 }
 
 export async function buildWorkspaceIndex(workspaceRoot: string): Promise<WorkspaceIndex> {
@@ -497,6 +510,10 @@ export function scoreContentHit(params: {
   }
   if (/^src\//.test(path) || /^electron\//.test(path) || /^server\//.test(path)) score += 8
   if (/test|spec|mock|fixture/.test(path)) score -= 5
+  // Docs / markdown mentions are useful as neighbors but rarely the right first hop.
+  if (/(^|\/)docs\//.test(path) || /\.md$/i.test(path) || /(^|\/)readme(\.|$)/i.test(path)) {
+    score -= 22
+  }
 
   const localSymbols = params.pathSymbolNames ?? []
   const exactLocal = localSymbols.some((name) => name.toLowerCase() === needle)
@@ -507,6 +524,15 @@ export function scoreContentHit(params: {
   else if (params.symbolNames?.some((name) => name.toLowerCase().includes(needle))) score += 4
 
   if (/^(export|function|class|const|type|interface)\b/.test(line.trim())) score += 12
+  // Definition-like lines for the needle even when symbol index was truncated.
+  if (
+    new RegExp(
+      `\\b(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?(?:function\\*?|class|const|let|var|type|interface)\\s+${escapeRegExp(needle)}\\b`,
+      'i'
+    ).test(line)
+  ) {
+    score += 48
+  }
   if (
     params.symbolDefLine != null &&
     params.lineNumber != null &&

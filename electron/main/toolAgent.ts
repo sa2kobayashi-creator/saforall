@@ -353,6 +353,8 @@ export type ToolAgentParams = {
   sessionId: number
   /** Snapshot of IDE Problems panel lines (path + message). */
   problems?: string[]
+  /** Open / active file paths used as search_code anchors. */
+  anchorPaths?: string[]
   onEvent: (event: ChatStreamEvent) => void
   complete: (content: string) => Promise<{
     assistant_message: Record<string, unknown>
@@ -984,7 +986,8 @@ async function runTool(
     triedVerifyCommands: string[]
   },
   verifyHint?: { primary: string; fallbacks: string[] } | null,
-  problemsSnapshot: string[] = []
+  problemsSnapshot: string[] = [],
+  searchAnchors: Set<string> = new Set()
 ): Promise<{ content: string; ok: boolean; nextPhase?: AgentPhase }> {
   let args: Record<string, unknown> = {}
   // Never soft-repair truncated edit_file payloads — that queues broken full files.
@@ -1092,6 +1095,11 @@ async function runTool(
           readCache.set(cacheKey, content)
         }
       }
+      try {
+        searchAnchors.add(toWorkspaceRelativePath(workspacePath, path))
+      } catch {
+        searchAnchors.add(path.replace(/\\/g, '/'))
+      }
       if (Array.from(editedPaths).some((row) => pathKeyMatchLoose(row, path))) {
         verifiedPaths.add(path)
       }
@@ -1119,7 +1127,12 @@ async function runTool(
     if (name === 'search_code') {
       const query = String(args.query ?? '')
       const glob = typeof args.glob === 'string' ? args.glob : undefined
-      const result = await toolSearch(workspacePath, query, glob)
+      const result = await toolSearch(
+        workspacePath,
+        query,
+        glob,
+        Array.from(searchAnchors).slice(0, 12)
+      )
       onEvent({
         type: 'tool_result',
         id: callId,
@@ -1185,15 +1198,36 @@ async function runTool(
 
       let warning: string | null = null
       let requireRewrite = false
+      let existingOnDisk: string | null = null
       try {
-        const existing = await toolReadFile(workspacePath, path)
-        if (existing.length > 400 && content.length < existing.length * 0.35) {
+        existingOnDisk = await toolReadFile(workspacePath, path)
+        if (existingOnDisk.length > 400 && content.length < existingOnDisk.length * 0.35) {
           requireRewrite = true
           warning =
             'Proposed content is much shorter than the current file. Resend a complete file (not a fragment).'
         }
       } catch {
         // new file
+      }
+
+      const alreadyRead = Array.from(readCache.keys()).some((key) => pathKeyMatchLoose(key, path))
+      if (existingOnDisk !== null && !alreadyRead) {
+        onEvent({
+          type: 'tool_result',
+          id: callId,
+          name,
+          ok: false,
+          summary: `read required before edit ${path}`
+        })
+        return {
+          content: JSON.stringify({
+            ok: false,
+            error: 'read_required',
+            path,
+            note: 'Call read_file on this path before edit_file for existing files.'
+          }),
+          ok: false
+        }
       }
 
       if (requireRewrite) {
@@ -1217,6 +1251,7 @@ async function runTool(
       }
 
       editedPaths.add(path)
+      searchAnchors.add(path)
       pendingEdits.set(path, content)
       editSummaries.set(
         path,
@@ -1641,9 +1676,15 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     taskType,
     onEvent,
     complete,
-    problems: problemsParam
+    problems: problemsParam,
+    anchorPaths: anchorPathsParam
   } = params
   const problemsSnapshot = Array.isArray(problemsParam) ? problemsParam : []
+  const searchAnchors = new Set(
+    (Array.isArray(anchorPathsParam) ? anchorPathsParam : [])
+      .map((row) => row.replace(/\\/g, '/').replace(/^\.\//, '').trim())
+      .filter(Boolean)
+  )
 
   if (!isToolAgentCompatibleEndpoint(engine, baseUrl, model)) {
     onEvent({
@@ -1678,10 +1719,11 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     'set_phase でフェーズを宣言してから作業してください。',
     'plan: 変更方針を短く立てる（必要なら軽く list/search）。',
     'explore: read_file / search_code / MCP で深く調査（関連ファイルを複数読む）。',
-    'edit: edit_file で複数ファイルを提案（Composer レビュー用。即時永続保存されない）。完全なファイル内容を送る（断片・切り捨て禁止）。',
+    'edit: 既存ファイルは必ず先に read_file してから edit_file。複数ファイルを提案（Composer レビュー用。即時永続保存されない）。完全なファイル内容を送る（断片・切り捨て禁止）。',
     'verify: 編集ファイルを read_file で確認し、run_shell と get_problems で検証する。失敗したら errorExcerpt / Problems を読んで edit に戻り、修正後に再実行。',
     '重要: 修正内容を markdown のコードブロックで説明するだけでは終了しない。必ず edit_file ツールで Composer に載せる。',
     '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）と、依頼が修正なら edit_file + run_shell を行う。',
+    '重要: 既存ファイルへの edit_file は read_file 済みパスのみ許可。未読なら read_required で拒否される。',
     '禁止: set_phase / edit_file / read_file / run_shell を文章・bash・手順リストとして書くこと。必ず tools / function 呼び出しで呼ぶ。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
     'MCP: list_mcp_tools / list_mcp_resources / list_mcp_prompts / call_mcp_tool / read_mcp_resource / get_mcp_prompt を使える（.saforall/mcp.json）。',
@@ -1709,7 +1751,11 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   if (rules) {
     agentSystem.push('プロジェクトルール:\n' + rules)
   }
-  const problemsBlock = formatProblemsForAgent(problemsSnapshot, 30)
+  const problemsBlock = formatProblemsForAgent(
+    problemsSnapshot,
+    30,
+    Array.from(searchAnchors)
+  )
   if (problemsBlock) {
     agentSystem.push(
       '現在の Problems（編集対象に関連し得る診断）:\n' +
@@ -1766,8 +1812,10 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   let shellIncomplete = false
   let recoverNudgeCount = 0
   let proseOnlyBlocks = 0
+  let emptyToolRetries = 0
   let anyToolCall = false
   const MAX_PROSE_ONLY_BLOCKS = 5
+  const MAX_EMPTY_TOOL_RETRIES = 3
 
   for (let step = 0; step < maxSteps; step += 1) {
     const preferRequiredTools =
@@ -1888,7 +1936,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
                 pendingEdits,
                 shellState,
                 verifySuggestion,
-                problemsSnapshot
+                problemsSnapshot,
+                searchAnchors
               )
               return { call, result, skippedDup: false as const }
             })
@@ -1926,7 +1975,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           pendingEdits,
           shellState,
           verifySuggestion,
-          problemsSnapshot
+          problemsSnapshot,
+          searchAnchors
         )
         orderedResults.push({ call, result, skippedDup: false })
       }
@@ -2146,6 +2196,21 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         })
         consecutiveToolFailures = 0
       }
+      continue
+    }
+
+    // Empty tool_calls: dedicated retry before treating as prose-only answer.
+    if (toolCalls.length === 0 && emptyToolRetries < MAX_EMPTY_TOOL_RETRIES) {
+      emptyToolRetries += 1
+      messages.push({
+        role: 'assistant',
+        content: message.content ?? null
+      })
+      messages.push({
+        role: 'user',
+        content:
+          'システム: tool_calls が空です。必ず API の function/tool_calls で少なくとも1つ呼び出してください（set_phase / read_file / search_code / edit_file / run_shell）。文章だけの応答は無効です。'
+      })
       continue
     }
 

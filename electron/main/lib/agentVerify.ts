@@ -53,7 +53,47 @@ export function problemsAffectEditedPaths(
   return hits.slice(0, 40)
 }
 
-export function formatProblemsForAgent(problems: string[], limit = 30): string {
+/** Prefer Problems that reference active / open paths. */
+export function prioritizeProblemsByPaths(
+  problems: string[],
+  preferredPaths: string[],
+  limit = 30
+): string[] {
+  if (!problems.length) return []
+  if (!preferredPaths.length) return problems.slice(0, limit)
+
+  const prefs = preferredPaths.map(normalizeRelPath).filter(Boolean)
+  const scored = problems.map((row, index) => {
+    const extracted = extractProblemPath(row)
+    const norm = extracted ? normalizeRelPath(extracted) : ''
+    const lower = row.toLowerCase()
+    let score = 0
+    for (const pref of prefs) {
+      const base = pref.split('/').pop() ?? pref
+      if (norm && (norm === pref || norm.endsWith('/' + pref) || pref.endsWith('/' + norm))) {
+        score = Math.max(score, 100)
+      } else if (base && (norm.endsWith('/' + base) || norm === base || lower.includes(base))) {
+        score = Math.max(score, 70)
+      } else if (lower.includes(pref)) {
+        score = Math.max(score, 40)
+      }
+    }
+    if (/\berror\b|severity:\s*error/i.test(row)) score += 5
+    return { row, score, index }
+  })
+
+  scored.sort((a, b) => b.score - a.score || a.index - b.index)
+  return scored.slice(0, limit).map((row) => row.row)
+}
+
+export function formatProblemsForAgent(
+  problems: string[],
+  limit = 30,
+  preferredPaths?: string[]
+): string {
   if (!problems.length) return ''
-  return problems.slice(0, limit).join('\n')
+  const ordered = preferredPaths?.length
+    ? prioritizeProblemsByPaths(problems, preferredPaths, limit)
+    : problems.slice(0, limit)
+  return ordered.join('\n')
 }

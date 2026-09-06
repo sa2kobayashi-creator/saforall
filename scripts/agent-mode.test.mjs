@@ -74,6 +74,8 @@ test('normalizeToolCalls skips sparse / flat / missing function', async () => {
   assert.match(src, /export function parseRetryAfterMs/)
   assert.match(src, /response\.status === 429/)
   assert.match(src, /分間トークン上限/)
+  assert.match(src, /MAX_EMPTY_TOOL_RETRIES/)
+  assert.match(src, /read_required/)
 })
 
 test('ChatService asks model to tolerate typos', async () => {

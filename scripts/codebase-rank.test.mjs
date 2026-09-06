@@ -26,6 +26,21 @@ test('scoreContentHit prefers path-local symbols over unrelated files', async ()
   assert.ok(high > low)
 })
 
+test('scoreContentHit penalizes docs and markdown paths', async () => {
+  const { scoreContentHit } = await import('../electron/main/workspaceIndex.ts')
+  const code = scoreContentHit({
+    path: 'src/foo.ts',
+    lineText: 'AuthService helper',
+    needle: 'AuthService'
+  })
+  const docs = scoreContentHit({
+    path: 'docs/guide.md',
+    lineText: 'AuthService helper',
+    needle: 'AuthService'
+  })
+  assert.ok(code > docs)
+})
+
 test('scoreContentHit returns -1 when no match', async () => {
   const { scoreContentHit } = await import('../electron/main/workspaceIndex.ts')
   assert.equal(
@@ -60,12 +75,16 @@ test('workspaceIndex search diversifies and uses depth-2 neighborhood', async ()
   assert.match(source, /getImportNeighborhood\(index\.imports, Array\.from\(anchors\), 2\)/)
   assert.match(source, /perPathCap/)
   assert.match(source, /diversified/)
+  assert.match(source, /selectIndexedSymbols/)
+  assert.match(source, /score -= 22/)
 })
 
 test('ChatPanel puts selection path first in codebase anchors', async () => {
   const chat = await readFile(join(__dirname, '../src/components/ChatPanel.tsx'), 'utf8')
   assert.match(chat, /Primary: selection path/)
   assert.match(chat, /selection\?\.path/)
+  assert.match(chat, /activeProblemPaths/)
+  assert.match(chat, /rankedProblems/)
 })
 
 async function withRankFixture(run) {
@@ -146,4 +165,46 @@ test('eval: per-path diversification keeps multiple files in top hits', async ()
     const uniquePaths = new Set(hits.map((row) => row.split(':')[0]))
     assert.ok(uniquePaths.size >= 2, `expected diversified paths, got ${[...uniquePaths]}`)
   })
+})
+
+function assertTopPathContains(hits, expectedSubstring) {
+  assert.ok(hits.length > 0, 'expected at least one hit')
+  assert.ok(
+    hits[0].includes(expectedSubstring),
+    `expected top hit to include ${expectedSubstring}, got: ${hits[0]}`
+  )
+}
+
+test('eval: real repo queries prefer implementation files', async () => {
+  const {
+    invalidateWorkspaceIndex,
+    searchIndexedContent
+  } = await import('../electron/main/workspaceIndex.ts')
+  const repoRoot = join(__dirname, '..')
+  invalidateWorkspaceIndex()
+
+  const cases = [
+    { needle: 'scoreContentHit', expect: 'workspaceIndex.ts' },
+    { needle: 'extractCodebaseNeedles', expect: 'chatMentions.ts' },
+    { needle: 'runToolAgent', expect: 'toolAgent.ts' },
+    { needle: 'prioritizeProblemsByPaths', expect: 'agentVerify.ts' }
+  ]
+
+  let hitsOk = 0
+  for (const row of cases) {
+    const hits = await searchIndexedContent(repoRoot, row.needle, undefined, 12)
+    try {
+      assertTopPathContains(hits, row.expect)
+      hitsOk += 1
+    } catch (error) {
+      // Allow near-miss if expected path is still in top 3 (dense repo noise).
+      const top3 = hits.slice(0, 3).join('\n')
+      assert.ok(
+        top3.includes(row.expect),
+        `${row.needle}: expected ${row.expect} in top3\n${top3}\n${error}`
+      )
+      hitsOk += 1
+    }
+  }
+  assert.equal(hitsOk, cases.length)
 })

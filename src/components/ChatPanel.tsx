@@ -510,7 +510,25 @@ export function ChatPanel({
     }
 
     const problemLimit = wantProblems ? 40 : 20
-    const problemLines = problems.slice(0, problemLimit).map((row) => {
+    const activeProblemPaths = [selection?.path, file?.path]
+      .filter((row): row is string => typeof row === 'string' && row.trim() !== '')
+      .map((row) => row.replace(/\\/g, '/'))
+    const rankedProblems = [...problems].sort((a, b) => {
+      const score = (row: (typeof problems)[number]) => {
+        const path = (row.path || '').replace(/\\/g, '/')
+        if (!path) return 0
+        for (let i = 0; i < activeProblemPaths.length; i += 1) {
+          const pref = activeProblemPaths[i]
+          const base = pref.split('/').pop() ?? pref
+          if (path === pref || path.endsWith('/' + pref) || path.endsWith('/' + base)) {
+            return 100 - i + (row.severity === 'error' ? 5 : 0)
+          }
+        }
+        return row.severity === 'error' ? 1 : 0
+      }
+      return score(b) - score(a)
+    })
+    const problemLines = rankedProblems.slice(0, problemLimit).map((row) => {
       const loc = row.path
         ? `${row.path}${row.line ? `:${row.line}` : ''}`
         : 'unknown'

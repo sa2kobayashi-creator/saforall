@@ -11,6 +11,7 @@ test('Agent auto codebase and soft attach are wired', () => {
   assert.match(chat, /auto codebase \(\$\{mode\}\)/)
   assert.match(chat, /開いている他タブを少量自動添付/)
   assert.match(chat, /関連コードは自動検索/)
+  assert.match(chat, /activeProblemPaths/)
 })
 
 test('localAiRouter includes selection problems and files', () => {
@@ -19,4 +20,10 @@ test('localAiRouter includes selection problems and files', () => {
   assert.match(router, /# Problems/)
   assert.match(router, /# File/)
   assert.match(router, /# Codebase/)
+})
+
+test('toolAgent system prompt requires read before edit', () => {
+  const agent = readFileSync(join(root, 'electron/main/toolAgent.ts'), 'utf8')
+  assert.match(agent, /既存ファイルは必ず先に read_file/)
+  assert.match(agent, /read_required/)
 })

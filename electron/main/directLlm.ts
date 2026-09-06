@@ -1,4 +1,5 @@
 import type { ChatStreamEvent } from './api'
+import { extractAgentRuntimeContext } from './lib/agentContext'
 import {
   ensureSettingsLoaded,
   getLocalSetting,
@@ -334,6 +335,7 @@ export async function streamChatDirect(
       }
       const { runToolAgent } = await import('./toolAgent')
       const messages = buildMessages(requestBody)
+      const agentCtx = extractAgentRuntimeContext(requestBody)
       await runToolAgent({
         workspacePath,
         apiKey: resolved.apiKey,
@@ -347,7 +349,8 @@ export async function streamChatDirect(
         engine: resolved.engine,
         taskType: 'local',
         sessionId: 0,
-        problems: [],
+        problems: agentCtx.problems,
+        anchorPaths: agentCtx.anchors,
         onEvent,
         complete: async (content) => ({
           assistant_message: {
