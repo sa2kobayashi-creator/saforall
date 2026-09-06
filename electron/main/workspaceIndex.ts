@@ -469,11 +469,19 @@ export function scoreContentHit(params: {
   path: string
   lineText: string
   needle: string
+  /** Symbols defined in this file only (preferred). */
+  pathSymbolNames?: string[]
+  /** @deprecated Prefer pathSymbolNames — global names inflate unrelated files. */
   symbolNames?: string[]
   /** Open / seed files — boosted. */
   anchorPaths?: Set<string>
-  /** 1-hop import neighborhood of anchors. */
+  /** Strongest anchors (selection / active file). */
+  primaryAnchorPaths?: Set<string>
+  /** 1–2 hop import neighborhood of anchors. */
   neighborPaths?: Set<string>
+  /** Exact definition line for a matching symbol in this path. */
+  symbolDefLine?: number
+  lineNumber?: number
 }): number {
   const needle = params.needle.toLowerCase()
   const path = params.path.toLowerCase()
@@ -489,11 +497,30 @@ export function scoreContentHit(params: {
   }
   if (/^src\//.test(path) || /^electron\//.test(path) || /^server\//.test(path)) score += 8
   if (/test|spec|mock|fixture/.test(path)) score -= 5
-  if (params.symbolNames?.some((name) => name.toLowerCase() === needle)) score += 50
-  if (params.symbolNames?.some((name) => name.toLowerCase().includes(needle))) score += 15
+
+  const localSymbols = params.pathSymbolNames ?? []
+  const exactLocal = localSymbols.some((name) => name.toLowerCase() === needle)
+  const partialLocal = localSymbols.some((name) => name.toLowerCase().includes(needle))
+  if (exactLocal) score += 55
+  else if (partialLocal) score += 18
+  else if (params.symbolNames?.some((name) => name.toLowerCase() === needle)) score += 12
+  else if (params.symbolNames?.some((name) => name.toLowerCase().includes(needle))) score += 4
+
   if (/^(export|function|class|const|type|interface)\b/.test(line.trim())) score += 12
+  if (
+    params.symbolDefLine != null &&
+    params.lineNumber != null &&
+    params.symbolDefLine === params.lineNumber
+  ) {
+    score += 40
+  }
+
   const rel = params.path.replace(/\\/g, '/')
-  if (params.anchorPaths?.has(rel) || params.anchorPaths?.has(path)) score += 35
+  if (params.primaryAnchorPaths?.has(rel) || params.primaryAnchorPaths?.has(path)) {
+    score += 55
+  } else if (params.anchorPaths?.has(rel) || params.anchorPaths?.has(path)) {
+    score += 35
+  }
   if (params.neighborPaths?.has(rel) || params.neighborPaths?.has(path)) score += 25
   if (params.anchorPaths && params.anchorPaths.size > 0) {
     for (const anchor of Array.from(params.anchorPaths)) {
@@ -526,12 +553,26 @@ export async function searchIndexedContent(
   const needle = query.trim().toLowerCase()
   if (needle.length < 2) return []
   const index = await ensureWorkspaceIndex(workspaceRoot)
-  const symbolNames = index.symbols.map((row) => row.name)
-  const anchors = new Set(
-    (anchorPaths ?? []).map((row) => row.replace(/\\/g, '/').replace(/^\.\//, ''))
+  const symbolsByPath = new Map<string, string[]>()
+  const symbolDefLineByPath = new Map<string, number>()
+  for (const row of index.symbols) {
+    const path = row.path.replace(/\\/g, '/')
+    const list = symbolsByPath.get(path) ?? []
+    list.push(row.name)
+    symbolsByPath.set(path, list)
+    if (row.name.toLowerCase() === needle && !symbolDefLineByPath.has(path)) {
+      symbolDefLineByPath.set(path, row.line)
+    }
+  }
+  const normalizedAnchors = (anchorPaths ?? []).map((row) =>
+    row.replace(/\\/g, '/').replace(/^\.\//, '')
   )
+  const anchors = new Set(normalizedAnchors)
+  const primaryAnchors = new Set(normalizedAnchors.slice(0, 2))
   const neighbors =
-    anchors.size > 0 ? getImportNeighborhood(index.imports, Array.from(anchors), 1) : new Set<string>()
+    anchors.size > 0
+      ? getImportNeighborhood(index.imports, Array.from(anchors), 2)
+      : new Set<string>()
   const ranked: RankedHit[] = []
 
   for (const [rel, text] of Array.from(index.texts.entries())) {
@@ -540,14 +581,18 @@ export async function searchIndexedContent(
       if (hint.startsWith('.') && !rel.toLowerCase().endsWith(hint)) continue
     }
     const lines = text.split(/\r?\n/)
+    const pathSymbols = symbolsByPath.get(rel) ?? []
     for (let i = 0; i < lines.length; i += 1) {
       const score = scoreContentHit({
         path: rel,
         lineText: lines[i],
         needle,
-        symbolNames,
+        pathSymbolNames: pathSymbols,
         anchorPaths: anchors,
-        neighborPaths: neighbors
+        primaryAnchorPaths: primaryAnchors,
+        neighborPaths: neighbors,
+        symbolDefLine: symbolDefLineByPath.get(rel),
+        lineNumber: i + 1
       })
       if (score < 0) continue
       ranked.push({
@@ -560,7 +605,17 @@ export async function searchIndexedContent(
   }
 
   ranked.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path) || a.line - b.line)
-  return ranked.slice(0, limit).map(formatRankedHit)
+  const perPathCap = Math.max(2, Math.ceil(limit / 3))
+  const diversified: RankedHit[] = []
+  const perPath = new Map<string, number>()
+  for (const hit of ranked) {
+    const count = perPath.get(hit.path) ?? 0
+    if (count >= perPathCap) continue
+    perPath.set(hit.path, count + 1)
+    diversified.push(hit)
+    if (diversified.length >= limit) break
+  }
+  return diversified.map(formatRankedHit)
 }
 
 export async function searchIndexedSymbols(

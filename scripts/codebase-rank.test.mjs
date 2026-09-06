@@ -6,47 +6,63 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-function scoreContentHit({ path, lineText, needle, symbolNames = [] }) {
-  const n = needle.toLowerCase()
-  const p = path.toLowerCase()
-  const line = lineText.toLowerCase()
-  let score = 0
-  if (!line.includes(n)) return -1
-  score += 10
-  if (p.includes(n)) score += 40
-  const base = p.split('/').pop() ?? ''
-  if (base.includes(n)) score += 30
-  if (symbolNames.some((name) => name.toLowerCase() === n)) score += 50
-  if (/^src\//.test(p)) score += 8
-  if (/test|spec/.test(p)) score -= 5
-  if (/^(export|function|class|const|type|interface)\b/.test(line.trim())) score += 12
-  return score
-}
-
-test('scoreContentHit ranks symbol and src path higher', () => {
+test('scoreContentHit prefers path-local symbols over unrelated files', async () => {
+  const { scoreContentHit } = await import('../electron/main/workspaceIndex.ts')
   const low = scoreContentHit({
     path: 'docs/notes.md',
     lineText: 'mentions AuthService somehow',
-    needle: 'AuthService'
+    needle: 'AuthService',
+    symbolNames: ['AuthService']
   })
   const high = scoreContentHit({
     path: 'src/AuthService.ts',
     lineText: 'export class AuthService {',
     needle: 'AuthService',
-    symbolNames: ['AuthService']
+    pathSymbolNames: ['AuthService'],
+    symbolDefLine: 1,
+    lineNumber: 1
   })
   assert.ok(high > low)
 })
 
-test('scoreContentHit returns -1 when no match', () => {
+test('scoreContentHit returns -1 when no match', async () => {
+  const { scoreContentHit } = await import('../electron/main/workspaceIndex.ts')
   assert.equal(
     scoreContentHit({ path: 'src/a.ts', lineText: 'hello', needle: 'AuthService' }),
     -1
   )
 })
 
-test('workspaceIndex exports scoreContentHit', async () => {
+test('scoreContentHit boosts primary anchors over regular anchors', async () => {
+  const { scoreContentHit } = await import('../electron/main/workspaceIndex.ts')
+  const regular = scoreContentHit({
+    path: 'src/a.ts',
+    lineText: 'AuthService used here',
+    needle: 'AuthService',
+    anchorPaths: new Set(['src/a.ts'])
+  })
+  const primary = scoreContentHit({
+    path: 'src/a.ts',
+    lineText: 'AuthService used here',
+    needle: 'AuthService',
+    primaryAnchorPaths: new Set(['src/a.ts']),
+    anchorPaths: new Set(['src/a.ts'])
+  })
+  assert.ok(primary > regular)
+})
+
+test('workspaceIndex search diversifies and uses depth-2 neighborhood', async () => {
   const source = await readFile(join(__dirname, '../electron/main/workspaceIndex.ts'), 'utf8')
   assert.match(source, /export function scoreContentHit/)
-  assert.match(source, /ranked\.sort/)
+  assert.match(source, /pathSymbolNames/)
+  assert.match(source, /primaryAnchorPaths/)
+  assert.match(source, /getImportNeighborhood\(index\.imports, Array\.from\(anchors\), 2\)/)
+  assert.match(source, /perPathCap/)
+  assert.match(source, /diversified/)
+})
+
+test('ChatPanel puts selection path first in codebase anchors', async () => {
+  const chat = await readFile(join(__dirname, '../src/components/ChatPanel.tsx'), 'utf8')
+  assert.match(chat, /Primary: selection path/)
+  assert.match(chat, /selection\?\.path/)
 })

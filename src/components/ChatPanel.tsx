@@ -379,9 +379,14 @@ export function ChatPanel({
             if (unified.startsWith(root + '/')) return unified.slice(root.length + 1)
             return null
           }
+          // Primary: selection path, then active file, then other open tabs
+          if (selection?.path) {
+            const rel = toRel(selection.path)
+            if (rel) anchors.push(rel)
+          }
           if (file?.path) {
             const rel = toRel(file.path)
-            if (rel) anchors.push(rel)
+            if (rel && !anchors.includes(rel)) anchors.push(rel)
           }
           for (const tab of openFiles.slice(0, 8)) {
             const rel = toRel(tab.path)
