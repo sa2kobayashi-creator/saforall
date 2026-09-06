@@ -1,3 +1,5 @@
+import { assessEditContent } from './editGuards'
+
 export type ProposalLike = {
   targetPath: string
   original: string
@@ -17,8 +19,10 @@ export type ValidateFailureReason =
   | 'empty_path'
   | 'outside_workspace'
   | 'empty_content'
+  | 'whitespace_only'
   | 'too_large'
   | 'suspicious_truncate'
+  | 'entry_gutted'
 
 export type ValidateProposalResult =
   | { ok: true }
@@ -104,16 +108,25 @@ export function validateProposal(
   }
 
   const rejectTruncate = options.rejectSuspiciousTruncate !== false
-  if (
-    rejectTruncate &&
-    (proposal.mode === 'replace' || proposal.mode === 'create') &&
-    proposal.original.length > 400 &&
-    proposal.modified.length < proposal.original.length * 0.35
-  ) {
-    return {
-      ok: false,
-      reason: 'suspicious_truncate',
-      message: '既存ファイルに対して内容が極端に短いため適用を拒否しました（切り捨て疑い）'
+  if (rejectTruncate && (proposal.mode === 'replace' || proposal.mode === 'create')) {
+    const shrink = assessEditContent({
+      path,
+      nextContent: proposal.modified,
+      previousContent: proposal.original || null
+    })
+    if (!shrink.ok) {
+      return {
+        ok: false,
+        reason: shrink.reason,
+        message:
+          shrink.reason === 'entry_gutted'
+            ? `入口ファイルを空にする適用を拒否しました: ${path}`
+            : shrink.reason === 'whitespace_only'
+              ? '空白のみの内容は適用できません'
+              : shrink.reason === 'empty_content'
+                ? '適用内容が空です'
+                : '既存ファイルに対して内容が極端に短いため適用を拒否しました（切り捨て疑い）'
+      }
     }
   }
 

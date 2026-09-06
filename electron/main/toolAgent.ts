@@ -1196,16 +1196,16 @@ async function runTool(
     if (name === 'edit_file') {
       const rawPath = String(args.path ?? '').trim()
       const content = String(args.content ?? '')
-      if (!rawPath || content === '') {
+      if (!rawPath) {
         onEvent({
           type: 'tool_result',
           id: callId,
           name,
           ok: false,
-          summary: 'path/content required'
+          summary: 'path required'
         })
         return {
-          content: JSON.stringify({ ok: false, error: 'path and content required' }),
+          content: JSON.stringify({ ok: false, error: 'path required' }),
           ok: false
         }
       }
@@ -1247,18 +1247,49 @@ async function runTool(
         }
       }
 
-      let warning: string | null = null
-      let requireRewrite = false
       let existingOnDisk: string | null = null
       try {
         existingOnDisk = await toolReadFile(workspacePath, path)
-        if (existingOnDisk.length > 400 && content.length < existingOnDisk.length * 0.35) {
-          requireRewrite = true
-          warning =
-            'Proposed content is much shorter than the current file. Resend a complete file (not a fragment).'
-        }
       } catch {
         // new file
+      }
+
+      const { assessEditContent } = await import('./lib/editGuards')
+      const shrink = assessEditContent({
+        path,
+        nextContent: content,
+        previousContent: existingOnDisk
+      })
+      if (!shrink.ok) {
+        onEvent({
+          type: 'tool_result',
+          id: callId,
+          name,
+          ok: false,
+          summary: `rejected ${shrink.reason} ${path}`
+        })
+        recordFeedback({
+          kind: 'tool',
+          source: 'toolAgent',
+          tool: 'edit_file',
+          phase,
+          path,
+          ok: false,
+          detail: shrink.reason
+        })
+        return {
+          content: JSON.stringify({
+            ok: false,
+            error: shrink.reason,
+            path,
+            warning: shrink.message,
+            note:
+              shrink.reason === 'entry_gutted'
+                ? 'Do not blank main.js / index.html / App entry files. Restore full bootstrap content.'
+                : 'Do not queue truncated or empty replacements. Call edit_file again with the full file content.'
+          }),
+          ok: false
+        }
       }
 
       const alreadyRead = Array.from(readCache.keys()).some((key) => pathKeyMatchLoose(key, path))
@@ -1290,35 +1321,6 @@ async function runTool(
         }
       }
 
-      if (requireRewrite) {
-        onEvent({
-          type: 'tool_result',
-          id: callId,
-          name,
-          ok: false,
-          summary: `rejected short edit ${path}`
-        })
-        recordFeedback({
-          kind: 'tool',
-          source: 'toolAgent',
-          tool: 'edit_file',
-          phase,
-          path,
-          ok: false,
-          detail: 'incomplete_edit'
-        })
-        return {
-          content: JSON.stringify({
-            ok: false,
-            error: 'incomplete_edit',
-            path,
-            warning,
-            note: 'Do not queue truncated replacements. Call edit_file again with the full file content.'
-          }),
-          ok: false
-        }
-      }
-
       editedPaths.add(path)
       searchAnchors.add(path)
       pendingEdits.set(path, content)
@@ -1340,7 +1342,7 @@ async function runTool(
         id: callId,
         name,
         ok: true,
-        summary: warning ? `queued edit ${path} (warning)` : `queued edit ${path}`
+        summary: `queued edit ${path}`
       })
       recordFeedback({
         kind: 'tool',
@@ -1349,7 +1351,7 @@ async function runTool(
         phase,
         path,
         ok: true,
-        detail: warning ? 'queued_warning' : 'queued',
+        detail: 'queued',
         topHit:
           sessionSearchTops.length > 0 ? pathInTopHits(path, sessionSearchTops.slice(0, 5)) : undefined,
         searchTopPaths: sessionSearchTops.slice(0, 8)
@@ -1359,10 +1361,7 @@ async function runTool(
           ok: true,
           queued: true,
           path,
-          warning,
-          note:
-            warning ??
-            'Queued for Composer review. Use run_shell in verify to test with proposals temporarily applied.'
+          note: 'Queued for Composer review. Use run_shell in verify to test with proposals temporarily applied.'
         }),
         ok: true
       }
@@ -1816,6 +1815,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     '重要: 修正内容を markdown のコードブロックで説明するだけでは終了しない。必ず edit_file ツールで Composer に載せる。',
     '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）と、依頼が修正なら edit_file + run_shell を行う。',
     '重要: 既存ファイルへの edit_file は read_file 済みパスのみ許可。未読なら read_required で拒否される。',
+    '禁止: main.js / index.html / App 入口ファイルを空や数行のスタブにすること。画面が出ない障害の主因になる。',
     '禁止: set_phase / edit_file / read_file / run_shell を文章・bash・手順リストとして書くこと。必ず tools / function 呼び出しで呼ぶ。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
     'MCP: list_mcp_tools / list_mcp_resources / list_mcp_prompts / call_mcp_tool / read_mcp_resource / get_mcp_prompt を使える（.saforall/mcp.json）。必要なら先に list_mcp_tools で一覧を取得する。',
