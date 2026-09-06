@@ -26,14 +26,15 @@ test('ChatPanel blocks offline send without fake assistant reply', () => {
 test('Ask mode auto-attaches light codebase search', () => {
   assert.match(chat, /autoCodebase/)
   assert.match(chat, /auto codebase \(\$\{mode\}\)/)
-  assert.match(chat, /mode === 'ask' \|\| mode === 'agent'/)
+  assert.match(chat, /mode === 'ask' && autoNeedles\.length > 0/)
 })
 
-test('Agent soft-attaches open tabs and auto codebase', () => {
-  assert.match(chat, /Agent: 開いている他タブを少量自動添付/)
+test('Agent soft-attaches open tabs without auto codebase', () => {
+  assert.match(chat, /Agent: 開いている他タブを1本だけ自動添付/)
   assert.match(chat, /softCount/)
   assert.match(chat, /mode === 'agent' && Boolean\(selectionPayload\)/)
   assert.match(chat, /mode === 'agent' && problemLines\.length > 0/)
+  assert.match(chat, /Agent は search_code があるので省略/)
 })
 
 test('App wires ChatPanel recheck to checkBackend', () => {

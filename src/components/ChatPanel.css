@@ -728,6 +728,34 @@
   line-height: 1.35;
 }
 
+.chat-busy-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-stop-btn,
+.chat-input > button.chat-stop-submit {
+  border: 1px solid #8a3b3b;
+  border-radius: 6px;
+  background: #3a1f1f;
+  color: #f0c0c0;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.chat-input > button.chat-stop-submit {
+  align-self: flex-end;
+  padding: 6px 14px;
+  font-size: inherit;
+}
+
+.chat-stop-btn:hover,
+.chat-input > button.chat-stop-submit:hover {
+  filter: brightness(1.12);
+}
+
 .chat-busy-bar.phase-thinking,
 .chat-busy-bar.phase-streaming {
   background: #1a2433;

@@ -273,6 +273,7 @@ export type ChatStreamEvent =
       assistant_message: Record<string, unknown>
       used_tools?: boolean
     }
+  | { type: 'cancelled'; message?: string }
   | { type: 'error'; code: string; message: string }
 
 type RouteData = {
@@ -302,31 +303,76 @@ type RouteData = {
 
 export async function streamChat(
   body: unknown,
-  onEvent: (event: ChatStreamEvent) => void
+  onEvent: (event: ChatStreamEvent) => void,
+  signal?: AbortSignal | null
 ): Promise<void> {
+  const { throwIfChatAborted, isChatAbortError } = await import('./chatAbort')
+  try {
+    await streamChatInner(body, onEvent, signal)
+  } catch (error) {
+    if (isChatAbortError(error) || signal?.aborted) {
+      onEvent({
+        type: 'cancelled',
+        message: 'ユーザーが応答を取り消しました'
+      })
+      return
+    }
+    throw error
+  }
+}
+
+async function streamChatInner(
+  body: unknown,
+  onEvent: (event: ChatStreamEvent) => void,
+  signal?: AbortSignal | null
+): Promise<void> {
+  const { throwIfChatAborted, isChatAbortError } = await import('./chatAbort')
   const requestBody =
     typeof body === 'object' && body !== null
       ? (body as Record<string, unknown>)
       : {}
 
+  throwIfChatAborted(signal)
+
+  // Immediate UI feedback before route / local prepare (TTFT feel).
+  const requestedMode =
+    typeof requestBody.mode === 'string' ? requestBody.mode : 'ask'
+  onEvent({
+    type: 'delta',
+    text: requestedMode === 'agent' ? '⏳ Agent を準備中…\n' : '⏳ 応答を準備中…\n'
+  })
+
   let route: ApiResponse<RouteData>
-  try {
-    route = await fetchJson<RouteData>(
-      'POST',
-      '/ai/route',
-      requestBody,
-      { timeoutMs: 20_000 },
-      { 'X-Saforall-Client': 'electron-main' }
-    )
-  } catch (error) {
+  if (!phpOnline) {
     route = {
       ok: false,
       error: {
         code: 'NETWORK_ERROR',
-        message: error instanceof Error ? error.message : 'バックエンド未接続'
+        message: 'バックエンド未接続（ローカル経路）'
+      }
+    }
+  } else {
+    try {
+      route = await fetchJson<RouteData>(
+        'POST',
+        '/ai/route',
+        requestBody,
+        { timeoutMs: 3_000 },
+        { 'X-Saforall-Client': 'electron-main' }
+      )
+    } catch (error) {
+      if (isChatAbortError(error) || signal?.aborted) throw error
+      route = {
+        ok: false,
+        error: {
+          code: 'NETWORK_ERROR',
+          message: error instanceof Error ? error.message : 'バックエンド未接続'
+        }
       }
     }
   }
+
+  throwIfChatAborted(signal)
 
   if (!route.ok || !route.data) {
     try {
@@ -379,6 +425,15 @@ export async function streamChat(
       }
 
       if (canToolAgent && decided.provider) {
+        onEvent({
+          type: 'agent_phase',
+          phase: 'plan',
+          note: 'ツール Agent 起動（edit_file / run_shell）'
+        })
+        onEvent({
+          type: 'delta',
+          text: '🔧 ツール Agent を開始します。説明だけで終わらず、ツールで編集・検証します。\n'
+        })
         const { runToolAgent } = await import('./toolAgent')
         const agentCtx = extractAgentRuntimeContext(requestBody)
         await runToolAgent({
@@ -393,6 +448,7 @@ export async function streamChat(
           sessionId: decided.session_id,
           problems: agentCtx.problems,
           anchorPaths: agentCtx.anchors,
+          signal: signal ?? undefined,
           onEvent,
           complete: async (content) =>
             completeLocalRoute({
@@ -414,6 +470,7 @@ export async function streamChat(
         return
       }
 
+      throwIfChatAborted(signal)
       const { generateAssistantText } = await import('./directLlm')
       const content = await generateAssistantText({
         engine: decided.engine,
@@ -440,6 +497,8 @@ export async function streamChat(
       })
       return
     } catch (error) {
+      const { isChatAbortError } = await import('./chatAbort')
+      if (isChatAbortError(error) || signal?.aborted) throw error
       onEvent({
         type: 'error',
         code: route.error?.code ?? 'ROUTE_FAILED',
@@ -558,6 +617,7 @@ export async function streamChat(
         sessionId: decided.session_id,
         problems: agentCtx.problems,
         anchorPaths: agentCtx.anchors,
+        signal: signal ?? undefined,
         onEvent,
         complete: async (content) => {
           const completed = await fetchJson<{
@@ -582,6 +642,14 @@ export async function streamChat(
         }
       })
     } catch (error) {
+      const { isChatAbortError } = await import('./chatAbort')
+      if (isChatAbortError(error) || signal?.aborted) {
+        onEvent({
+          type: 'cancelled',
+          message: 'ユーザーが応答を取り消しました'
+        })
+        return
+      }
       onEvent({
         type: 'error',
         code: 'TOOL_AGENT_FAILED',
@@ -591,6 +659,7 @@ export async function streamChat(
     return
   }
 
+  throwIfChatAborted(signal)
   await streamProviderChat(
     {
       ...requestBody,
@@ -602,7 +671,8 @@ export async function streamChat(
       fallback_from: decided.fallback_from,
       fallback_reason: decided.fallback_reason
     },
-    onEvent
+    onEvent,
+    signal
   )
 }
 
@@ -770,19 +840,21 @@ async function runCursorStream(
 
 async function streamProviderChat(
   body: unknown,
-  onEvent: (event: ChatStreamEvent) => void
+  onEvent: (event: ChatStreamEvent) => void,
+  outerSignal?: AbortSignal | null
 ): Promise<void> {
   const baseUrl = getApiBaseUrl()
   const url = `${baseUrl}/ai/chat/stream`
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 120_000)
+  const { linkedAbortSignal, isChatAbortError, throwIfChatAborted } = await import('./chatAbort')
+  const linked = linkedAbortSignal(120_000, outerSignal)
 
   try {
+    throwIfChatAborted(outerSignal)
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: controller.signal
+      signal: linked.signal
     })
 
     const contentType = response.headers.get('content-type') ?? ''
@@ -812,6 +884,7 @@ async function streamProviderChat(
     let buffer = ''
 
     while (true) {
+      throwIfChatAborted(outerSignal)
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
@@ -833,7 +906,7 @@ async function streamProviderChat(
               continue
             }
             onEvent(event)
-            if (event.type === 'done' || event.type === 'error') {
+            if (event.type === 'done' || event.type === 'error' || event.type === 'cancelled') {
               return
             }
           } catch {
@@ -845,6 +918,13 @@ async function streamProviderChat(
       }
     }
   } catch (error) {
+    if (isChatAbortError(error) || outerSignal?.aborted) {
+      onEvent({
+        type: 'cancelled',
+        message: 'ユーザーが応答を取り消しました'
+      })
+      return
+    }
     const message =
       error instanceof Error && error.name === 'AbortError'
         ? 'バックエンド応答タイムアウト'
@@ -858,6 +938,6 @@ async function streamProviderChat(
       message
     })
   } finally {
-    clearTimeout(timer)
+    linked.dispose()
   }
 }

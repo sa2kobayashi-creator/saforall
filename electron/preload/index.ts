@@ -87,6 +87,7 @@ export type ChatStreamEvent =
       used_tools?: boolean
     }
   | { type: 'error'; code: string; message: string }
+  | { type: 'cancelled'; message?: string }
 
 export type ChatStreamHandlers = {
   onEvent: (event: ChatStreamEvent) => void
@@ -555,20 +556,24 @@ const api = {
     options?: ApiRequestOptions
   ): Promise<ApiResponse<T>> =>
     ipcRenderer.invoke('api:request', method, path, body, options),
-  chatStream: async (
+  chatStream: (
     body: unknown,
     handlers: ChatStreamHandlers
-  ): Promise<void> => {
+  ): { requestId: string; done: Promise<void> } => {
     const requestId = crypto.randomUUID()
 
-    await new Promise<void>((resolve) => {
+    const done = new Promise<void>((resolve) => {
       const listener = (
         _event: unknown,
         payload: { requestId: string; event: ChatStreamEvent }
       ): void => {
         if (payload.requestId !== requestId) return
         handlers.onEvent(payload.event)
-        if (payload.event.type === 'done' || payload.event.type === 'error') {
+        if (
+          payload.event.type === 'done' ||
+          payload.event.type === 'error' ||
+          payload.event.type === 'cancelled'
+        ) {
           ipcRenderer.removeListener('api:chatStream:event', listener)
           resolve()
         }
@@ -585,7 +590,11 @@ const api = {
         resolve()
       })
     })
+
+    return { requestId, done }
   },
+  cancelChatStream: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke('api:chatStream:cancel', requestId),
   createTerminal: (options?: {
     cwd?: string
     cols?: number

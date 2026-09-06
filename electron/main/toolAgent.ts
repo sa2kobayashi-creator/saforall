@@ -9,7 +9,7 @@ import {
   pathInTopHits,
   recordFeedback
 } from './feedbackStore'
-import { mcpManager, type McpToolInfo } from './mcpClient'
+import { mcpManager } from './mcpClient'
 import {
   excerptShellFailure,
   loadProjectRules,
@@ -360,6 +360,8 @@ export type ToolAgentParams = {
   problems?: string[]
   /** Open / active file paths used as search_code anchors. */
   anchorPaths?: string[]
+  /** User cancel (Stop) while Agent is running. */
+  signal?: AbortSignal
   onEvent: (event: ChatStreamEvent) => void
   complete: (content: string) => Promise<{
     assistant_message: Record<string, unknown>
@@ -380,6 +382,31 @@ function parseExtraHeaders(headers: string[]): Record<string, string> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function sleepAbortable(ms: number, signal?: AbortSignal | null): Promise<void> {
+  const { throwIfChatAborted } = await import('./chatAbort')
+  throwIfChatAborted(signal)
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      const err = new Error('Chat cancelled by user')
+      err.name = 'AbortError'
+      reject(err)
+    }
+    if (!signal) return
+    if (signal.aborted) {
+      clearTimeout(timer)
+      onAbort()
+      return
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  throwIfChatAborted(signal)
 }
 
 export function normalizeAgentPath(path: string): string {
@@ -635,6 +662,7 @@ async function callAnthropicMessages(params: {
   tools?: typeof TOOLS
   toolChoice?: 'auto' | 'required'
   timeoutMs?: number
+  signal?: AbortSignal | null
 }): Promise<ChatCompletionResponse> {
   const url = `${anthropicBase(params.baseUrl)}/messages`
   const { system, messages } = toAnthropicMessages(params.messages)
@@ -650,8 +678,9 @@ async function callAnthropicMessages(params: {
       params.toolChoice === 'required' ? { type: 'any' } : { type: 'auto' }
   }
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? 90_000)
+  const { linkedAbortSignal, throwIfChatAborted } = await import('./chatAbort')
+  throwIfChatAborted(params.signal)
+  const linked = linkedAbortSignal(params.timeoutMs ?? 90_000, params.signal)
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -661,7 +690,7 @@ async function callAnthropicMessages(params: {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify(body),
-      signal: controller.signal
+      signal: linked.signal
     })
     const bodyText = await response.text()
     let json: {
@@ -710,7 +739,7 @@ async function callAnthropicMessages(params: {
       ]
     }
   } finally {
-    clearTimeout(timer)
+    linked.dispose()
   }
 }
 
@@ -724,6 +753,7 @@ async function callAgentLlm(params: {
   tools?: typeof TOOLS
   toolChoice?: 'auto' | 'required'
   timeoutMs?: number
+  signal?: AbortSignal | null
 }): Promise<ChatCompletionResponse> {
   if (isAnthropicEndpoint(params.engine, params.baseUrl)) {
     return callAnthropicMessages({
@@ -733,7 +763,8 @@ async function callAgentLlm(params: {
       messages: params.messages,
       tools: params.tools,
       toolChoice: params.toolChoice,
-      timeoutMs: params.timeoutMs
+      timeoutMs: params.timeoutMs,
+      signal: params.signal
     })
   }
   return callChatCompletions({
@@ -744,7 +775,8 @@ async function callAgentLlm(params: {
     messages: params.messages,
     tools: params.tools,
     toolChoice: params.toolChoice,
-    timeoutMs: params.timeoutMs
+    timeoutMs: params.timeoutMs,
+    signal: params.signal
   })
 }
 
@@ -867,6 +899,7 @@ async function callChatCompletions(params: {
   tools?: typeof TOOLS
   toolChoice?: 'auto' | 'required'
   timeoutMs?: number
+  signal?: AbortSignal | null
 }): Promise<ChatCompletionResponse> {
   const url = `${params.baseUrl.replace(/\/$/, '')}/chat/completions`
   let lastError: Error | null = null
@@ -878,8 +911,10 @@ async function callChatCompletions(params: {
   let includeTools = Boolean(params.tools)
 
   const timeoutMs = params.timeoutMs ?? 45_000
+  const { linkedAbortSignal, throwIfChatAborted, isChatAbortError } = await import('./chatAbort')
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
+    throwIfChatAborted(params.signal)
     const body: Record<string, unknown> = {
       model: params.model,
       messages: normalizeMessagesForLlm(params.messages)
@@ -890,8 +925,7 @@ async function callChatCompletions(params: {
       body.tool_choice = toolChoice
     }
 
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const linked = linkedAbortSignal(timeoutMs, params.signal)
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -901,7 +935,7 @@ async function callChatCompletions(params: {
           ...parseExtraHeaders(params.extraHeaders)
         },
         body: JSON.stringify(body),
-        signal: controller.signal
+        signal: linked.signal
       })
 
       const bodyText = await response.text()
@@ -917,7 +951,7 @@ async function callChatCompletions(params: {
         const lower = err.message.toLowerCase()
         if (response.status === 429 && attempt < 5) {
           lastError = err
-          await sleep(parseRetryAfterMs(err.message, attempt))
+          await sleepAbortable(parseRetryAfterMs(err.message, attempt), params.signal)
           continue
         }
         // Retry ladder for common 400s
@@ -945,9 +979,12 @@ async function callChatCompletions(params: {
       }
       return json
     } catch (error) {
+      if (isChatAbortError(error) || params.signal?.aborted) {
+        throw error
+      }
       lastError = error instanceof Error ? error : new Error(String(error))
       if (attempt < 5 && isRateLimitError(lastError.message)) {
-        await sleep(parseRetryAfterMs(lastError.message, attempt))
+        await sleepAbortable(parseRetryAfterMs(lastError.message, attempt), params.signal)
         continue
       }
       if (attempt < 3 && /LLM HTTP 400/i.test(lastError.message) && toolChoice === 'required') {
@@ -955,16 +992,17 @@ async function callChatCompletions(params: {
         continue
       }
       if (attempt < 3 && /abort|network|fetch failed|ECONNRESET/i.test(lastError.message)) {
-        await sleep(500 * (attempt + 1))
+        // User cancel looks like AbortError — already rethrown above.
+        await sleepAbortable(500 * (attempt + 1), params.signal)
         continue
       }
       // non-retryable
       if (!/LLM HTTP 400/i.test(lastError.message) || attempt >= 3) {
         throw lastError
       }
-      await sleep(400 * (attempt + 1))
+      await sleepAbortable(400 * (attempt + 1), params.signal)
     } finally {
-      clearTimeout(timer)
+      linked.dispose()
     }
   }
 
@@ -1717,8 +1755,11 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     onEvent,
     complete,
     problems: problemsParam,
-    anchorPaths: anchorPathsParam
+    anchorPaths: anchorPathsParam,
+    signal
   } = params
+  const { throwIfChatAborted } = await import('./chatAbort')
+  throwIfChatAborted(signal)
   const problemsSnapshot = Array.isArray(problemsParam) ? problemsParam : []
   const searchAnchors = new Set(
     (Array.isArray(anchorPathsParam) ? anchorPathsParam : [])
@@ -1739,20 +1780,20 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     return
   }
 
-  const rules = await loadProjectRules(workspacePath)
-  const verifySuggestion = await suggestVerifyCommands(workspacePath)
+  // Show progress before disk/MCP work so the UI is not silent.
+  onEvent({ type: 'agent_phase', phase: 'plan', note: '計画を開始' })
+
+  const [rules, verifySuggestion] = await Promise.all([
+    loadProjectRules(workspacePath),
+    suggestVerifyCommands(workspacePath)
+  ])
   const suggestedVerify = verifySuggestion?.primary ?? null
   const verifyFallbackText =
     verifySuggestion && verifySuggestion.fallbacks.length > 0
       ? ` / 代替: ${verifySuggestion.fallbacks.join(' · ')}`
       : ''
-  let mcpCatalog: McpToolInfo[] = []
-  try {
-    const listed = await mcpManager.listWorkspaceTools(workspacePath)
-    mcpCatalog = listed.tools.slice(0, 40)
-  } catch {
-    mcpCatalog = []
-  }
+  // Defer MCP spawn/list — listing at start can block several seconds (up to ~12s).
+  // Agent can call list_mcp_tools when needed.
 
   const agentSystem = [
     'あなたは saforall の長時間コーディング Agent です。大規模リファクタも担当します。',
@@ -1768,7 +1809,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     '重要: 既存ファイルへの edit_file は read_file 済みパスのみ許可。未読なら read_required で拒否される。',
     '禁止: set_phase / edit_file / read_file / run_shell を文章・bash・手順リストとして書くこと。必ず tools / function 呼び出しで呼ぶ。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
-    'MCP: list_mcp_tools / list_mcp_resources / list_mcp_prompts / call_mcp_tool / read_mcp_resource / get_mcp_prompt を使える（.saforall/mcp.json）。',
+    'MCP: list_mcp_tools / list_mcp_resources / list_mcp_prompts / call_mcp_tool / read_mcp_resource / get_mcp_prompt を使える（.saforall/mcp.json）。必要なら先に list_mcp_tools で一覧を取得する。',
     `編集リカバリ上限: ${MAX_EDIT_RECOVERIES} 回まで verify 失敗→edit 自動復帰。`,
     '破壊的コマンドは禁止。まず短い検証（typecheck）を通し、必要なら test を追加。',
     'ツール失敗時は別パス/クエリ/コマンドで自己修正。同じ呼び出しを繰り返さない。失敗理由を読み、仮説を変える。',
@@ -1779,17 +1820,6 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       ? `推奨検証コマンド: ${suggestedVerify}${verifyFallbackText}`
       : 'package.json / テスト設定を探し、適切な検証コマンドを run_shell で実行する。'
   ]
-  if (mcpCatalog.length > 0) {
-    agentSystem.push(
-      '利用可能な MCP ツール:\n' +
-        mcpCatalog
-          .map(
-            (row) =>
-              `- ${row.name} @${row.serverId}${row.description ? `: ${row.description.slice(0, 120)}` : ''}`
-          )
-          .join('\n')
-    )
-  }
   if (rules) {
     agentSystem.push('プロジェクトルール:\n' + rules)
   }
@@ -1817,7 +1847,6 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   ]
 
   let phase: AgentPhase = 'plan'
-  onEvent({ type: 'agent_phase', phase, note: '計画を開始' })
 
   let finalText = ''
   const maxSteps = 56
@@ -1860,6 +1889,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   const MAX_EMPTY_TOOL_RETRIES = 3
 
   for (let step = 0; step < maxSteps; step += 1) {
+    throwIfChatAborted(signal)
     const preferRequiredTools =
       modelAllowsRequiredToolChoice(model) &&
       (!anyToolCall ||
@@ -1876,9 +1906,12 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         extraHeaders,
         messages,
         tools: TOOLS,
-        toolChoice: preferRequiredTools ? 'required' : 'auto'
+        toolChoice: preferRequiredTools ? 'required' : 'auto',
+        signal
       })
     } catch (error) {
+      const { isChatAbortError } = await import('./chatAbort')
+      if (isChatAbortError(error) || signal?.aborted) throw error
       const message = error instanceof Error ? error.message : String(error)
       // Surface provider detail immediately (avoid opaque "LLM HTTP 400")
       if (step === 0) {
@@ -1899,11 +1932,14 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           baseUrl,
           model,
           extraHeaders,
-          messages
+          messages,
+          signal
         })
         finalText = (fallback.choices?.[0]?.message?.content ?? '').trim()
         if (finalText) break
-      } catch {
+      } catch (fallbackError) {
+        const { isChatAbortError: isAbort } = await import('./chatAbort')
+        if (isAbort(fallbackError) || signal?.aborted) throw fallbackError
         // fall through
       }
       throw error
@@ -1941,6 +1977,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
       let i = 0
       while (i < toolCalls.length) {
+        throwIfChatAborted(signal)
         const batch: ToolCall[] = []
         while (i < toolCalls.length) {
           const next = toolCalls[i]

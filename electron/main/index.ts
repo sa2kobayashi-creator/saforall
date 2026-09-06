@@ -430,12 +430,27 @@ ipcMain.handle(
 ipcMain.handle(
   'api:chatStream',
   async (event, requestId: string, body: unknown) => {
-    await streamChat(body, (streamEvent) => {
-      event.sender.send('api:chatStream:event', { requestId, event: streamEvent })
-    })
-    return true
+    const { beginChatAbort, endChatAbort } = await import('./chatAbort')
+    const signal = beginChatAbort(requestId)
+    try {
+      await streamChat(
+        body,
+        (streamEvent) => {
+          event.sender.send('api:chatStream:event', { requestId, event: streamEvent })
+        },
+        signal
+      )
+      return true
+    } finally {
+      endChatAbort(requestId)
+    }
   }
 )
+
+ipcMain.handle('api:chatStream:cancel', async (_event, requestId: string) => {
+  const { cancelChatAbort } = await import('./chatAbort')
+  return cancelChatAbort(String(requestId || ''))
+})
 
 ipcMain.handle('git:status', async (_event, cwd: string) => getGitStatus(cwd))
 

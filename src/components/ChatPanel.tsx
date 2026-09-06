@@ -191,6 +191,7 @@ export function ChatPanel({
   const sessionIdRef = useRef(sessionId)
   sessionIdRef.current = sessionId
   const prevChatWidthRef = useRef(width)
+  const streamRequestIdRef = useRef<string | null>(null)
 
   // 幅を狭めたタイミングだけ履歴を自動で畳む
   useEffect(() => {
@@ -345,10 +346,9 @@ export function ChatPanel({
     const wantProblems = hasSpecialMention(tokens, 'problems')
     const wantRules = hasSpecialMention(tokens, 'rules')
     const wantCodebase = hasSpecialMention(tokens, 'codebase')
-    // Ask / Agent: @codebase なしでもキーワードがあれば軽量検索
+    // Ask: @codebase なしでもキーワードがあれば軽量検索（Agent は search_code があるので省略して TTFT 改善）
     const autoNeedles = extractCodebaseNeedles(input)
-    const autoCodebase =
-      !wantCodebase && (mode === 'ask' || mode === 'agent') && autoNeedles.length > 0
+    const autoCodebase = !wantCodebase && mode === 'ask' && autoNeedles.length > 0
 
     let indexSummary: string | null = null
     if (
@@ -393,22 +393,26 @@ export function ChatPanel({
             const rel = toRel(tab.path)
             if (rel && !anchors.includes(rel)) anchors.push(rel)
           }
-          for (const needle of needles.slice(0, needleLimit)) {
-            try {
-              const hits = await window.saforall.searchCode(
-                workspacePath,
-                needle,
-                anchors,
-                'chat_codebase'
-              )
-              if (hits && hits !== '一致なし') {
-                hitBlocks.push(
-                  `## ${needle}\n${hits.split('\n').slice(0, lineLimit).join('\n')}`
+          const needleHits = await Promise.all(
+            needles.slice(0, needleLimit).map(async (needle) => {
+              try {
+                const hits = await window.saforall.searchCode(
+                  workspacePath,
+                  needle,
+                  anchors,
+                  'chat_codebase'
                 )
+                if (hits && hits !== '一致なし') {
+                  return `## ${needle}\n${hits.split('\n').slice(0, lineLimit).join('\n')}`
+                }
+              } catch {
+                // ignore
               }
-            } catch {
-              // ignore
-            }
+              return null
+            })
+          )
+          for (const block of needleHits) {
+            if (block) hitBlocks.push(block)
           }
         }
         if (summary.ok) {
@@ -459,14 +463,14 @@ export function ChatPanel({
     const filePaths = new Set<string>([...attachedPaths, ...Array.from(mentioned)])
     if (file?.path) filePaths.delete(file.path)
 
-    // Agent: 開いている他タブを少量自動添付（明示 @ なしでも周辺を見せる）
+    // Agent: 開いている他タブを1本だけ自動添付（過多・遅延を避けつつ周辺コンテキストを残す）
     if (mode === 'agent') {
       let softCount = 0
       for (const open of openFiles) {
-        if (softCount >= 3) break
+        if (softCount >= 1) break
         if (file?.path && open.path === file.path) continue
         if (filePaths.has(open.path)) continue
-        if (open.content.length > 10_000) continue
+        if (open.content.length > 8_000) continue
         filePaths.add(open.path)
         softCount += 1
       }
@@ -505,8 +509,13 @@ export function ChatPanel({
           }
         : null
 
+    // Rules: 明示 @rules のときだけ（Agent は toolAgent 側でも読む）
     let rules: string | null = null
-    if (workspacePath && typeof window.saforall.loadProjectRules === 'function') {
+    if (
+      wantRules &&
+      workspacePath &&
+      typeof window.saforall.loadProjectRules === 'function'
+    ) {
       try {
         rules = await window.saforall.loadProjectRules(workspacePath)
       } catch {
@@ -1057,8 +1066,9 @@ export function ChatPanel({
       let usedTools = false
       let editProposalCount = 0
       let streamFailed: string | null = null
+      let streamCancelled = false
 
-      await window.saforall.chatStream(payload, {
+      const { requestId, done } = window.saforall.chatStream(payload, {
         onEvent: (event) => {
           if (event.type === 'user_message') {
             setBusy({ phase: 'thinking', detail: '応答生成を待機中…' })
@@ -1258,6 +1268,32 @@ export function ChatPanel({
             return
           }
 
+          if (event.type === 'cancelled') {
+            streamCancelled = true
+            setError(null)
+            const note = event.message?.trim() || '応答を取り消しました'
+            setMessages((prev) => {
+              const existing = prev.find((message) => message.id === streamAssistantId)
+              if (existing) {
+                const suffix = existing.content.trim() ? `\n\n（${note}）` : `（${note}）`
+                return prev.map((message) =>
+                  message.id === streamAssistantId
+                    ? { ...message, content: `${message.content.trimEnd()}${suffix}` }
+                    : message
+                )
+              }
+              return [
+                ...prev,
+                {
+                  id: streamAssistantId,
+                  role: 'assistant',
+                  content: `（${note}）`
+                }
+              ]
+            })
+            return
+          }
+
           if (event.type === 'error') {
             streamFailed = event.message
             setError(formatAiUserError(event.message))
@@ -1277,6 +1313,19 @@ export function ChatPanel({
           }
         }
       })
+      streamRequestIdRef.current = requestId
+      try {
+        await done
+      } finally {
+        if (streamRequestIdRef.current === requestId) {
+          streamRequestIdRef.current = null
+        }
+      }
+
+      if (streamCancelled) {
+        void refreshSessions()
+        return
+      }
 
       if (finalAssistantId && finalAssistantContent && usedEngine !== 'cursor' && !usedTools) {
         await runAgentActions(finalAssistantId, finalAssistantContent)
@@ -1307,6 +1356,12 @@ export function ChatPanel({
       setBusy(null)
     }
   }
+
+  const stopChat = useCallback(() => {
+    const id = streamRequestIdRef.current
+    if (!id || typeof window.saforall.cancelChatStream !== 'function') return
+    void window.saforall.cancelChatStream(id)
+  }, [])
 
   const busyLabel =
     busy?.detail ??
@@ -1593,7 +1648,15 @@ export function ChatPanel({
               aria-live="polite"
             >
               <span className="chat-busy-spinner" aria-hidden />
-              <span>{busyLabel}</span>
+              <span className="chat-busy-label">{busyLabel}</span>
+              <button
+                type="button"
+                className="chat-stop-btn"
+                onClick={stopChat}
+                title="応答を停止（Cursor の Stop と同じ）"
+              >
+                停止
+              </button>
             </div>
           )}
 
@@ -1746,10 +1809,17 @@ export function ChatPanel({
               />
             </div>
             <button
-              type="submit"
-              disabled={!chatReady || busy !== null || loading || input.trim() === ''}
+              type={busy ? 'button' : 'submit'}
+              className={busy ? 'chat-stop-submit' : undefined}
+              disabled={
+                busy
+                  ? typeof window.saforall.cancelChatStream !== 'function'
+                  : !chatReady || loading || input.trim() === ''
+              }
+              onClick={busy ? stopChat : undefined}
+              title={busy ? '応答を停止' : undefined}
             >
-              {busy ? '実行中…' : needsApiKeySetup ? 'キー未設定' : !chatReady ? '未接続' : '送信'}
+              {busy ? '停止' : needsApiKeySetup ? 'キー未設定' : !chatReady ? '未接続' : '送信'}
             </button>
           </form>        </div>
 

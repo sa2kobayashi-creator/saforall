@@ -5,13 +5,14 @@ import { join } from 'node:path'
 
 const root = join(import.meta.dirname, '..')
 
-test('Agent auto codebase and soft attach are wired', () => {
+test('Ask auto codebase; Agent skips auto search for TTFT', () => {
   const chat = readFileSync(join(root, 'src/components/ChatPanel.tsx'), 'utf8')
-  assert.match(chat, /mode === 'ask' \|\| mode === 'agent'/)
+  assert.match(chat, /mode === 'ask' && autoNeedles\.length > 0/)
   assert.match(chat, /auto codebase \(\$\{mode\}\)/)
-  assert.match(chat, /開いている他タブを少量自動添付/)
+  assert.match(chat, /開いている他タブを1本だけ自動添付/)
   assert.match(chat, /関連コードは自動検索/)
   assert.match(chat, /activeProblemPaths/)
+  assert.match(chat, /Agent は search_code があるので省略/)
 })
 
 test('localAiRouter includes selection problems and files', () => {
