@@ -25,6 +25,7 @@ import {
   type MentionSuggestion
 } from '../lib/chatMentions'
 import { buildBackendOfflineMessage } from '../lib/backendGuide'
+import { formatAiUserError } from '../lib/aiErrorGuide'
 import './ChatPanel.css'
 
 type Props = {
@@ -34,6 +35,8 @@ type Props = {
   problems?: ProblemItem[]
   backendConnected: boolean
   backendMode?: 'php' | 'local'
+  /** Bumped when Settings are saved so API key readiness refreshes. */
+  settingsRevision?: number
   workspaceId: number | null
   workspacePath: string | null
   width: number
@@ -127,6 +130,7 @@ export function ChatPanel({
   problems = [],
   backendConnected,
   backendMode,
+  settingsRevision = 0,
   workspaceId,
   workspacePath,
   width,
@@ -225,7 +229,7 @@ export function ChatPanel({
     return () => {
       cancelled = true
     }
-  }, [backendConnected])
+  }, [backendConnected, settingsRevision])
 
   const isLocalMode = backendMode === 'local'
   const needsApiKeySetup = isLocalMode && !localLlmReady
@@ -974,7 +978,7 @@ export function ChatPanel({
         }>('POST', '/ai/chat', payload, { timeoutMs: 120_000 })
 
         if (!result.ok || !result.data) {
-          const message = result.error?.message ?? 'AI 応答に失敗しました'
+          const message = formatAiUserError(result.error?.message ?? 'AI 応答に失敗しました')
           setError(message)
           setMessages((prev) => [
             ...prev,
@@ -1214,7 +1218,7 @@ export function ChatPanel({
 
           if (event.type === 'error') {
             streamFailed = event.message
-            setError(event.message)
+            setError(formatAiUserError(event.message))
             setMessages((prev) => {
               const withoutStream = prev.filter(
                 (message) => message.id !== streamAssistantId
@@ -1224,7 +1228,7 @@ export function ChatPanel({
                 {
                   id: crypto.randomUUID(),
                   role: 'assistant',
-                  content: `エラー: ${event.message}`
+                  content: `エラー: ${formatAiUserError(event.message)}`
                 }
               ]
             })
@@ -1446,7 +1450,7 @@ export function ChatPanel({
                 <strong>{localLlmReady ? 'ローカル LLM モード' : '編集専用モード'}</strong>
                 <span>
                   {localLlmReady
-                    ? 'バックエンド未接続です。保存済み API キーで直接 LLM に問い合わせます（会話履歴は未同期）。'
+                    ? '接続はありません。保存済み API キーで直接 LLM に問い合わせます。'
                     : buildBackendOfflineMessage()}
                 </span>
               </div>
@@ -1607,7 +1611,7 @@ export function ChatPanel({
                       : isLocalMode && localLlmReady
                         ? 'ローカル: 質問する…（履歴はアプリ内に保存）'
                         : !backendConnected && localLlmReady
-                          ? 'ローカル LLM: 質問する…（履歴は未同期）'
+                          ? 'ローカル LLM: 質問する…'
                           : busy
                             ? busyLabel ?? '実行中…'
                             : loading

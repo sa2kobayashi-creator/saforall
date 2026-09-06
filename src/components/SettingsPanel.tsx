@@ -39,10 +39,12 @@ import './SettingsPanel.css'
 type Props = {
   open: boolean
   backendConnected: boolean
+  backendMode?: 'php' | 'local'
   workspacePath?: string | null
   onClose: () => void
   onOpenUsage?: () => void
   onStatusMessage?: (message: string) => void
+  onSaved?: () => void
 }
 
 type SettingsMap = Record<string, string | boolean>
@@ -50,10 +52,12 @@ type SettingsMap = Record<string, string | boolean>
 export function SettingsPanel({
   open,
   backendConnected,
+  backendMode,
   workspacePath = null,
   onClose,
   onOpenUsage,
-  onStatusMessage
+  onStatusMessage,
+  onSaved
 }: Props) {
   const { t, locale, setLocale, locales, localeLabels } = useI18n()
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState('https://api.openai.com/v1')
@@ -208,7 +212,7 @@ export function SettingsPanel({
           const local = await window.saforall.getLocalSettings()
           if (!cancelled && local) applySettings(local)
           if (!cancelled) {
-            setStatus('オフライン: ローカル退避の設定を表示しています（保存可）')
+            setStatus(t('settings.loadingLocal'))
             setUsageText(null)
           }
         }
@@ -241,7 +245,7 @@ export function SettingsPanel({
     return () => {
       cancelled = true
     }
-  }, [open, backendConnected, setLocale])
+  }, [open, backendConnected, setLocale, t])
 
   useEffect(() => {
     if (!open) return
@@ -274,7 +278,7 @@ export function SettingsPanel({
 
   const testEngine = async (engine: ProviderEngine) => {
     if (!backendConnected) {
-      setEngineTestStatus(engine, false, 'バックエンド未接続のためテストできません')
+      setEngineTestStatus(engine, false, t('settings.testUnavailable'))
       return
     }
 
@@ -444,7 +448,9 @@ export function SettingsPanel({
         setWorkersTokenSet(true)
         setWorkersToken('')
       }
-      setStatus('ローカルに保存しました（サーバ復帰時に同期します）')
+      setStatus(t('settings.savedLocal'))
+      onStatusMessage?.(t('settings.savedLocal'))
+      onSaved?.()
       return
     }
 
@@ -477,6 +483,7 @@ export function SettingsPanel({
       setWorkersToken('')
     }
     setStatus(t('settings.saved'))
+    onSaved?.()
   }
 
   return (
@@ -486,11 +493,11 @@ export function SettingsPanel({
           <h2>{t('settings.title')}</h2>
         </div>
 
+        {backendConnected && backendMode === 'local' && (
+          <p className="settings-info">{t('settings.localModeHint')}</p>
+        )}
         {!backendConnected && (
-          <p className="settings-warning">
-            バックエンド未接続です。設定はローカルに退避できます。API キーを保存するとチャットのローカル LLM
-            が使えます。復帰後に自動同期します。
-          </p>
+          <p className="settings-warning">{t('settings.backendWarning')}</p>
         )}
 
         <form className="settings-form" onSubmit={(event) => void onSubmit(event)}>

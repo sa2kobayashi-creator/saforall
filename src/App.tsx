@@ -95,6 +95,7 @@ export default function App() {
   const [sidebarView, setSidebarView] = useState<SidebarView>('explorer')
   const [chatOpen, setChatOpen] = useState(initialLayout.chatOpen)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsRevision, setSettingsRevision] = useState(0)
   const [usageMode, setUsageMode] = useState<UsageLayoutMode>(initialLayout.usageMode)
   const [preferredUsageMode, setPreferredUsageMode] = useState<'right' | 'overlay'>(
     initialLayout.usageMode === 'overlay' ? 'overlay' : 'right'
@@ -1242,10 +1243,19 @@ export default function App() {
         setBottomTab('terminal')
         setTerminalOpen((open) => !open)
       }
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.shiftKey &&
+        event.key === 'Enter' &&
+        applyQueue.length > 0
+      ) {
+        event.preventDefault()
+        void acceptAllProposals()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [applyQueue.length, acceptAllProposals])
 
   useEffect(() => {
     if (typeof window.saforall.onLspDiagnostics !== 'function') return
@@ -2041,6 +2051,7 @@ export default function App() {
                 problems={problems}
                 backendConnected={backend.connected}
                 backendMode={backend.mode}
+                settingsRevision={settingsRevision}
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
                 width={chatWidth}
@@ -2053,7 +2064,7 @@ export default function App() {
                   if (editCount > 0) {
                     setComposerOpen(true)
                     showNotice(
-                      `Agent の変更候補が ${editCount} 件あります。Composer で確認して適用してください。`
+                      `変更候補 ${editCount} 件。上部の「すべて適用」または Ctrl+Shift+Enter で一括適用できます`
                     )
                     return
                   }
@@ -2110,6 +2121,7 @@ export default function App() {
       <SettingsPanel
         open={settingsOpen}
         backendConnected={backend.connected}
+        backendMode={backend.mode}
         workspacePath={workspacePath}
         onClose={() => {
           setSettingsOpen(false)
@@ -2124,6 +2136,7 @@ export default function App() {
           setStatus(message)
           showNotice(message)
         }}
+        onSaved={() => setSettingsRevision((n) => n + 1)}
       />
       <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <DocumentationDialog open={docsOpen} onClose={() => setDocsOpen(false)} />

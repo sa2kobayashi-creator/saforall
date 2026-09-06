@@ -40,6 +40,15 @@
   color: #f0d48a;
 }
 
+.settings-info {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #1a2838;
+  color: #cfe4ff;
+  border: 1px solid #3a5a7a;
+}
+
 .settings-form {
   display: flex;
   flex-direction: column;

@@ -49,7 +49,8 @@ export function ComposerPanel({
         onSelect(Math.max(0, activeIndex - 1))
       } else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault()
-        onAcceptOne(activeIndex)
+        if (event.shiftKey) onAcceptAll()
+        else onAcceptOne(activeIndex)
       } else if (event.key === 'Delete' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault()
         onRejectOne(activeIndex)
@@ -57,7 +58,7 @@ export function ComposerPanel({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [proposals.length, activeIndex, onSelect, onAcceptOne, onRejectOne])
+  }, [proposals.length, activeIndex, onSelect, onAcceptOne, onRejectOne, onAcceptAll])
 
   if (proposals.length === 0) return null
 
@@ -73,7 +74,12 @@ export function ComposerPanel({
         </button>
       </div>
       <div className="composer-actions">
-        <button type="button" className="primary" onClick={onAcceptAll}>
+        <button
+          type="button"
+          className="primary"
+          onClick={onAcceptAll}
+          title="Ctrl/Cmd+Shift+Enter"
+        >
           すべて適用
         </button>
         <button type="button" onClick={onRejectAll}>
@@ -128,7 +134,9 @@ export function ComposerPanel({
           )
         })}
       </ul>
-      <p className="composer-hint">↑↓ 選択 · Ctrl+Enter 適用 · Ctrl+Delete 却下</p>
+      <p className="composer-hint">
+        ↑↓ 選択 · Ctrl+Enter 適用 · Ctrl+Shift+Enter すべて適用 · Ctrl+Delete 却下
+      </p>
     </aside>
   )
 }

@@ -127,7 +127,7 @@ export function UsagePanel({
 
   const load = useCallback(async () => {
     if (!backendConnected) {
-      setError('バックエンド未接続のため使用量を取得できません')
+      setError('接続がないため使用量を取得できません。ステータスバーから再確認してください')
       setData(null)
       return
     }
@@ -184,7 +184,9 @@ export function UsagePanel({
         </div>
 
         {!backendConnected && (
-          <p className="usage-warning">バックエンドに接続すると使用量を表示できます。</p>
+          <p className="usage-warning">
+            接続がないため使用量を表示できません。ローカルモードならアプリ再起動後に再確認してください。
+          </p>
         )}
         {error && <p className="usage-error">{error}</p>}
 

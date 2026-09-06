@@ -115,8 +115,7 @@ export function DocumentationDialog({ open, onClose }: SimpleProps) {
             <strong>フォルダを開く</strong> — File → Open Folder、または Welcome 画面からワークスペースを選びます。
           </li>
           <li>
-            <strong>設定</strong> — Ctrl/Cmd + , で API キーや Auto ルーティング、モデル一覧を設定します。XAMPP 上の PHP
-            バックエンドが起動している必要があります。
+            <strong>設定</strong> — Ctrl/Cmd + , で API キーや Auto ルーティング、モデル一覧を設定します。設定と会話履歴はアプリ内に保存されます（XAMPP 不要）。
           </li>
           <li>
             <strong>AI チャット</strong> — Ctrl/Cmd + L で右側のチャットを開き、Ask / Agent モードで質問や編集を依頼します。Agent は verify で `run_shell`（例: npm test）によるシェル検証ループを行います。

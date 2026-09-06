@@ -63,7 +63,7 @@ const ja = {
   'status.checking': '確認中…',
   'status.connected': 'API 接続済み',
   'status.disconnected': 'API 未接続',
-  'status.disconnectedHint': 'API 未接続 — Apache/MySQL',
+  'status.disconnectedHint': 'API 未接続 — 再確認してください',
   'status.dirty': '未保存',
   'status.clean': '保存済み',
   'status.recheck': 'クリックで再確認',
@@ -73,14 +73,19 @@ const ja = {
   'settings.aria': '設定',
   'settings.localeSection': '表示言語',
   'settings.localeHint':
-    'メニュー・サイドバー・拡張パネルなどの表示言語を切り替えます。すぐに反映され、設定保存時にサーバーにも記録されます。',
+    'メニュー・サイドバー・拡張パネルなどの表示言語を切り替えます。すぐに反映され、設定保存時にアプリ内にも記録されます。',
   'settings.localeOption.ja': '日本語',
   'settings.localeOption.en': 'English',
   'settings.backendWarning':
-    'バックエンド未接続です。XAMPP の Apache / MySQL を起動してください。',
+    '接続がありません。設定はアプリ内に保存できます。API キーを保存するとチャットが使えます（XAMPP 不要）。',
+  'settings.localModeHint':
+    'ローカルモード: 設定・API キー・会話履歴はアプリ内に保存されます（XAMPP 不要）。',
   'settings.saved': '設定を保存しました',
   'settings.saveFailed': '保存に失敗しました',
-  'settings.offlineSave': 'バックエンド未接続のため保存できません',
+  'settings.offlineSave': 'ローカル保存が利用できないため保存できません',
+  'settings.savedLocal': 'アプリ内に保存しました',
+  'settings.loadingLocal': 'アプリ内の設定を表示しています（保存可）',
+  'settings.testUnavailable': '接続がないためテストできません。設定を保存してから再試行してください',
 
   'ext.title': '拡張機能',
   'ext.refresh': '更新',
@@ -174,7 +179,7 @@ const en: Record<MessageKey, string> = {
   'status.checking': 'Checking…',
   'status.connected': 'API connected',
   'status.disconnected': 'API offline',
-  'status.disconnectedHint': 'API offline — start Apache/MySQL',
+  'status.disconnectedHint': 'API offline — click to recheck',
   'status.dirty': 'Unsaved',
   'status.clean': 'Saved',
   'status.recheck': 'Click to recheck',
@@ -184,14 +189,19 @@ const en: Record<MessageKey, string> = {
   'settings.aria': 'Settings',
   'settings.localeSection': 'Display language',
   'settings.localeHint':
-    'Switches language for menus, sidebar, and extensions. Applies immediately and is stored when you save settings.',
+    'Switches language for menus, sidebar, and extensions. Applies immediately and is stored in the app when you save.',
   'settings.localeOption.ja': '日本語',
   'settings.localeOption.en': 'English',
   'settings.backendWarning':
-    'Backend offline. Start XAMPP Apache / MySQL.',
+    'Not connected. Settings can be saved in the app. Save an API key to use chat (XAMPP not required).',
+  'settings.localModeHint':
+    'Local mode: settings, API keys, and chat history are stored in the app (XAMPP not required).',
   'settings.saved': 'Settings saved',
   'settings.saveFailed': 'Failed to save settings',
-  'settings.offlineSave': 'Cannot save while backend is offline',
+  'settings.offlineSave': 'Local save is unavailable',
+  'settings.savedLocal': 'Saved in the app',
+  'settings.loadingLocal': 'Showing in-app settings (editable)',
+  'settings.testUnavailable': 'Cannot test while disconnected. Save settings and try again',
 
   'ext.title': 'Extensions',
   'ext.refresh': 'Refresh',

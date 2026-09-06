@@ -669,12 +669,20 @@ export function EditorPane({
     return (
       <div className="editor-empty">
         <h1>saforall</h1>
-        <p>左のツリーからファイルを開くと、タブで複数編集できます。</p>
-        <p className="hint">保存: Ctrl / Cmd + S（フォーカス時）</p>
-        <p className="hint">Tab 補完: 入力を止めると候補が出ます（Tab で確定）</p>
-        <p className="hint">Ctrl/Cmd + K: 選択範囲を AI インライン編集</p>
-        <p className="hint">左余白クリックでブレークポイント / Shift+F5 でデバッグ</p>
-        <p className="hint">タブ右端をドラッグすると幅を変更できます</p>
+        {workspacePath ? (
+          <>
+            <p>ワークスペースは開いています。左の Explorer からファイルを選んでください。</p>
+            <p className="hint">Ctrl/Cmd + P … クイックオープン</p>
+            <p className="hint">Ctrl/Cmd + L … AI チャット</p>
+            <p className="hint">Ctrl/Cmd + Shift + F … コード検索</p>
+            <p className="hint">保存: Ctrl/Cmd + S · Ctrl/Cmd + K: インライン編集</p>
+          </>
+        ) : (
+          <>
+            <p>フォルダを開くと、左ツリーからファイルを編集できます。</p>
+            <p className="hint">File → Open Folder、または Welcome の「フォルダを開く」</p>
+          </>
+        )}
       </div>
     )
   }

@@ -25,11 +25,16 @@ export function PendingEditsBar({
         {name ? ` · 先頭: ${name}` : ''}
       </span>
       <div className="pending-edits-actions">
+        <button
+          type="button"
+          className="primary"
+          onClick={onAcceptAll}
+          title="Ctrl/Cmd+Shift+Enter"
+        >
+          すべて適用
+        </button>
         <button type="button" onClick={onReview}>
           差分を確認
-        </button>
-        <button type="button" className="primary" onClick={onAcceptAll}>
-          すべて適用
         </button>
         <button type="button" onClick={onRejectAll}>
           すべて却下
