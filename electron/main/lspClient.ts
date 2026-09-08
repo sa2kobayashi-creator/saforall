@@ -273,14 +273,18 @@ export class LspClient extends EventEmitter {
       this.emit('log', chunk.toString('utf-8'))
     })
     this.child.on('error', (error) => {
-      for (const waiter of Array.from(this.waiters.values())) {
-        waiter.reject(error instanceof Error ? error : new Error(String(error)))
-      }
-      this.waiters.clear()
+      this.failPending(error instanceof Error ? error : new Error(String(error)))
       this.child = null
       this.emit('exit')
     })
-    this.child.on('exit', () => {
+    this.child.on('exit', (code, signal) => {
+      // Without this every in-flight completion/hover/definition hangs until the
+      // 15s timeout, long after the server is already gone.
+      this.failPending(
+        new Error(
+          `${this.sourceLabel} language server exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`
+        )
+      )
       this.child = null
       this.emit('exit')
     })
@@ -697,10 +701,17 @@ export class LspClient extends EventEmitter {
       // ignore
     }
     this.child = null
-    for (const waiter of Array.from(this.waiters.values())) {
-      waiter.reject(new Error('lsp closed'))
-    }
+    this.failPending(new Error('lsp closed'))
+  }
+
+  /** Rejects every in-flight request; used whenever the transport goes away. */
+  private failPending(error: Error): void {
+    if (this.waiters.size === 0) return
+    const pending = Array.from(this.waiters.values())
     this.waiters.clear()
+    for (const waiter of pending) {
+      waiter.reject(error)
+    }
   }
 
   private onData(chunk: string): void {
@@ -852,6 +863,12 @@ export class LspManager {
     client.on('diagnostics', (payload: { path: string; diagnostics: LspDiagnostic[] }) => {
       this.byPath.set(normalizeDiagPath(payload.path), payload.diagnostics)
       this.emitAll()
+    })
+    // The client emits server stderr; with nobody listening a server that fails
+    // to start (missing tsserver, broken pylsp) looks like "LSP just does nothing".
+    client.on('log', (chunk: string) => {
+      const text = String(chunk ?? '').trim()
+      if (text) console.warn(`[lsp:${config.languageId}] ${text}`)
     })
     client.on('exit', () => {
       this.clients.delete(config.languageId)

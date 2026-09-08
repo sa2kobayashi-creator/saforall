@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react'
 import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
 import type { ChatMode } from '../types'
 import './MessageContent.css'
@@ -10,14 +11,18 @@ type Props = {
   onApplyCode: (code: string, pathHint?: string, language?: string) => void
 }
 
-export function MessageContent({
+/**
+ * Memoized because every streaming delta re-renders the whole message list;
+ * without it each token re-parses the code fences of the entire history.
+ */
+export const MessageContent = memo(function MessageContent({
   content,
   showApply,
   mode,
   autoApplied = false,
   onApplyCode
 }: Props) {
-  const parts = parseMessageParts(content)
+  const parts = useMemo(() => parseMessageParts(content), [content])
 
   return (
     <div className="message-content">
@@ -73,4 +78,4 @@ export function MessageContent({
       })}
     </div>
   )
-}
+})

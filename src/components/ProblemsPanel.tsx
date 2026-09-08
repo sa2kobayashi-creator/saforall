@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { groupProblemsByPath, type ProblemLike } from '../lib/problems'
+import { useIncrementalList } from '../lib/incrementalList'
 import './ProblemsPanel.css'
 
 export type ProblemItem = ProblemLike
@@ -20,13 +21,40 @@ export function ProblemsPanel({ problems, onOpenFile, onAskAi }: Props) {
       ) : (
         <div className="problems-groups">
           {groups.map((group) => (
-            <div key={group.path} className="problems-group">
+            <ProblemGroup
+              key={group.path}
+              group={group}
+              onOpenFile={onOpenFile}
+              onAskAi={onAskAi}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+type Group = ReturnType<typeof groupProblemsByPath>[number]
+
+function ProblemGroup({
+  group,
+  onOpenFile,
+  onAskAi
+}: {
+  group: Group
+  onOpenFile?: Props['onOpenFile']
+  onAskAi?: Props['onAskAi']
+}) {
+  const { visible, hidden, showMore } = useIncrementalList(group.items)
+
+  return (
+            <div className="problems-group">
               <div className="problems-group-head" title={group.path}>
                 <span className="problems-group-path">{group.path}</span>
                 <span className="problems-group-count">{group.items.length}</span>
               </div>
               <ul className="problems-list">
-                {group.items.map((item) => (
+                {visible.map((item) => (
                   <li key={item.id} className={`problems-item severity-${item.severity}`}>
                     <span className="problems-severity">{item.severity}</span>
                     <span className="problems-source">{item.source}</span>
@@ -61,11 +89,14 @@ export function ProblemsPanel({ problems, onOpenFile, onAskAi }: Props) {
                     )}
                   </li>
                 ))}
+                {hidden > 0 && (
+                  <li className="problems-item problems-more">
+                    <button type="button" className="problems-message" onClick={showMore}>
+                      さらに {hidden} 件を表示
+                    </button>
+                  </li>
+                )}
               </ul>
             </div>
-          ))}
-        </div>
-      )}
-    </section>
   )
 }

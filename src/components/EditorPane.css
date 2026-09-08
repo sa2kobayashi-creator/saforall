@@ -269,6 +269,15 @@
   font-family: Consolas, 'Cascadia Code', monospace;
 }
 
+.editor-perf-bar {
+  padding: 3px 10px;
+  background: #1e2a33;
+  border-bottom: 1px solid #2f4250;
+  color: #9fc3dd;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
 .editor-conflict-bar {
   display: flex;
   align-items: center;

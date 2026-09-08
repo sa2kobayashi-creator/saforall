@@ -1,30 +1,56 @@
-import { loader } from '@monaco-editor/react'
-import * as monaco from 'monaco-editor'
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
-import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
-import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
-import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker'
-import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
-import 'monaco-editor/min/vs/editor/editor.main.css'
+import { useEffect, useState } from 'react'
 
 /**
- * Electron CSP (script-src 'self') blocks the default CDN loader used by
- * @monaco-editor/react. Bundle monaco locally and wire Vite workers.
+ * Monaco is a multi-megabyte dependency. Loading it from the entry chunk cost
+ * the same startup time whether or not the user ever opened a file, so it now
+ * lives behind a dynamic import that only editor-bearing components trigger.
  */
-export function setupMonaco(): void {
-  ;(globalThis as typeof globalThis & {
-    MonacoEnvironment?: {
-      getWorker: (workerId: string, label: string) => Worker
-    }
-  }).MonacoEnvironment = {
-    getWorker(_workerId: string, label: string): Worker {
-      if (label === 'json') return new jsonWorker()
-      if (label === 'css' || label === 'scss' || label === 'less') return new cssWorker()
-      if (label === 'html' || label === 'handlebars' || label === 'razor') return new htmlWorker()
-      if (label === 'typescript' || label === 'javascript') return new tsWorker()
-      return new editorWorker()
-    }
-  }
 
-  loader.config({ monaco })
+let readyPromise: Promise<void> | null = null
+let ready = false
+
+export function isMonacoReady(): boolean {
+  return ready
+}
+
+/** Idempotent: concurrent callers share one load. */
+export function setupMonaco(): Promise<void> {
+  if (!readyPromise) {
+    readyPromise = import('./monacoBootstrap')
+      .then((module) => module.bootstrapMonaco())
+      .then(() => {
+        ready = true
+      })
+      .catch((error) => {
+        // Allow a later mount to retry instead of wedging the editor forever.
+        readyPromise = null
+        throw error
+      })
+  }
+  return readyPromise
+}
+
+/**
+ * Components that render a Monaco editor call this and hold a placeholder until
+ * it returns true. Mounting `<Editor>` before `loader.config` runs would make
+ * @monaco-editor/react fall back to its CDN loader, which Electron's CSP blocks.
+ */
+export function useMonacoReady(): boolean {
+  const [loaded, setLoaded] = useState(ready)
+
+  useEffect(() => {
+    if (loaded) return
+    let cancelled = false
+    void setupMonaco().then(
+      () => {
+        if (!cancelled) setLoaded(true)
+      },
+      () => undefined
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [loaded])
+
+  return loaded
 }

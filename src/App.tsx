@@ -6,20 +6,24 @@ import { SearchPanel } from './components/SearchPanel'
 import { SourceControlPanel } from './components/SourceControlPanel'
 import { CloneDialog } from './components/CloneDialog'
 import { EditorPane } from './components/EditorPane'
-import { ChatPanel } from './components/ChatPanel'
-import { SettingsPanel } from './components/SettingsPanel'
 import { StatusBar } from './components/StatusBar'
 import { ResizeHandle } from './components/ResizeHandle'
-import {
-  BottomPanel,
-  type BottomPanelTab
-} from './components/BottomPanel'
+import type { BottomPanelTab } from './components/BottomPanel'
 import type { ProblemItem } from './components/ProblemsPanel'
 import { ApplyPathDialog } from './components/ApplyPathDialog'
-import { ApplyDiffDialog, type ApplyDiffProposal } from './components/ApplyDiffDialog'
-import { ScmDiffDialog, type ScmDiffView } from './components/ScmDiffDialog'
+import type { ApplyDiffProposal } from './components/ApplyDiffDialog'
+import type { ScmDiffView } from './components/ScmDiffDialog'
 import { PendingEditsBar } from './components/PendingEditsBar'
-import { ComposerPanel } from './components/ComposerPanel'
+// Loaded on demand; see lazyPanels for why these are not in the entry chunk.
+import {
+  ApplyDiffDialog,
+  BottomPanel,
+  ChatPanel,
+  ComposerPanel,
+  ScmDiffDialog,
+  SettingsPanel,
+  UsagePanel
+} from './components/lazyPanels'
 import { QuickOpenDialog } from './components/QuickOpenDialog'
 import { CommandPalette, BUILTIN_PALETTE_COMMANDS } from './components/CommandPalette'
 import { SymbolPickerDialog } from './components/SymbolPickerDialog'
@@ -32,7 +36,6 @@ import { loadWorkspaceKeybindings, matchKeybinding } from './lib/keybindings'
 import { loadAutoSaveDelayMs, loadAutoSaveEnabled } from './lib/autoSave'
 import { loadExtensionGrants, saveExtensionGrants } from './lib/extensionPermissions'
 import type { ExtensionPermission, WorkspaceExtension } from './types/extensions'
-import { UsagePanel } from './components/UsagePanel'
 import { WelcomeScreen } from './components/WelcomeScreen'
 import {
   AboutDialog,
@@ -57,6 +60,7 @@ import {
 } from './lib/applyProposals'
 import { languageFromPath } from './lib/language'
 import { prefetchAllModelCatalogs } from './lib/modelCatalogCache'
+import { fetchAppSettings, invalidateAppSettings } from './lib/settingsCache'
 import { parseLocale, useI18n } from './i18n'
 import { mergeProblems } from './lib/problems'
 import {
@@ -264,20 +268,20 @@ export default function App() {
     if (!backend.connected) return
     let cancelled = false
     ;(async () => {
-      await prefetchAllModelCatalogs()
-      if (!cancelled) {
-        window.dispatchEvent(new CustomEvent('saforall-model-catalog-updated', { detail: {} }))
-      }
-      try {
-        const result = await window.saforall.request<{
-          settings: Record<string, string | boolean>
-        }>('GET', '/settings')
-        if (cancelled || !result.ok || !result.data?.settings) return
-        const value = result.data.settings['app.locale']
-        if (typeof value === 'string') setLocale(parseLocale(value))
-      } catch {
-        /* ignore */
-      }
+      // The locale read used to wait on the five model-catalog requests.
+      const [, settings] = await Promise.all([
+        prefetchAllModelCatalogs().then(() => {
+          if (!cancelled) {
+            window.dispatchEvent(
+              new CustomEvent('saforall-model-catalog-updated', { detail: {} })
+            )
+          }
+        }),
+        fetchAppSettings()
+      ])
+      if (cancelled || !settings) return
+      const value = settings['app.locale']
+      if (typeof value === 'string') setLocale(parseLocale(value))
     })()
     return () => {
       cancelled = true
@@ -1305,18 +1309,35 @@ export default function App() {
     }
   }, [])
 
+  const splitFile = splitPath ? tabs.find((tab) => tab.path === splitPath) ?? null : null
+
   useEffect(() => {
-    if (!workspacePath || !activeFile) return
+    if (!workspacePath) return
     if (typeof window.saforall.syncLsp !== 'function') return
+    // Both panes are editable, so syncing only the primary leaves the split
+    // file's diagnostics and completions running against pre-edit text.
+    const targets = [activeFile, splitFile].filter(
+      (file, index, all): file is OpenFile =>
+        file != null && all.findIndex((other) => other?.path === file.path) === index
+    )
+    if (targets.length === 0) return
     const handle = window.setTimeout(() => {
-      void window.saforall.syncLsp({
-        cwd: workspacePath,
-        path: activeFile.path,
-        content: activeFile.content
-      })
+      for (const file of targets) {
+        void window.saforall.syncLsp({
+          cwd: workspacePath,
+          path: file.path,
+          content: file.content
+        })
+      }
     }, 700)
     return () => window.clearTimeout(handle)
-  }, [workspacePath, activeFile?.path, activeFile?.content])
+  }, [
+    workspacePath,
+    activeFile?.path,
+    activeFile?.content,
+    splitFile?.path,
+    splitFile?.content
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -2192,7 +2213,10 @@ export default function App() {
           setStatus(message)
           showNotice(message)
         }}
-        onSaved={() => setSettingsRevision((n) => n + 1)}
+        onSaved={() => {
+          invalidateAppSettings()
+          setSettingsRevision((n) => n + 1)
+        }}
       />
       <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <DocumentationDialog open={docsOpen} onClose={() => setDocsOpen(false)} />

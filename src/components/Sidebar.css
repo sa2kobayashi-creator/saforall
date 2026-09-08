@@ -89,6 +89,12 @@
   background: #37373d;
 }
 
+.file-item.file-more {
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .file-name {
   overflow: hidden;
   text-overflow: ellipsis;

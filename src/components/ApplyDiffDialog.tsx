@@ -1,5 +1,6 @@
 import { DiffEditor } from '@monaco-editor/react'
 import { useEffect } from 'react'
+import { useMonacoReady } from '../lib/monacoSetup'
 import './ApplyDiffDialog.css'
 
 export type ApplyDiffProposal = {
@@ -41,6 +42,7 @@ export function ApplyDiffDialog({
   onAcceptAll,
   onRejectAll
 }: Props) {
+  const monacoReady = useMonacoReady()
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent) => {
@@ -88,6 +90,9 @@ export function ApplyDiffDialog({
         </div>
 
         <div className="apply-diff-editor">
+          {!monacoReady ? (
+            <div className="editor-loading">エディタを読み込み中…</div>
+          ) : (
           <DiffEditor
             original={proposal.original}
             modified={proposal.modified}
@@ -104,6 +109,7 @@ export function ApplyDiffDialog({
               wordWrap: 'on'
             }}
           />
+          )}
         </div>
 
         <div className="apply-diff-actions">

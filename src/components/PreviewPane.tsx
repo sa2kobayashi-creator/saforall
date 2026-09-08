@@ -2,6 +2,8 @@ import { useMemo } from 'react'
 import { marked } from 'marked'
 import './PreviewPane.css'
 
+export { supportsPreview } from '../lib/previewSupport'
+
 type Props = {
   language: string
   content: string
@@ -83,13 +85,6 @@ function toPreviewHtml(language: string, content: string): string {
 
   const parsed = marked.parse(content, { async: false, gfm: true, breaks: false })
   return typeof parsed === 'string' ? parsed : String(parsed)
-}
-
-export function supportsPreview(language: string, path?: string | null): boolean {
-  const lower = (language || '').toLowerCase()
-  if (lower === 'markdown' || lower === 'html') return true
-  const name = (path || '').toLowerCase()
-  return name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.html') || name.endsWith('.htm')
 }
 
 export function PreviewPane({ language, content, fileName = 'preview' }: Props) {

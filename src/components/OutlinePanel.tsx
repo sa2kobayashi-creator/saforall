@@ -137,7 +137,11 @@ export function EditorBreadcrumbs({
   )
 }
 
-export function useDocumentSymbols(activePath: string | null): OutlineSymbol[] {
+/**
+ * `revision` should change when the buffer changes so the outline and
+ * breadcrumbs follow edits instead of going stale until the next tab switch.
+ */
+export function useDocumentSymbols(activePath: string | null, revision = 0): OutlineSymbol[] {
   const [symbols, setSymbols] = useState<OutlineSymbol[]>([])
   useEffect(() => {
     if (!activePath || typeof window.saforall.lspDocumentSymbols !== 'function') {
@@ -159,6 +163,6 @@ export function useDocumentSymbols(activePath: string | null): OutlineSymbol[] {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [activePath])
+  }, [activePath, revision])
   return symbols
 }

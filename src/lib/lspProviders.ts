@@ -1,4 +1,5 @@
 import type { Monaco } from '@monaco-editor/react'
+import { COMPLETION_TIMEOUT_MS, withTimeout } from './editorPerf'
 
 type Disposables = Array<{ dispose: () => void }>
 
@@ -96,7 +97,12 @@ function mapKind(monaco: Monaco, kind?: number): number {
 
 export function registerLspProviders(
   monaco: Monaco,
-  getMeta: () => { path: string; language: string } | null,
+  /**
+   * Receives the model the request came from. Providers are global, so with a
+   * split editor the caller must resolve the model to know which pane asked;
+   * ignoring it sends the split pane's requests against the primary file.
+   */
+  getMeta: (model?: unknown) => { path: string; language: string } | null,
   onOpenDefinition: (path: string, line: number, column?: number) => void,
   onApplyEdits?: (edits: LspTextEdit[]) => Promise<void> | void
 ): void {
@@ -120,7 +126,7 @@ export function registerLspProviders(
           _context: unknown,
           token: CancellationToken
         ) => {
-          const meta = getMeta()
+          const meta = getMeta(model)
           if (!meta || typeof window.saforall.lspCompletion !== 'function') {
             return { suggestions: [] }
           }
@@ -132,11 +138,17 @@ export function registerLspProviders(
             endColumn: word.endColumn
           }
           try {
-            const items = await window.saforall.lspCompletion({
-              path: meta.path,
-              line: position.lineNumber - 1,
-              character: position.column - 1
-            })
+            // A slow tsserver otherwise leaves the suggest widget spinning while
+            // the user keeps typing; give up and let the next keystroke retry.
+            const items = await withTimeout(
+              window.saforall.lspCompletion({
+                path: meta.path,
+                line: position.lineNumber - 1,
+                character: position.column - 1
+              }),
+              COMPLETION_TIMEOUT_MS,
+              []
+            )
             if (token.isCancellationRequested) return { suggestions: [] }
             return {
               suggestions: items.map((item) => ({
@@ -158,11 +170,11 @@ export function registerLspProviders(
     disposables.push(
       monaco.languages.registerDefinitionProvider(language, {
         provideDefinition: async (
-          _model: unknown,
+          model: unknown,
           position: Position,
           token: CancellationToken
         ) => {
-          const meta = getMeta()
+          const meta = getMeta(model)
           if (!meta || typeof window.saforall.lspDefinition !== 'function') return null
           try {
             const locs = await window.saforall.lspDefinition({
@@ -184,8 +196,8 @@ export function registerLspProviders(
 
     disposables.push(
       monaco.languages.registerHoverProvider(language, {
-        provideHover: async (_model: unknown, position: Position, token: CancellationToken) => {
-          const meta = getMeta()
+        provideHover: async (model: unknown, position: Position, token: CancellationToken) => {
+          const meta = getMeta(model)
           if (!meta || typeof window.saforall.lspHover !== 'function') return null
           try {
             const hover = await Promise.race([
@@ -198,9 +210,9 @@ export function registerLspProviders(
             ])
             if (token.isCancellationRequested || !hover?.contents) return null
             const word =
-              typeof (_model as { getWordAtPosition?: (p: Position) => { startColumn: number; endColumn: number } | null })
+              typeof (model as { getWordAtPosition?: (p: Position) => { startColumn: number; endColumn: number } | null })
                 .getWordAtPosition === 'function'
-                ? (_model as {
+                ? (model as {
                     getWordAtPosition: (p: Position) => {
                       startColumn: number
                       endColumn: number
@@ -231,11 +243,11 @@ export function registerLspProviders(
         signatureHelpTriggerCharacters: ['(', ','],
         signatureHelpRetriggerCharacters: [','],
         provideSignatureHelp: async (
-          _model: unknown,
+          model: unknown,
           position: Position,
           token: CancellationToken
         ) => {
-          const meta = getMeta()
+          const meta = getMeta(model)
           if (!meta || typeof window.saforall.lspSignatureHelp !== 'function') {
             return null
           }
@@ -276,12 +288,12 @@ export function registerLspProviders(
     disposables.push(
       monaco.languages.registerReferenceProvider(language, {
         provideReferences: async (
-          _model: unknown,
+          model: unknown,
           position: Position,
           _context: unknown,
           token: CancellationToken
         ) => {
-          const meta = getMeta()
+          const meta = getMeta(model)
           if (!meta || typeof window.saforall.lspReferences !== 'function') return []
           try {
             const locs = await window.saforall.lspReferences({
@@ -316,7 +328,7 @@ export function registerLspProviders(
           newName: string,
           token: CancellationToken
         ) => {
-          const meta = getMeta()
+          const meta = getMeta(model)
           if (!meta || typeof window.saforall.lspRename !== 'function') {
             return { edits: [], rejectReason: 'LSP rename unavailable' }
           }
@@ -390,7 +402,7 @@ export function registerLspProviders(
     disposables.push(
       monaco.languages.registerInlayHintsProvider(language, {
         provideInlayHints: async (
-          _model: unknown,
+          model: unknown,
           range: {
             startLineNumber: number
             startColumn: number
@@ -399,7 +411,7 @@ export function registerLspProviders(
           },
           token: CancellationToken
         ) => {
-          const meta = getMeta()
+          const meta = getMeta(model)
           if (!meta || typeof window.saforall.lspInlayHints !== 'function') {
             return { hints: [], dispose: () => undefined }
           }
@@ -442,7 +454,7 @@ export function registerLspProviders(
     disposables.push(
       monaco.languages.registerCodeActionProvider(language, {
         provideCodeActions: async (
-          _model: unknown,
+          model: unknown,
           range: {
             startLineNumber: number
             startColumn: number
@@ -452,7 +464,7 @@ export function registerLspProviders(
           _context: unknown,
           token: CancellationToken
         ) => {
-          const meta = getMeta()
+          const meta = getMeta(model)
           if (!meta || typeof window.saforall.lspCodeActions !== 'function') {
             return { actions: [], dispose: () => undefined }
           }

@@ -84,6 +84,11 @@
   color: var(--text-muted);
 }
 
+.problems-more .problems-message {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
 .problems-message {
   border: none;
   background: transparent;

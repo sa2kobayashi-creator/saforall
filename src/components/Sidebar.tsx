@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useI18n } from '../i18n'
+import { useIncrementalList } from '../lib/incrementalList'
 import './Sidebar.css'
 
 type DirEntry = {
@@ -7,6 +8,9 @@ type DirEntry = {
   path: string
   isDirectory: boolean
 }
+
+/** Stable identity so the paging hook does not reset while children load. */
+const EMPTY_ENTRIES: DirEntry[] = []
 
 type Props = {
   workspacePath: string | null
@@ -48,6 +52,7 @@ function TreeNode({
   const [children, setChildren] = useState<DirEntry[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const childPage = useIncrementalList(children ?? EMPTY_ENTRIES)
 
   const loadChildren = useCallback(async () => {
     setLoading(true)
@@ -97,7 +102,7 @@ function TreeNode({
           {loading && <li className="file-meta">読み込み中…</li>}
           {error && <li className="file-meta error">{error}</li>}
           {!loading && children?.length === 0 && <li className="file-meta">空のフォルダ</li>}
-          {children?.map((child) => (
+          {childPage.visible.map((child) => (
             <TreeNode
               key={child.path}
               entry={child}
@@ -109,6 +114,18 @@ function TreeNode({
               onContextMenu={onContextMenu}
             />
           ))}
+          {childPage.hidden > 0 && (
+            <li>
+              <button
+                type="button"
+                className="file-item file-more"
+                style={{ paddingLeft: `${12 + (depth + 1) * 14}px` }}
+                onClick={childPage.showMore}
+              >
+                さらに {childPage.hidden} 件を表示
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </li>
@@ -129,6 +146,7 @@ export function Sidebar({
   const [refreshToken, setRefreshToken] = useState(0)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const rootPage = useIncrementalList(entries)
   const { t } = useI18n()
 
   const reloadRoot = useCallback(async () => {
@@ -255,7 +273,7 @@ export function Sidebar({
         >
           {error && <p className="file-meta error">{error}</p>}
           <ul className="file-list">
-            {entries.map((entry) => (
+            {rootPage.visible.map((entry) => (
               <TreeNode
                 key={entry.path}
                 entry={entry}
@@ -278,6 +296,17 @@ export function Sidebar({
                 }}
               />
             ))}
+            {rootPage.hidden > 0 && (
+              <li>
+                <button
+                  type="button"
+                  className="file-item file-more"
+                  onClick={rootPage.showMore}
+                >
+                  さらに {rootPage.hidden} 件を表示
+                </button>
+              </li>
+            )}
           </ul>
         </div>
       )}

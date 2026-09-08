@@ -4,6 +4,7 @@ import { MessageContent } from './MessageContent'
 import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
 import { languageFromPath } from '../lib/language'
 import { DEFAULT_COST_LIMITS, USAGE_ENGINE_KEYS, DEFAULT_ENABLED_MODELS, optionsForEngine, parseModelList, type ProviderEngine } from '../lib/llmModels'
+import { fetchAppSettings } from '../lib/settingsCache'
 import type {
   AiEngine,
   ApplyCodeOptions,
@@ -250,15 +251,13 @@ export function ChatPanel({
 
     let cancelled = false
     ;(async () => {
-      const [usageResult, settingsResult] = await Promise.all([
+      const [usageResult, settings] = await Promise.all([
         window.saforall.request<{
           month: string
           usage: Record<string, { spent: number; limit: number; remaining: number }>
         }>('GET', '/ai/usage'),
-        window.saforall.request<{ settings: Record<string, string | boolean> }>(
-          'GET',
-          '/settings'
-        )
+        // Shared with App's locale read so startup issues one /settings request.
+        fetchAppSettings()
       ])
       if (cancelled) return
 
@@ -272,8 +271,7 @@ export function ChatPanel({
         setUsageText(parts.join(' · '))
       }
 
-      if (settingsResult.ok && settingsResult.data?.settings) {
-        const settings = settingsResult.data.settings
+      if (settings) {
         setEnabledByEngine({
           openai: parseModelList(settings['llm.openai.models'], DEFAULT_ENABLED_MODELS.openai),
           gemini: parseModelList(settings['llm.gemini.models'], DEFAULT_ENABLED_MODELS.gemini),

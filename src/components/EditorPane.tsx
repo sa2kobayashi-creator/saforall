@@ -1,12 +1,12 @@
 import Editor, { type OnMount } from '@monaco-editor/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EditorSelection, OpenFile } from '../types'
 import type { ProblemItem } from './ProblemsPanel'
 import type { DebugBreakpointMap } from '../lib/debugTypes'
 import { disposeTabCompletions, registerTabCompletions } from '../lib/tabCompletions'
 import { disposeLspProviders, registerLspProviders } from '../lib/lspProviders'
 import { InlineEditBar, type InlineEditTarget } from './InlineEditBar'
-import { PreviewPane, supportsPreview } from './PreviewPane'
+import { supportsPreview } from '../lib/previewSupport'
 import {
   EditorBreadcrumbs,
   OutlinePanel,
@@ -17,8 +17,22 @@ import {
   resolveMergeConflict,
   type MergeConflictHunk
 } from '../lib/mergeConflicts'
+import {
+  MARKER_DEBOUNCE_MS,
+  OUTLINE_DEBOUNCE_MS,
+  debounce,
+  editorOptionsForTier,
+  editorPerfTier,
+  hasConflictMarkers,
+  perfNoticeForTier
+} from '../lib/editorPerf'
+import { useMonacoReady } from '../lib/monacoSetup'
 import './EditorPane.css'
-import './PreviewPane.css'
+
+// Pulls in `marked`, which only matters once the user asks for a preview.
+const PreviewPane = lazy(() =>
+  import('./PreviewPane').then((module) => ({ default: module.PreviewPane }))
+)
 
 type PreviewMode = 'edit' | 'preview' | 'split'
 
@@ -102,10 +116,21 @@ export function EditorPane({
   onStatusMessage
 }: Props) {
   const file = tabs.find((tab) => tab.path === activePath) ?? null
+  // Re-classify only when the buffer changes size materially, so typing does
+  // not rescan the whole file for newlines on every render.
+  const sizeBucket = Math.floor((file?.content.length ?? 0) / 4096)
+  const perfTier = useMemo(
+    () => editorPerfTier(file?.content ?? ''),
+    [activePath, sizeBucket] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const editorOptions = useMemo(() => editorOptionsForTier(perfTier), [perfTier])
+  const perfNotice = perfNoticeForTier(perfTier)
   const dragRef = useRef<{ path: string; startX: number; startWidth: number } | null>(
     null
   )
-  const symbols = useDocumentSymbols(activePath)
+  const monacoReady = useMonacoReady()
+  const [symbolRevision, setSymbolRevision] = useState(0)
+  const symbols = useDocumentSymbols(activePath, symbolRevision)
   const [cursorLine, setCursorLine] = useState(1)
   const [blameOn, setBlameOn] = useState(false)
   const blameDecorationsRef = useRef<string[]>([])
@@ -166,6 +191,7 @@ export function EditorPane({
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null)
   const decorationIdsRef = useRef<string[]>([])
+  const emitMarkersRef = useRef<ReturnType<typeof debounce<[]>> | null>(null)
   const [inlineTarget, setInlineTarget] = useState<InlineEditTarget | null>(null)
   const [previewMode, setPreviewMode] = useState<PreviewMode>('edit')
   const [peek, setPeek] = useState<{
@@ -317,6 +343,34 @@ export function EditorPane({
     }
   }, [registerProviders])
 
+  // @monaco-editor/react keeps one model per tab URI and never frees it, so a
+  // long session holds the full text of every file ever opened. Only the
+  // provider-owning pane cleans up, to avoid disposing the same model twice.
+  const openPathsRef = useRef<string[]>([])
+  useEffect(() => {
+    const open = tabs.map((tab) => tab.path)
+    const previous = openPathsRef.current
+    openPathsRef.current = open
+    const monaco = monacoRef.current
+    if (!registerProviders || !monaco) return
+    for (const path of previous) {
+      if (open.indexOf(path) !== -1) continue
+      const model = monaco.editor.getModel(monaco.Uri.parse(path))
+      if (model && !model.isDisposed()) model.dispose()
+    }
+  }, [tabs, registerProviders])
+
+  // Outline/breadcrumbs otherwise stay stale until the next tab switch. Trails
+  // the LSP didChange debounce so tsserver already has the new text.
+  useEffect(() => {
+    if (!activePath) return
+    const timer = window.setTimeout(
+      () => setSymbolRevision((value) => value + 1),
+      OUTLINE_DEBOUNCE_MS
+    )
+    return () => window.clearTimeout(timer)
+  }, [activePath, file?.content])
+
   useEffect(() => {
     const editor = editorRef.current
     if (!editor || !revealLine || revealLine < 1) return
@@ -362,7 +416,7 @@ export function EditorPane({
       decorationIdsRef.current,
       decorations as never
     )
-  }, [breakpoints, pausedLine, activePath, file?.content])
+  }, [breakpoints, pausedLine, activePath])
 
   useEffect(() => {
     const editor = editorRef.current
@@ -421,12 +475,15 @@ export function EditorPane({
     return () => {
       cancelled = true
     }
-  }, [blameOn, activePath, workspacePath, file?.content])
+    // Blame is keyed to disk state: refetch on save, not on every keystroke.
+  }, [blameOn, activePath, workspacePath, file?.dirty])
 
   useEffect(() => {
     const content = file?.content ?? ''
-    const hunks = parseMergeConflicts(content)
-    setConflicts(hunks)
+    // Splitting the whole buffer on every keystroke is wasted work for the
+    // ~always case of a file without conflict markers.
+    const hunks = hasConflictMarkers(content) ? parseMergeConflicts(content) : []
+    setConflicts((current) => (current.length === 0 && hunks.length === 0 ? current : hunks))
     setActiveConflict((index) => (hunks.length === 0 ? 0 : Math.min(index, hunks.length - 1)))
   }, [file?.content, activePath])
 
@@ -471,7 +528,7 @@ export function EditorPane({
       conflictDecorationsRef.current,
       decorations as never
     )
-  }, [conflicts, activePath, file?.content])
+  }, [conflicts, activePath])
 
   const applyConflictResolve = useCallback(
     (mode: 'current' | 'incoming' | 'both') => {
@@ -491,6 +548,28 @@ export function EditorPane({
     [file, conflicts, activeConflict, onChange]
   )
 
+  /**
+   * Monaco providers are registered once but serve both editor panes, so the
+   * requesting model decides which file the LSP call is about. Models are made
+   * by @monaco-editor/react with `monaco.Uri.parse(path)`, so comparing against
+   * that same call is what reliably matches a tab.
+   */
+  const resolveMetaForModel = useCallback(
+    (model?: unknown): { path: string; language: string } | null => {
+      const monaco = monacoRef.current
+      const uri = (model as { uri?: { toString: () => string } } | undefined)?.uri
+      if (monaco && uri) {
+        const key = uri.toString()
+        const match = tabsRef.current.find(
+          (tab) => monaco.Uri.parse(tab.path).toString() === key
+        )
+        if (match) return { path: match.path, language: match.language }
+      }
+      return fileMetaRef.current
+    },
+    []
+  )
+
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
@@ -506,7 +585,7 @@ export function EditorPane({
       })
       registerLspProviders(
         monaco,
-        () => fileMetaRef.current,
+        resolveMetaForModel,
         (path, line) => {
           openDefinitionRef.current?.(path, line)
         },
@@ -592,14 +671,32 @@ export function EditorPane({
     })
 
     try {
-      monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+      const ts = monaco.languages.typescript
+      // The in-browser TS worker cannot read tsconfig.json or node_modules, so
+      // without this it reports every .tsx file as a JSX error and every import
+      // as unresolved. The real semantic diagnostics come from the LSP tsserver.
+      const compilerOptions = {
+        target: ts.ScriptTarget.ESNext,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeJs,
+        jsx: ts.JsxEmit.ReactJSX,
+        allowJs: true,
+        allowNonTsExtensions: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        isolatedModules: true
+      }
+      const diagnosticsOptions = {
         noSemanticValidation: false,
-        noSyntaxValidation: false
-      })
-      monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: false,
-        noSyntaxValidation: false
-      })
+        noSyntaxValidation: false,
+        // Unresolvable-by-design in the sandboxed worker: missing module,
+        // missing moduleResolution hint, missing declaration file.
+        diagnosticCodesToIgnore: [2307, 2792, 7016]
+      }
+      ts.typescriptDefaults.setCompilerOptions(compilerOptions)
+      ts.javascriptDefaults.setCompilerOptions(compilerOptions)
+      ts.typescriptDefaults.setDiagnosticsOptions(diagnosticsOptions)
+      ts.javascriptDefaults.setDiagnosticsOptions(diagnosticsOptions)
       monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
         validate: true,
         allowComments: true,
@@ -650,8 +747,13 @@ export function EditorPane({
       handler(items)
     }
 
+    // Monaco fires onDidChangeMarkers for every keystroke while tsserver
+    // revalidates; each pass rescans all models and re-merges the Problems list.
+    const emitMarkersDebounced = debounce(emitMarkers, MARKER_DEBOUNCE_MS)
+    emitMarkersRef.current = emitMarkersDebounced
+
     const sub = monaco.editor.onDidChangeMarkers(() => {
-      emitMarkers()
+      emitMarkersDebounced()
     })
     window.setTimeout(emitMarkers, 500)
 
@@ -686,6 +788,8 @@ export function EditorPane({
 
     editor.onDidDispose(() => {
       sub.dispose()
+      emitMarkersRef.current?.cancel()
+      emitMarkersRef.current = null
     })
   }
 
@@ -855,6 +959,11 @@ export function EditorPane({
           editor.focus()
         }}
       />
+      {perfNotice && (
+        <div className="editor-perf-bar" role="status">
+          {perfNotice}
+        </div>
+      )}
       {conflicts.length > 0 && (
         <div className="editor-conflict-bar" role="region" aria-label="マージコンフリクト">
           <strong>
@@ -976,6 +1085,9 @@ export function EditorPane({
       >
         {previewMode !== 'preview' && (
           <div className="editor-host">
+            {!monacoReady ? (
+              <div className="editor-loading">エディタを読み込み中…</div>
+            ) : (
             <Editor
               path={file.path}
               language={file.language}
@@ -984,26 +1096,19 @@ export function EditorPane({
               loading={<div className="editor-loading">エディタを読み込み中…</div>}
               onMount={handleMount}
               onChange={(value) => onChange(value ?? '')}
-              options={{
-                fontSize: 14,
-                fontFamily: 'Cascadia Code, Consolas, monospace',
-                minimap: { enabled: true },
-                automaticLayout: true,
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                tabSize: 2,
-                glyphMargin: true,
-                inlineSuggest: { enabled: true }
-              }}
+              options={editorOptions}
             />
+            )}
           </div>
         )}
         {previewMode !== 'edit' && supportsPreview(file.language, file.path) && (
-          <PreviewPane
-            language={file.language}
-            content={file.content}
-            fileName={file.path.split(/[/\\]/).pop()}
-          />
+          <Suspense fallback={<div className="editor-loading">プレビューを読み込み中…</div>}>
+            <PreviewPane
+              language={file.language}
+              content={file.content}
+              fileName={file.path.split(/[/\\]/).pop()}
+            />
+          </Suspense>
         )}
       </div>
       {showOutline && (

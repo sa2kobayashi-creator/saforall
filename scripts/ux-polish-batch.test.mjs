@@ -31,7 +31,7 @@ test('Settings save refreshes Chat LLM readiness', () => {
   const chat = readFileSync(join(root, 'src/components/ChatPanel.tsx'), 'utf8')
   const settings = readFileSync(join(root, 'src/components/SettingsPanel.tsx'), 'utf8')
   assert.match(app, /settingsRevision/)
-  assert.match(app, /onSaved=\{\(\) => setSettingsRevision/)
+  assert.match(app, /onSaved=\{\(\) => \{[\s\S]*?setSettingsRevision\(\(n\) => n \+ 1\)/)
   assert.match(chat, /settingsRevision/)
   assert.match(chat, /\[backendConnected, settingsRevision\]/)
   assert.match(settings, /onSaved\?\./)
