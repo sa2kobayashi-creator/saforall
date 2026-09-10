@@ -183,25 +183,84 @@ final class GeminiClient
 
         foreach ($messages as $message) {
             $role = $message['role'] ?? 'user';
-            $content = trim((string) ($message['content'] ?? ''));
-            if ($content === '') {
-                continue;
-            }
+            $rawContent = $message['content'] ?? '';
             if ($role === 'system') {
-                $systemParts[] = ['text' => $content];
+                $text = is_string($rawContent) ? trim($rawContent) : '';
+                if ($text !== '') {
+                    $systemParts[] = ['text' => $text];
+                }
                 continue;
             }
+
             $geminiRole = $role === 'assistant' ? 'model' : 'user';
-            // Gemini は同一 role の連続を嫌うことがあるので結合
+            $parts = null;
+            if (is_array($rawContent)) {
+                // Already Gemini parts, or OpenAI-style parts — normalize.
+                $parts = [];
+                $looksLikeOpenAi = false;
+                foreach ($rawContent as $block) {
+                    if (!is_array($block)) {
+                        continue;
+                    }
+                    if (isset($block['inline_data']) || isset($block['text'])) {
+                        $parts[] = $block;
+                        continue;
+                    }
+                    if (($block['type'] ?? '') === 'text' && isset($block['text'])) {
+                        $parts[] = ['text' => (string) $block['text']];
+                        $looksLikeOpenAi = true;
+                        continue;
+                    }
+                    if (($block['type'] ?? '') === 'image_url') {
+                        $url = is_array($block['image_url'] ?? null)
+                            ? (string) ($block['image_url']['url'] ?? '')
+                            : '';
+                        if (preg_match('#^data:([^;]+);base64,(.+)$#s', $url, $m) === 1) {
+                            $parts[] = [
+                                'inline_data' => [
+                                    'mime_type' => $m[1],
+                                    'data' => $m[2],
+                                ],
+                            ];
+                            $looksLikeOpenAi = true;
+                        }
+                    }
+                }
+                if ($parts === []) {
+                    continue;
+                }
+                // Do not merge multimodal turns.
+                if ($looksLikeOpenAi || count($parts) > 1) {
+                    $contents[] = [
+                        'role' => $geminiRole,
+                        'parts' => $parts,
+                    ];
+                    continue;
+                }
+            } else {
+                $content = trim((string) $rawContent);
+                if ($content === '') {
+                    continue;
+                }
+                $parts = [['text' => $content]];
+            }
+
             $last = $contents[count($contents) - 1] ?? null;
-            if (is_array($last) && ($last['role'] ?? '') === $geminiRole) {
+            if (
+                is_array($last)
+                && ($last['role'] ?? '') === $geminiRole
+                && count($parts) === 1
+                && isset($parts[0]['text'])
+                && isset($last['parts'][0]['text'])
+                && count($last['parts']) === 1
+            ) {
                 $prev = (string) ($last['parts'][0]['text'] ?? '');
-                $contents[count($contents) - 1]['parts'][0]['text'] = $prev . "\n\n" . $content;
+                $contents[count($contents) - 1]['parts'][0]['text'] = $prev . "\n\n" . $parts[0]['text'];
                 continue;
             }
             $contents[] = [
                 'role' => $geminiRole,
-                'parts' => [['text' => $content]],
+                'parts' => $parts,
             ];
         }
 

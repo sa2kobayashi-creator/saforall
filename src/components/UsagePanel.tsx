@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   DEFAULT_COST_LIMITS,
   ENGINE_LABELS,
@@ -7,6 +7,12 @@ import {
   parseUserPlan,
   type ProviderEngine
 } from '../lib/llmModels'
+import {
+  currentUsageMonth,
+  dismissRouterHintCode,
+  filterVisibleRouterHints,
+  loadDismissedRouterHintCodes
+} from '../lib/routerHintDismiss'
 import './UsagePanel.css'
 
 type EngineUsage = {
@@ -28,6 +34,7 @@ type ModelUsage = {
 }
 
 type RouteHint = {
+  code?: string
   level: string
   text: string
 }
@@ -54,6 +61,8 @@ type RouteRecent = {
   fallback_from: string | null
   fallback_reason: string | null
   created_at: string
+  /** From Electron usage events. BYOK or DEVELOPMENT when known. */
+  billingMode?: 'BYOK' | 'DEVELOPMENT' | null
 }
 
 type RouterInsight = {
@@ -64,6 +73,8 @@ type RouterInsight = {
   by_task: RouteTaskStat[]
   recent: RouteRecent[]
   hints: RouteHint[]
+  month?: string
+  recent_total?: number
 }
 
 type FeedbackSummary = {
@@ -83,6 +94,7 @@ type FeedbackSummary = {
 
 type UsagePayload = {
   month: string
+  router_month?: string
   total: {
     spent: number
     limit: number
@@ -101,6 +113,13 @@ type UsagePayload = {
   models: ModelUsage[]
   router?: RouterInsight
   feedback?: FeedbackSummary
+  claude_prepaid?: {
+    tracking: boolean
+    remaining: number | null
+    warn_at: number
+    depleted?: boolean
+    low?: boolean
+  }
   note?: string
 }
 
@@ -122,6 +141,69 @@ function percent(spent: number, limit: number): number {
   return Math.min(100, Math.round((spent / limit) * 1000) / 10)
 }
 
+function formatBillingMode(mode: RouteRecent['billingMode']): string {
+  if (mode === 'BYOK') return 'BYOK'
+  if (mode === 'DEVELOPMENT') return 'DEVELOPMENT'
+  return '—'
+}
+
+const LLM_ENGINES = new Set(['openai', 'gemini', 'claude', 'workers'])
+const RECENT_PAGE_SIZE = 20
+
+function listRecentMonthOptions(now = new Date(), count = 12): string[] {
+  const months: string[] = []
+  const cursor = new Date(now.getFullYear(), now.getMonth(), 1)
+  for (let i = 0; i < count; i += 1) {
+    const y = cursor.getFullYear()
+    const m = String(cursor.getMonth() + 1).padStart(2, '0')
+    months.push(`${y}-${m}`)
+    cursor.setMonth(cursor.getMonth() - 1)
+  }
+  return months
+}
+
+/** Fill missing billingMode from BYOK list when Main enrichment is absent. */
+async function attachBillingModes(payload: UsagePayload): Promise<UsagePayload> {
+  const recent = payload.router?.recent
+  if (!recent?.length) return payload
+  const needsFill = recent.some(
+    (row) => row.billingMode !== 'BYOK' && row.billingMode !== 'DEVELOPMENT'
+  )
+  if (!needsFill) return payload
+
+  const byokEngines = new Set<string>()
+  try {
+    if (typeof window.saforall.listByokCredentials === 'function') {
+      const listed = await window.saforall.listByokCredentials()
+      if (listed.ok && Array.isArray(listed.credentials)) {
+        for (const row of listed.credentials) {
+          if (row.configured) byokEngines.add(String(row.providerId).toLowerCase())
+        }
+      }
+    }
+  } catch {
+    // keep DEVELOPMENT fallback
+  }
+
+  return {
+    ...payload,
+    router: payload.router
+      ? {
+          ...payload.router,
+          recent: recent.map((row) => {
+            if (row.billingMode === 'BYOK' || row.billingMode === 'DEVELOPMENT') return row
+            const engine = String(row.engine || '').toLowerCase()
+            if (!LLM_ENGINES.has(engine)) return { ...row, billingMode: null }
+            return {
+              ...row,
+              billingMode: byokEngines.has(engine) ? 'BYOK' : 'DEVELOPMENT'
+            }
+          })
+        }
+      : payload.router
+  }
+}
+
 function barClass(pct: number): string {
   if (pct >= 95) return 'usage-bar-fill danger'
   if (pct >= 85) return 'usage-bar-fill danger'
@@ -140,6 +222,27 @@ export function UsagePanel({
   const [data, setData] = useState<UsagePayload | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [routerMonth, setRouterMonth] = useState(() => currentUsageMonth())
+  const [recentVisible, setRecentVisible] = useState(RECENT_PAGE_SIZE)
+  const usageMonth = data?.month?.slice(0, 7) || currentUsageMonth()
+  const monthOptions = useMemo(() => listRecentMonthOptions(), [])
+  const [dismissedHintCodes, setDismissedHintCodes] = useState<string[]>(() =>
+    loadDismissedRouterHintCodes(currentUsageMonth())
+  )
+
+  useEffect(() => {
+    setDismissedHintCodes(loadDismissedRouterHintCodes(usageMonth))
+  }, [usageMonth])
+
+  const visibleRouterHints = useMemo(() => {
+    if (!data?.router?.hints) return []
+    return filterVisibleRouterHints(data.router.hints, dismissedHintCodes)
+  }, [data?.router?.hints, dismissedHintCodes])
+
+  const dismissHint = (code: string | undefined) => {
+    if (!code) return
+    setDismissedHintCodes(dismissRouterHintCode(usageMonth, code))
+  }
 
   const load = useCallback(async () => {
     if (!backendConnected) {
@@ -150,20 +253,24 @@ export function UsagePanel({
     setLoading(true)
     setError(null)
     try {
-      const result = await window.saforall.request<UsagePayload>('GET', '/ai/usage')
+      const result = await window.saforall.request<UsagePayload>(
+        'GET',
+        `/ai/usage?month=${encodeURIComponent(routerMonth)}`
+      )
       if (!result.ok || !result.data) {
         setError(result.error?.message ?? '使用量の取得に失敗しました')
         setData(null)
         return
       }
-      setData(result.data)
+      setData(await attachBillingModes(result.data))
+      setRecentVisible(RECENT_PAGE_SIZE)
     } catch (err) {
       setError(String(err))
       setData(null)
     } finally {
       setLoading(false)
     }
-  }, [backendConnected])
+  }, [backendConnected, routerMonth])
 
   useEffect(() => {
     if (!open) return
@@ -272,6 +379,55 @@ export function UsagePanel({
                 </div>
               </section>
             )}
+
+            <section className="usage-total">
+              <div className="usage-total-row">
+                <strong>Anthropic チャージ残（手入力）</strong>
+                <span>
+                  {data.claude_prepaid?.tracking && data.claude_prepaid.remaining != null
+                    ? formatUsd(data.claude_prepaid.remaining)
+                    : '未設定'}
+                </span>
+              </div>
+              {data.claude_prepaid?.tracking && data.claude_prepaid.remaining != null ? (
+                <>
+                  {(() => {
+                    const rem = data.claude_prepaid!.remaining as number
+                    const warn = data.claude_prepaid!.warn_at
+                    const scale = Math.max(warn * 5, rem, 5)
+                    const leftPct = Math.max(0, Math.min(100, (rem / scale) * 100))
+                    const usedPct = rem <= 0 ? 100 : Math.max(0, 100 - leftPct)
+                    return (
+                      <div
+                        className="usage-bar-track"
+                        title={rem <= 0 ? '枯渇' : rem <= warn ? '残少' : 'OK'}
+                      >
+                        <div className={barClass(usedPct)} style={{ width: `${usedPct}%` }} />
+                      </div>
+                    )
+                  })()}
+                  <p className="usage-summary-line">
+                    {data.claude_prepaid.remaining <= 0
+                      ? '残高 0 — Auto は Claude を避けます。設定の予算でチャージ後の残りを入力してください。'
+                      : data.claude_prepaid.remaining <= data.claude_prepaid.warn_at
+                        ? `警告しきい値（$${data.claude_prepaid.warn_at}）以下です。Anthropic Console を確認してください。`
+                        : 'Claude 利用のたびに概算で減ります（公式残高APIはないため近似です）。'}
+                  </p>
+                </>
+              ) : (
+                <p className="usage-summary-line">
+                  設定 → 予算 で「Anthropic チャージ残」を入れると、切れる前に警告できます。
+                  {onOpenSettings && (
+                    <>
+                      {' '}
+                      <button type="button" className="usage-link-btn" onClick={onOpenSettings}>
+                        設定を開く
+                      </button>
+                    </>
+                  )}
+                </p>
+              )}
+            </section>
 
             {data.feedback && (
               <section className="usage-feedback">
@@ -388,14 +544,26 @@ export function UsagePanel({
                   {data.router.fallback_rate}%）
                 </p>
 
-                {data.router.hints.length > 0 && (
+                {visibleRouterHints.length > 0 && (
                   <ul className="usage-hints">
-                    {data.router.hints.map((hint, index) => (
+                    {visibleRouterHints.map((hint, index) => (
                       <li
-                        key={`${hint.level}-${index}`}
+                        key={`${hint.code ?? hint.level}-${index}`}
                         className={`usage-hint usage-hint--${hint.level}`}
                       >
-                        {hint.text}
+                        <div className="usage-hint-body">
+                          <span>{hint.text}</span>
+                          {hint.code ? (
+                            <button
+                              type="button"
+                              className="usage-hint-dismiss"
+                              title="閉じる（今月は再表示しない）"
+                              onClick={() => dismissHint(hint.code)}
+                            >
+                              閉じる
+                            </button>
+                          ) : null}
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -461,19 +629,46 @@ export function UsagePanel({
 
                 {data.router.recent.length > 0 && (
                   <>
-                    <h4 className="usage-subhead">直近の判定</h4>
+                    <div className="usage-recent-head">
+                      <h4 className="usage-subhead">直近の判定</h4>
+                      <label className="usage-month-filter">
+                        月
+                        <select
+                          value={routerMonth}
+                          onChange={(event) => setRouterMonth(event.target.value)}
+                          disabled={loading}
+                        >
+                          {monthOptions.map((month) => (
+                            <option key={month} value={month}>
+                              {month}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <p className="usage-muted">
+                      {(data.router.month || data.router_month || routerMonth) + ' · '}
+                      取得 {data.router.recent.length} 件
+                      {typeof data.router.recent_total === 'number' &&
+                      data.router.recent_total > data.router.recent.length
+                        ? `（月内 ${data.router.recent_total} 件中）`
+                        : ''}
+                      {' · '}
+                      表示 {Math.min(recentVisible, data.router.recent.length)} 件
+                    </p>
                     <table className="usage-table">
                       <thead>
                         <tr>
                           <th>日時</th>
                           <th>エンジン</th>
                           <th>タスク</th>
+                          <th>課金</th>
                           <th>est</th>
                           <th>フォールバック</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {data.router.recent.slice(0, 12).map((row) => (
+                        {data.router.recent.slice(0, recentVisible).map((row) => (
                           <tr key={row.id}>
                             <td className="usage-model-id" title={row.created_at}>
                               {row.created_at.replace('T', ' ').slice(5, 16)}
@@ -483,6 +678,7 @@ export function UsagePanel({
                                 row.engine}
                             </td>
                             <td title={row.model ?? ''}>{row.task_type}</td>
+                            <td>{formatBillingMode(row.billingMode)}</td>
                             <td>{formatUsd(row.estimated_usd)}</td>
                             <td className="usage-model-id" title={row.fallback_reason ?? ''}>
                               {row.fallback_from
@@ -493,7 +689,41 @@ export function UsagePanel({
                         ))}
                       </tbody>
                     </table>
+                    {recentVisible < data.router.recent.length && (
+                      <button
+                        type="button"
+                        className="usage-more-btn"
+                        onClick={() =>
+                          setRecentVisible((n) =>
+                            Math.min(n + RECENT_PAGE_SIZE, data.router!.recent.length)
+                          )
+                        }
+                      >
+                        もっと見る（残り{' '}
+                        {data.router.recent.length - recentVisible} 件）
+                      </button>
+                    )}
                   </>
+                )}
+
+                {data.router.recent.length === 0 && (
+                  <div className="usage-recent-head">
+                    <h4 className="usage-subhead">直近の判定</h4>
+                    <label className="usage-month-filter">
+                      月
+                      <select
+                        value={routerMonth}
+                        onChange={(event) => setRouterMonth(event.target.value)}
+                        disabled={loading}
+                      >
+                        {monthOptions.map((month) => (
+                          <option key={month} value={month}>
+                            {month}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                 )}
 
                 {onOpenSettings && (

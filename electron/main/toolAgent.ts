@@ -22,70 +22,31 @@ import {
   toolRunShell,
   toolSearch,
   withMaterializedEdits,
-  appendProjectMemory
+  appendProjectMemory,
+  formatSkillsCatalog,
+  readProjectSkill,
+  isLongRunningShellCommand,
+  explainLongRunningShellCommand
 } from './workspaceTools'
 import { buildAgentSuccessMemoryNote } from './lib/agentMemory'
+import { classifyTask, shouldAnswerWithoutTools } from './lib/taskClassify'
+import {
+  modelAllowsRequiredToolChoice,
+  normalizeToolCalls as normalizeToolCallsImpl,
+  parseRetryAfterMs as parseRetryAfterMsImpl,
+  repairToolArguments as repairToolArgumentsImpl
+} from './ai/agentMessages'
+import type { AgentChatCompletion, AgentProviderMessage, AgentToolCall, AgentToolSpec } from './ai/toolTypes'
 import { mkdir, writeFile } from 'fs/promises'
 import { join, relative, resolve } from 'path'
 
-type ProviderMessage =
-  | { role: 'system' | 'user' | 'assistant'; content: string | null; tool_calls?: ToolCall[] }
-  | { role: 'tool'; tool_call_id: string; content: string }
-
-type ToolCall = {
-  id: string
-  type: 'function'
-  function: { name: string; arguments: string }
-}
+type ProviderMessage = AgentProviderMessage
+type ToolCall = AgentToolCall
+type ChatCompletionResponse = AgentChatCompletion
 
 /** Coerce provider tool_calls (OpenAI / flat / sparse) into a safe list. */
 export function normalizeToolCalls(raw: unknown): ToolCall[] {
-  if (!Array.isArray(raw)) return []
-  const out: ToolCall[] = []
-  for (let index = 0; index < raw.length; index += 1) {
-    const item = raw[index]
-    if (!item || typeof item !== 'object') continue
-    const row = item as Record<string, unknown>
-    const id =
-      typeof row.id === 'string' && row.id.trim() !== ''
-        ? row.id
-        : `call_${out.length + 1}_${index}`
-
-    const nested = row.function
-    if (nested && typeof nested === 'object') {
-      const fn = nested as Record<string, unknown>
-      const name = typeof fn.name === 'string' ? fn.name.trim() : ''
-      if (name === '') continue
-      const args =
-        typeof fn.arguments === 'string'
-          ? fn.arguments
-          : JSON.stringify(fn.arguments ?? {})
-      out.push({ id, type: 'function', function: { name, arguments: args } })
-      continue
-    }
-
-    // Flat / Anthropic-ish shapes: { name, arguments } or { name, input }
-    const name = typeof row.name === 'string' ? row.name.trim() : ''
-    if (name === '') continue
-    const args =
-      typeof row.arguments === 'string'
-        ? row.arguments
-        : JSON.stringify(row.arguments ?? row.input ?? {})
-    out.push({ id, type: 'function', function: { name, arguments: args } })
-  }
-  return out
-}
-
-type ChatCompletionResponse = {
-  choices?: Array<{
-    message?: {
-      role?: string
-      content?: string | null
-      tool_calls?: ToolCall[]
-    }
-    finish_reason?: string
-  }>
-  error?: { message?: string }
+  return normalizeToolCallsImpl(raw)
 }
 
 export type AgentPhase = 'plan' | 'explore' | 'edit' | 'verify'
@@ -154,7 +115,7 @@ const TOOLS = [
     function: {
       name: 'edit_file',
       description:
-        'Propose a full-file replacement for multi-file refactors. Queued for user Composer review.',
+        'Propose a full-file replacement for multi-file refactors. Queued for user review in the 変更候補 panel.',
       parameters: {
         type: 'object',
         properties: {
@@ -187,7 +148,7 @@ const TOOLS = [
     function: {
       name: 'run_shell',
       description:
-        'Run a short shell command in the workspace (e.g. npm test, npm run typecheck). Pending edit_file proposals are temporarily applied for the run, then restored. Prefer package scripts. Blocked: destructive system commands.',
+        'Run a short finishing shell command to verify edits (npm run typecheck, npm test, lint). Do NOT use npm start / npm run dev / vite / watchers — they never exit and will time out. Pending edit_file proposals are temporarily applied for the run, then restored. Blocked: destructive system commands.',
       parameters: {
         type: 'object',
         properties: {
@@ -201,10 +162,28 @@ const TOOLS = [
           },
           timeout_ms: {
             type: 'number',
-            description: 'Timeout in ms (default 60000, max 180000)'
+            description: 'Timeout in ms (default 45000, max 120000)'
           }
         },
         required: ['command']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_skill',
+      description:
+        'Read a project Skill (SKILL.md) by id. Use when the Skills catalog lists a relevant workflow.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'Skill id (folder name or frontmatter name), e.g. saforall-workflow'
+          }
+        },
+        required: ['id']
       }
     }
   },
@@ -348,11 +327,10 @@ const PHASE_TOOLS: Record<AgentPhase, Set<string>> = {
 
 export type ToolAgentParams = {
   workspacePath: string
-  apiKey: string
   baseUrl: string
   model: string
   extraHeaders: string[]
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string | unknown[] }>
   engine: string
   taskType: string
   sessionId: number
@@ -368,45 +346,6 @@ export type ToolAgentParams = {
     estimated_usd?: number
     usage?: MonthUsage
   } | null>
-}
-
-function parseExtraHeaders(headers: string[]): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const row of headers) {
-    const idx = row.indexOf(':')
-    if (idx <= 0) continue
-    out[row.slice(0, idx).trim()] = row.slice(idx + 1).trim()
-  }
-  return out
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function sleepAbortable(ms: number, signal?: AbortSignal | null): Promise<void> {
-  const { throwIfChatAborted } = await import('./chatAbort')
-  throwIfChatAborted(signal)
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      if (signal) signal.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    const onAbort = (): void => {
-      clearTimeout(timer)
-      const err = new Error('Chat cancelled by user')
-      err.name = 'AbortError'
-      reject(err)
-    }
-    if (!signal) return
-    if (signal.aborted) {
-      clearTimeout(timer)
-      onAbort()
-      return
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-  throwIfChatAborted(signal)
 }
 
 export function normalizeAgentPath(path: string): string {
@@ -430,7 +369,8 @@ export function looksLikeFakeToolProse(text: string): boolean {
     'read_mcp_resource',
     'list_mcp_prompts',
     'get_mcp_prompt',
-    'call_mcp_tool'
+    'call_mcp_tool',
+    'read_skill'
   ]
   const hitCount = names.filter((name) => lower.includes(name)).length
   if (hitCount >= 2) return true
@@ -479,31 +419,7 @@ export function unverifiedEditPaths(
 }
 
 export function repairToolArguments(raw: string): string {
-  const trimmed = (raw || '').trim()
-  if (!trimmed) return '{}'
-  try {
-    JSON.parse(trimmed)
-    return trimmed
-  } catch {
-    // continue
-  }
-
-  let candidate = trimmed
-  const quoteCount = (candidate.match(/"/g) ?? []).length
-  if (quoteCount % 2 === 1) candidate += '"'
-  const openCurly = (candidate.match(/\{/g) ?? []).length
-  const closeCurly = (candidate.match(/\}/g) ?? []).length
-  if (openCurly > closeCurly) candidate += '}'.repeat(openCurly - closeCurly)
-  const openSquare = (candidate.match(/\[/g) ?? []).length
-  const closeSquare = (candidate.match(/\]/g) ?? []).length
-  if (openSquare > closeSquare) candidate += ']'.repeat(openSquare - closeSquare)
-
-  try {
-    JSON.parse(candidate)
-    return candidate
-  } catch {
-    return '{}'
-  }
+  return repairToolArgumentsImpl(raw)
 }
 
 function toolSignature(name: string, argsJson: string): string {
@@ -538,214 +454,12 @@ function isAnthropicEndpoint(engine: string, baseUrl: string): boolean {
   return (baseUrl || '').toLowerCase().includes('anthropic.com')
 }
 
-function toAnthropicTools(tools: typeof TOOLS): Array<{
-  name: string
-  description: string
-  input_schema: Record<string, unknown>
-}> {
-  return tools.map((row) => ({
-    name: row.function.name,
-    description: row.function.description,
-    input_schema: {
-      type: 'object',
-      ...(row.function.parameters as Record<string, unknown>)
-    }
-  }))
-}
-
-function anthropicBase(baseUrl: string): string {
-  const trimmed = baseUrl.replace(/\/$/, '')
-  if (trimmed.endsWith('/v1')) return trimmed
-  return `${trimmed}/v1`
-}
-
-/**
- * Convert OpenAI-style ProviderMessage[] into Anthropic Messages API shape.
- */
-function toAnthropicMessages(messages: ProviderMessage[]): {
-  system: string
-  messages: Array<{ role: 'user' | 'assistant'; content: unknown }>
-} {
-  const systemParts: string[] = []
-  const out: Array<{ role: 'user' | 'assistant'; content: unknown }> = []
-
-  for (const row of messages) {
-    if (row.role === 'system') {
-      if (typeof row.content === 'string' && row.content.trim() !== '') {
-        systemParts.push(row.content)
-      }
-      continue
-    }
-    if (row.role === 'tool') {
-      const block = {
-        type: 'tool_result',
-        tool_use_id: row.tool_call_id,
-        content: row.content
-      }
-      const last = out[out.length - 1]
-      if (last && last.role === 'user' && Array.isArray(last.content)) {
-        ;(last.content as unknown[]).push(block)
-      } else {
-        out.push({ role: 'user', content: [block] })
-      }
-      continue
-    }
-    if (row.role === 'assistant' && row.tool_calls && row.tool_calls.length > 0) {
-      const blocks: unknown[] = []
-      if (typeof row.content === 'string' && row.content.trim() !== '') {
-        blocks.push({ type: 'text', text: row.content })
-      }
-      for (const call of normalizeToolCalls(row.tool_calls)) {
-        let input: Record<string, unknown> = {}
-        try {
-          input = JSON.parse(repairToolArguments(call.function.arguments)) as Record<
-            string,
-            unknown
-          >
-        } catch {
-          input = {}
-        }
-        blocks.push({
-          type: 'tool_use',
-          id: call.id,
-          name: call.function.name,
-          input
-        })
-      }
-      if (blocks.length === 0) {
-        out.push({
-          role: 'assistant',
-          content: typeof row.content === 'string' ? row.content : ''
-        })
-      } else {
-        out.push({ role: 'assistant', content: blocks })
-      }
-      continue
-    }
-    out.push({
-      role: row.role === 'assistant' ? 'assistant' : 'user',
-      content: typeof row.content === 'string' ? row.content : String(row.content ?? '')
-    })
-  }
-
-  // Anthropic requires alternating roles; merge consecutive same-role if needed
-  const merged: Array<{ role: 'user' | 'assistant'; content: unknown }> = []
-  for (const row of out) {
-    const prev = merged[merged.length - 1]
-    if (prev && prev.role === row.role) {
-      const a = prev.content
-      const b = row.content
-      if (Array.isArray(a) && Array.isArray(b)) {
-        prev.content = [...a, ...b]
-      } else if (typeof a === 'string' && typeof b === 'string') {
-        prev.content = `${a}\n${b}`
-      } else {
-        merged.push(row)
-      }
-    } else {
-      merged.push(row)
-    }
-  }
-
-  if (merged.length === 0 || merged[0].role !== 'user') {
-    merged.unshift({ role: 'user', content: '(continue)' })
-  }
-
-  return { system: systemParts.join('\n\n'), messages: merged }
-}
-
-async function callAnthropicMessages(params: {
-  apiKey: string
-  baseUrl: string
-  model: string
-  messages: ProviderMessage[]
-  tools?: typeof TOOLS
-  toolChoice?: 'auto' | 'required'
-  timeoutMs?: number
-  signal?: AbortSignal | null
-}): Promise<ChatCompletionResponse> {
-  const url = `${anthropicBase(params.baseUrl)}/messages`
-  const { system, messages } = toAnthropicMessages(params.messages)
-  const body: Record<string, unknown> = {
-    model: params.model,
-    max_tokens: 8192,
-    messages
-  }
-  if (system.trim() !== '') body.system = system
-  if (params.tools && params.tools.length > 0) {
-    body.tools = toAnthropicTools(params.tools)
-    body.tool_choice =
-      params.toolChoice === 'required' ? { type: 'any' } : { type: 'auto' }
-  }
-
-  const { linkedAbortSignal, throwIfChatAborted } = await import('./chatAbort')
-  throwIfChatAborted(params.signal)
-  const linked = linkedAbortSignal(params.timeoutMs ?? 90_000, params.signal)
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': params.apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify(body),
-      signal: linked.signal
-    })
-    const bodyText = await response.text()
-    let json: {
-      content?: Array<{ type?: string; text?: string; id?: string; name?: string; input?: unknown }>
-      error?: { message?: string; type?: string }
-      stop_reason?: string
-    }
-    try {
-      json = JSON.parse(bodyText) as typeof json
-    } catch {
-      throw new Error(formatLlmHttpError(response.status, bodyText))
-    }
-    if (!response.ok) {
-      throw new Error(formatLlmHttpError(response.status, bodyText))
-    }
-
-    const blocks = Array.isArray(json.content) ? json.content : []
-    const textParts: string[] = []
-    const toolCalls: ToolCall[] = []
-    for (const block of blocks) {
-      if (block.type === 'text' && typeof block.text === 'string') {
-        textParts.push(block.text)
-      }
-      if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
-        toolCalls.push({
-          id: block.id,
-          type: 'function',
-          function: {
-            name: block.name,
-            arguments: JSON.stringify(block.input ?? {})
-          }
-        })
-      }
-    }
-
-    return {
-      choices: [
-        {
-          message: {
-            role: 'assistant',
-            content: textParts.join('\n') || null,
-            tool_calls: toolCalls.length > 0 ? toolCalls : undefined
-          },
-          finish_reason: toolCalls.length > 0 ? 'tool_calls' : json.stop_reason
-        }
-      ]
-    }
-  } finally {
-    linked.dispose()
-  }
+export function parseRetryAfterMs(message: string, attempt: number): number {
+  return parseRetryAfterMsImpl(message, attempt)
 }
 
 async function callAgentLlm(params: {
   engine: string
-  apiKey: string
   baseUrl: string
   model: string
   extraHeaders: string[]
@@ -754,259 +468,22 @@ async function callAgentLlm(params: {
   toolChoice?: 'auto' | 'required'
   timeoutMs?: number
   signal?: AbortSignal | null
+  sessionId?: number
 }): Promise<ChatCompletionResponse> {
-  if (isAnthropicEndpoint(params.engine, params.baseUrl)) {
-    return callAnthropicMessages({
-      apiKey: params.apiKey,
-      baseUrl: params.baseUrl,
-      model: params.model,
-      messages: params.messages,
-      tools: params.tools,
-      toolChoice: params.toolChoice,
-      timeoutMs: params.timeoutMs,
-      signal: params.signal
-    })
-  }
-  return callChatCompletions({
-    apiKey: params.apiKey,
-    baseUrl: params.baseUrl,
+  const { executeAiWithTools } = await import('./ai/router')
+  const provider = isAnthropicEndpoint(params.engine, params.baseUrl) ? 'claude' : 'openai'
+  return executeAiWithTools({
+    provider,
     model: params.model,
-    extraHeaders: params.extraHeaders,
     messages: params.messages,
-    tools: params.tools,
+    tools: params.tools as AgentToolSpec[] | undefined,
     toolChoice: params.toolChoice,
+    extraHeaders: params.extraHeaders,
+    baseUrl: params.baseUrl,
     timeoutMs: params.timeoutMs,
-    signal: params.signal
+    signal: params.signal,
+    sessionId: params.sessionId ?? null
   })
-}
-
-function flattenMessageContent(content: unknown): string {
-  if (content == null) return ''
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (typeof part === 'string') return part
-        if (part && typeof part === 'object') {
-          const row = part as { text?: unknown; content?: unknown; type?: unknown }
-          if (typeof row.text === 'string') return row.text
-          if (typeof row.content === 'string') return row.content
-        }
-        return ''
-      })
-      .filter(Boolean)
-      .join('\n')
-  }
-  if (typeof content === 'object') {
-    try {
-      return JSON.stringify(content)
-    } catch {
-      return String(content)
-    }
-  }
-  return String(content)
-}
-
-/** OpenAI / gateways that only accept string content (not multimodal arrays / null). */
-function normalizeMessagesForLlm(messages: ProviderMessage[]): Array<Record<string, unknown>> {
-  return messages.map((row) => {
-    if (row.role === 'tool') {
-      return {
-        role: 'tool',
-        tool_call_id: row.tool_call_id,
-        content: flattenMessageContent(row.content)
-      }
-    }
-    const out: Record<string, unknown> = {
-      role: row.role,
-      content: flattenMessageContent(row.content)
-    }
-    if (row.tool_calls && row.tool_calls.length > 0) {
-      out.tool_calls = row.tool_calls
-    }
-    return out
-  })
-}
-
-function modelOmitsTemperature(model: string): boolean {
-  const id = model.trim().toLowerCase()
-  return (
-    id.startsWith('o1') ||
-    id.startsWith('o3') ||
-    id.startsWith('o4') ||
-    id.startsWith('gpt-5') ||
-    id.includes('reason')
-  )
-}
-
-function modelAllowsRequiredToolChoice(model: string): boolean {
-  const id = model.trim().toLowerCase()
-  // gpt-5 / o-series は tool_choice=required で 400 になることがある
-  return !(
-    id.startsWith('gpt-5') ||
-    id.startsWith('o1') ||
-    id.startsWith('o3') ||
-    id.startsWith('o4')
-  )
-}
-
-function formatLlmHttpError(status: number, bodyText: string): string {
-  const raw = (bodyText || '').trim()
-  if (!raw) return `LLM HTTP ${status}`
-  try {
-    const json = JSON.parse(raw) as {
-      error?: { message?: string; code?: string; type?: string }
-      errors?: Array<{ message?: string }>
-      message?: string
-    }
-    const msg =
-      json.error?.message ||
-      json.errors?.[0]?.message ||
-      json.message ||
-      raw
-    const code = json.error?.code || json.error?.type
-    let text = code ? `LLM HTTP ${status}: ${msg} (${code})` : `LLM HTTP ${status}: ${msg}`
-    if (status === 429 || /rate[_ ]?limit/i.test(text)) {
-      text +=
-        '。OpenAI の分間トークン上限です。数秒待って再試行するか、しばらく空けてから送ってください。' +
-        ' Auto なら Gemini / Claude へ切り替えるのも有効です。'
-    }
-    return text
-  } catch {
-    return `LLM HTTP ${status}: ${raw.slice(0, 600)}`
-  }
-}
-
-/** Parse "try again in 607ms" / "1.2s" from provider messages. */
-export function parseRetryAfterMs(message: string, attempt: number): number {
-  const ms = message.match(/try again in\s+(\d+(?:\.\d+)?)\s*ms/i)
-  if (ms) return Math.max(400, Math.ceil(Number(ms[1])) + 200)
-  const sec = message.match(/try again in\s+(\d+(?:\.\d+)?)\s*s/i)
-  if (sec) return Math.max(400, Math.ceil(Number(sec[1]) * 1000) + 200)
-  return Math.min(8_000, 700 * (attempt + 1))
-}
-
-function isRateLimitError(message: string): boolean {
-  return /LLM HTTP 429|rate[_ ]?limit|tokens per min|TPM/i.test(message)
-}
-
-async function callChatCompletions(params: {
-  apiKey: string
-  baseUrl: string
-  model: string
-  extraHeaders: string[]
-  messages: ProviderMessage[]
-  tools?: typeof TOOLS
-  toolChoice?: 'auto' | 'required'
-  timeoutMs?: number
-  signal?: AbortSignal | null
-}): Promise<ChatCompletionResponse> {
-  const url = `${params.baseUrl.replace(/\/$/, '')}/chat/completions`
-  let lastError: Error | null = null
-  let toolChoice: 'auto' | 'required' =
-    params.toolChoice === 'required' && modelAllowsRequiredToolChoice(params.model)
-      ? 'required'
-      : 'auto'
-  let includeTemperature = !modelOmitsTemperature(params.model)
-  let includeTools = Boolean(params.tools)
-
-  const timeoutMs = params.timeoutMs ?? 45_000
-  const { linkedAbortSignal, throwIfChatAborted, isChatAbortError } = await import('./chatAbort')
-
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    throwIfChatAborted(params.signal)
-    const body: Record<string, unknown> = {
-      model: params.model,
-      messages: normalizeMessagesForLlm(params.messages)
-    }
-    if (includeTemperature) body.temperature = 0.2
-    if (includeTools && params.tools) {
-      body.tools = params.tools
-      body.tool_choice = toolChoice
-    }
-
-    const linked = linkedAbortSignal(timeoutMs, params.signal)
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${params.apiKey}`,
-          ...parseExtraHeaders(params.extraHeaders)
-        },
-        body: JSON.stringify(body),
-        signal: linked.signal
-      })
-
-      const bodyText = await response.text()
-      let json: ChatCompletionResponse
-      try {
-        json = JSON.parse(bodyText) as ChatCompletionResponse
-      } catch {
-        throw new Error(formatLlmHttpError(response.status, bodyText))
-      }
-
-      if (!response.ok) {
-        const err = new Error(formatLlmHttpError(response.status, bodyText))
-        const lower = err.message.toLowerCase()
-        if (response.status === 429 && attempt < 5) {
-          lastError = err
-          await sleepAbortable(parseRetryAfterMs(err.message, attempt), params.signal)
-          continue
-        }
-        // Retry ladder for common 400s
-        if (response.status === 400) {
-          if (toolChoice === 'required') {
-            toolChoice = 'auto'
-            lastError = err
-            continue
-          }
-          if (includeTemperature && /temperature|unsupported_value|unknown parameter/i.test(lower)) {
-            includeTemperature = false
-            lastError = err
-            continue
-          }
-          if (includeTools && /tool_choice|tools|function/i.test(lower)) {
-            // Keep tools if possible — but if provider rejects tools entirely, surface clearly
-            if (/not support|unsupported|does not support/i.test(lower)) {
-              throw new Error(
-                `${err.message} — このモデル/プロバイダは function calling 未対応の可能性があります。設定で gpt-4.1 / gpt-4o 系の OpenAI モデルを選んでください。`
-              )
-            }
-          }
-        }
-        throw err
-      }
-      return json
-    } catch (error) {
-      if (isChatAbortError(error) || params.signal?.aborted) {
-        throw error
-      }
-      lastError = error instanceof Error ? error : new Error(String(error))
-      if (attempt < 5 && isRateLimitError(lastError.message)) {
-        await sleepAbortable(parseRetryAfterMs(lastError.message, attempt), params.signal)
-        continue
-      }
-      if (attempt < 3 && /LLM HTTP 400/i.test(lastError.message) && toolChoice === 'required') {
-        toolChoice = 'auto'
-        continue
-      }
-      if (attempt < 3 && /abort|network|fetch failed|ECONNRESET/i.test(lastError.message)) {
-        // User cancel looks like AbortError — already rethrown above.
-        await sleepAbortable(500 * (attempt + 1), params.signal)
-        continue
-      }
-      // non-retryable
-      if (!/LLM HTTP 400/i.test(lastError.message) || attempt >= 3) {
-        throw lastError
-      }
-      await sleepAbortable(400 * (attempt + 1), params.signal)
-    } finally {
-      linked.dispose()
-    }
-  }
-
-  throw lastError ?? new Error('LLM request failed')
 }
 
 async function runTool(
@@ -1361,7 +838,7 @@ async function runTool(
           ok: true,
           queued: true,
           path,
-          note: 'Queued for Composer review. Use run_shell in verify to test with proposals temporarily applied.'
+          note: 'Queued for 変更候補 review. Use run_shell in verify to test with proposals temporarily applied.'
         }),
         ok: true
       }
@@ -1401,25 +878,81 @@ async function runTool(
           ? args.timeout_ms
           : typeof args.timeoutMs === 'number'
             ? args.timeoutMs
-            : undefined
+            : 45_000
+
+      if (isLongRunningShellCommand(command)) {
+        const preferred = verifyHint?.primary ?? null
+        const message = explainLongRunningShellCommand(command, preferred)
+        onEvent({
+          type: 'agent_phase',
+          phase: 'verify',
+          kind: 'progress',
+          note: message
+        })
+        onEvent({
+          type: 'tool_result',
+          id: callId,
+          name,
+          ok: false,
+          summary: `検証向きではないコマンド: ${command.trim().slice(0, 80)}`
+        })
+        return {
+          content: JSON.stringify({
+            ok: false,
+            rejected: 'long_running',
+            command: command.trim(),
+            preferredVerify: preferred,
+            error: message,
+            note: 'Pick a command that exits (typecheck/test/lint). Do not use start/dev/serve/watch.'
+          }),
+          ok: false
+        }
+      }
+
+      const limitSec = Math.round(Math.min(Math.max(timeoutMs, 5_000), 120_000) / 1000)
+      const shortCmd = (cmd: string) => {
+        const t = cmd.trim()
+        return t.length > 80 ? `${t.slice(0, 80)}…` : t
+      }
 
       const runOnce = async (cmd: string) => {
         throwIfChatAborted(signal)
-        return withMaterializedEdits(workspacePath, pendingEdits, () =>
-          toolRunShell(workspacePath, cmd, { cwd, timeoutMs, signal })
-        )
+        const startedAt = Date.now()
+        const progress = setInterval(() => {
+          if (signal?.aborted) return
+          const sec = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
+          onEvent({
+            type: 'agent_phase',
+            phase: 'verify',
+            kind: 'progress',
+            note: `変更が正しいか確認中です。ターミナルで「${shortCmd(cmd)}」を実行しています（${sec}秒経過 / 上限約${limitSec}秒）。終わると成功・失敗が分かります。`
+          })
+        }, 8_000)
+        try {
+          return await withMaterializedEdits(workspacePath, pendingEdits, () =>
+            toolRunShell(workspacePath, cmd, { cwd, timeoutMs, signal })
+          )
+        } finally {
+          clearInterval(progress)
+        }
       }
 
       let activeCommand = command
+      onEvent({
+        type: 'agent_phase',
+        phase: 'verify',
+        kind: 'progress',
+        note: `変更が正しいか確認するため、ターミナルで「${shortCmd(activeCommand)}」を実行します。数秒〜数十秒かかることがあります。`
+      })
       let result = await runOnce(activeCommand)
       shellState.attempts += 1
       shellState.triedVerifyCommands.push(activeCommand.trim())
       shellState.lastExit = result.exitCode
       shellState.passed = result.ok
 
-      // Auto-chain verify fallbacks (typecheck → test → lint) before edit recovery.
+      // Auto-chain at most one fallback (typecheck → lint). Avoid long npm test chains.
       const autoTried: string[] = []
-      while (!result.ok) {
+      while (!result.ok && autoTried.length < 1) {
         throwIfChatAborted(signal)
         const next = nextVerifyFallback(
           activeCommand,
@@ -1435,6 +968,12 @@ async function runTool(
           name: 'run_shell',
           args: { command: next, auto_fallback: true }
         })
+        onEvent({
+          type: 'agent_phase',
+          phase: 'verify',
+          kind: 'progress',
+          note: `最初の確認が失敗したので、別コマンド「${shortCmd(next)}」でもう一度確認します。`
+        })
         result = await runOnce(next)
         shellState.attempts += 1
         shellState.lastExit = result.exitCode
@@ -1446,8 +985,10 @@ async function runTool(
           name: 'run_shell',
           ok: result.ok,
           summary: result.timedOut
-            ? `timeout: ${next}`
-            : `exit ${result.exitCode ?? '?'} · ${next} (auto fallback)`
+            ? `時間切れ: ${shortCmd(next)}（代替）`
+            : result.ok
+              ? `確認OK（代替）: ${shortCmd(next)}`
+              : `確認NG（代替）: ${shortCmd(next)}`
         })
         if (result.ok) break
       }
@@ -1480,7 +1021,7 @@ async function runTool(
         stderr: result.stderr,
         errorExcerpt: result.ok ? undefined : failureExcerpt,
         note: result.ok
-          ? `Command succeeded${autoTried.length > 0 ? ' via auto-fallback' : ''}. Pending edits were restored after the run; accept Composer to keep them.${fallbackNote}`
+          ? `Command succeeded${autoTried.length > 0 ? ' via auto-fallback' : ''}. Pending edits were restored after the run; accept 変更候補 to keep them on disk.${fallbackNote}`
           : `Command failed. Inspect errorExcerpt (tail-focused), set_phase edit, edit_file, then run_shell again.${fallbackNote}`
       }
       onEvent({
@@ -1489,15 +1030,17 @@ async function runTool(
         name,
         ok: result.ok,
         summary: result.timedOut
-          ? `timeout: ${activeCommand}`
-          : `exit ${result.exitCode ?? '?'} · ${activeCommand}${autoTried.length ? ' (+fallbacks)' : ''}`
+          ? `時間切れ（約${limitSec}秒以内に終わらず停止）: ${shortCmd(activeCommand)}`
+          : result.ok
+            ? `確認OK（終了コード ${result.exitCode ?? 0}）: ${shortCmd(activeCommand)}`
+            : `確認NG（終了コード ${result.exitCode ?? '?'}）: ${shortCmd(activeCommand)}${autoTried.length ? ' · 代替も試行' : ''}`
       })
       if (!result.ok && shellState.editRecoveries < MAX_EDIT_RECOVERIES) {
         shellState.editRecoveries += 1
         onEvent({
           type: 'agent_phase',
           phase: 'edit',
-          note: `verify 失敗 → edit へ自動復帰 (${shellState.editRecoveries}/${MAX_EDIT_RECOVERIES})`
+          note: `確認に失敗したので、修正し直します（${shellState.editRecoveries}/${MAX_EDIT_RECOVERIES}）`
         })
         return {
           content: JSON.stringify({
@@ -1522,7 +1065,7 @@ async function runTool(
             onEvent({
               type: 'agent_phase',
               phase: 'edit',
-              note: `Problems 残存 → edit (${shellState.editRecoveries}/${MAX_EDIT_RECOVERIES})`
+              note: `エディタのエラーが残っているので、修正し直します（${shellState.editRecoveries}/${MAX_EDIT_RECOVERIES}）`
             })
             return {
               content: JSON.stringify({
@@ -1539,6 +1082,57 @@ async function runTool(
         }
       }
       return { content: JSON.stringify(payload), ok: result.ok }
+    }
+
+    if (name === 'read_skill') {
+      const id = String(args.id ?? '').trim()
+      if (!id) {
+        onEvent({
+          type: 'tool_result',
+          id: callId,
+          name,
+          ok: false,
+          summary: 'skill id が空です'
+        })
+        return {
+          content: JSON.stringify({ ok: false, error: 'skill id required' }),
+          ok: false
+        }
+      }
+      try {
+        const skill = await readProjectSkill(workspacePath, id)
+        onEvent({
+          type: 'tool_result',
+          id: callId,
+          name,
+          ok: true,
+          summary: `skill ${skill.id} (${skill.path})`
+        })
+        return {
+          content: JSON.stringify({
+            ok: true,
+            id: skill.id,
+            name: skill.name,
+            description: skill.description,
+            path: skill.path,
+            content: skill.content
+          }),
+          ok: true
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        onEvent({
+          type: 'tool_result',
+          id: callId,
+          name,
+          ok: false,
+          summary: message
+        })
+        return {
+          content: JSON.stringify({ ok: false, error: message }),
+          ok: false
+        }
+      }
     }
 
     if (name === 'list_mcp_tools') {
@@ -1753,13 +1347,13 @@ async function runTool(
 export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   const {
     workspacePath,
-    apiKey,
     baseUrl,
     model,
     extraHeaders,
     messages: seed,
     engine,
     taskType,
+    sessionId,
     onEvent,
     complete,
     problems: problemsParam,
@@ -1788,12 +1382,104 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     return
   }
 
+  const latestUserText = (() => {
+    for (let i = seed.length - 1; i >= 0; i -= 1) {
+      const row = seed[i]
+      if (row?.role !== 'user') continue
+      if (typeof row.content === 'string') return row.content
+      if (Array.isArray(row.content)) {
+        return row.content
+          .map((part) => {
+            if (!part || typeof part !== 'object') return ''
+            const block = part as Record<string, unknown>
+            return typeof block.text === 'string' ? block.text : ''
+          })
+          .filter(Boolean)
+          .join('\n')
+      }
+    }
+    return ''
+  })()
+
+  // Pure questions ("これは何ですか") must not enter edit/verify/run_shell.
+  if (shouldAnswerWithoutTools(latestUserText)) {
+    onEvent({
+      type: 'agent_phase',
+      phase: 'plan',
+      note: '質問のためツールなしで回答'
+    })
+    onEvent({
+      type: 'delta',
+      text: '💬 質問のため、編集・検証ツールは使わずに回答します。\n'
+    })
+    const taskTypeHint = classifyTask(latestUserText, null)
+    const qaMessages: ProviderMessage[] = [
+      {
+        role: 'system',
+        content:
+          'あなたは saforall のアシスタントです。ユーザーの質問に簡潔に日本語で答えてください。' +
+          'コード修正・ファイル編集・シェル実行は不要です。警告文の意味を聞かれたら、そのまま説明してください。' +
+          `（task=${taskTypeHint}）`
+      },
+      ...seed
+        .filter((row) => row.role === 'user' || row.role === 'assistant')
+        .map((row) => ({
+          role: row.role as 'user' | 'assistant',
+          content: row.content
+        }))
+    ]
+    try {
+      const completion = await callAgentLlm({
+        engine,
+        baseUrl,
+        model,
+        extraHeaders,
+        messages: qaMessages,
+        signal,
+        sessionId
+      })
+      const text =
+        (completion.choices?.[0]?.message?.content ?? '').trim() ||
+        '（回答を生成できませんでした。Ask モードで再送してください。）'
+      onEvent({ type: 'delta', text: text.startsWith('💬') ? text : `\n${text}` })
+      const completed = await complete(text)
+      if (!completed) {
+        onEvent({
+          type: 'error',
+          code: 'COMPLETE_FAILED',
+          message: '応答の保存に失敗しました'
+        })
+        return
+      }
+      onEvent({
+        type: 'done',
+        model,
+        engine,
+        task_type: taskType,
+        assistant_message: completed.assistant_message,
+        estimated_usd: completed.estimated_usd,
+        usage: completed.usage,
+        used_tools: false
+      })
+    } catch (error) {
+      const { isChatAbortError } = await import('./chatAbort')
+      if (isChatAbortError(error) || signal?.aborted) throw error
+      onEvent({
+        type: 'error',
+        code: 'AGENT_QA_FAILED',
+        message: error instanceof Error ? error.message : String(error)
+      })
+    }
+    return
+  }
+
   // Show progress before disk/MCP work so the UI is not silent.
   onEvent({ type: 'agent_phase', phase: 'plan', note: '計画を開始' })
 
-  const [rules, verifySuggestion] = await Promise.all([
+  const [rules, verifySuggestion, skillsCatalog] = await Promise.all([
     loadProjectRules(workspacePath),
-    suggestVerifyCommands(workspacePath)
+    suggestVerifyCommands(workspacePath),
+    formatSkillsCatalog(workspacePath)
   ])
   const suggestedVerify = verifySuggestion?.primary ?? null
   const verifyFallbackText =
@@ -1809,21 +1495,25 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     '必ずフェーズを進めます: plan → explore → edit → verify。',
     'set_phase でフェーズを宣言してから作業してください。',
     'plan: 変更方針を短く立てる（必要なら軽く list/search）。',
-    'explore: read_file / search_code / MCP で深く調査（関連ファイルを複数読む）。',
-    'edit: 既存ファイルは必ず先に read_file してから edit_file。複数ファイルを提案（Composer レビュー用。即時永続保存されない）。完全なファイル内容を送る（断片・切り捨て禁止）。',
-    'verify: 編集ファイルを read_file で確認し、run_shell と get_problems で検証する。失敗したら errorExcerpt / Problems を読んで edit に戻り、修正後に再実行。',
-    '重要: 修正内容を markdown のコードブロックで説明するだけでは終了しない。必ず edit_file ツールで Composer に載せる。',
+    'explore: read_file / search_code / MCP / read_skill で深く調査（関連ファイルを複数読む）。',
+    'edit: 既存ファイルは必ず先に read_file してから edit_file。複数ファイルを提案（変更候補パネル用。即時永続保存されない）。完全なファイル内容を送る（断片・切り捨て禁止）。',
+    'verify: 編集ファイルを read_file で確認し、run_shell（typecheck/test/lint など終わるコマンド）と get_problems で検証する。失敗したら errorExcerpt / Problems を読んで edit に戻り、修正後に再実行。',
+    '禁止: verify で npm start / npm run dev / vite / serve / watch など起動しっぱなしのコマンドを使わない（タイムアウトになる）。',
+    '重要: 修正内容を markdown のコードブロックで説明するだけでは終了しない。必ず edit_file ツールで変更候補に載せる。',
     '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）と、依頼が修正なら edit_file + run_shell を行う。',
+    '重要: 「適用して」「反映して」「差分を適用」は編集依頼。edit_file で変更を変更候補に載せ、verify する。「編集できない」と断るのは禁止。',
+    '重要: ユーザーが verify 警告文を引用して適用を求めたら、直前の作業内容を再開し edit_file で再提案する。警告文そのものを説明して終わりにしない。',
     '重要: 既存ファイルへの edit_file は read_file 済みパスのみ許可。未読なら read_required で拒否される。',
     '禁止: main.js / index.html / App 入口ファイルを空や数行のスタブにすること。画面が出ない障害の主因になる。',
     '禁止: set_phase / edit_file / read_file / run_shell を文章・bash・手順リストとして書くこと。必ず tools / function 呼び出しで呼ぶ。',
     'run_shell は提案中の edit を一時適用してから実行し、終了後にディスクを元に戻す。',
+    'Skills: カタログに関連があれば read_skill で本文を読み、手順に従う（.saforall/skills/<id>/SKILL.md）。',
     'MCP: list_mcp_tools / list_mcp_resources / list_mcp_prompts / call_mcp_tool / read_mcp_resource / get_mcp_prompt を使える（.saforall/mcp.json）。必要なら先に list_mcp_tools で一覧を取得する。',
     `編集リカバリ上限: ${MAX_EDIT_RECOVERIES} 回まで verify 失敗→edit 自動復帰。`,
     '破壊的コマンドは禁止。まず短い検証（typecheck）を通し、必要なら test を追加。',
     'ツール失敗時は別パス/クエリ/コマンドで自己修正。同じ呼び出しを繰り返さない。失敗理由を読み、仮説を変える。',
     'シェル未成功のまま最終回答しない。直せる限り edit → run_shell を続ける。',
-    '最終回答は日本語で、変更ファイル一覧・シェル結果・Composer 適用の促しを短くまとめる。',
+    '最終回答は日本語で、変更ファイル一覧・シェル結果・変更候補の適用案内を短くまとめる。ユーザー向けに「Composer」という語は使わず「変更候補」と言う。',
     `ワークスペース: ${workspacePath}`,
     suggestedVerify
       ? `推奨検証コマンド: ${suggestedVerify}${verifyFallbackText}`
@@ -1831,6 +1521,9 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
   ]
   if (rules) {
     agentSystem.push('プロジェクトルール:\n' + rules)
+  }
+  if (skillsCatalog) {
+    agentSystem.push(skillsCatalog)
   }
   const problemsBlock = formatProblemsForAgent(
     problemsSnapshot,
@@ -1842,6 +1535,27 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       '現在の Problems（編集対象に関連し得る診断）:\n' +
         problemsBlock +
         '\nverify では get_problems で再確認し、error が残るなら edit_file で直す。'
+    )
+  }
+  if (
+    seed.some(
+      (row) =>
+        row.role === 'user' &&
+        Array.isArray(row.content) &&
+        row.content.some((part) => {
+          if (!part || typeof part !== 'object') return false
+          const block = part as Record<string, unknown>
+          return (
+            block.type === 'image_url' ||
+            block.type === 'image' ||
+            Boolean(block.inline_data) ||
+            Boolean(block.source)
+          )
+        })
+    )
+  ) {
+    agentSystem.push(
+      'ユーザーが画像（UI スクショ等）を添付しています。見た目・エラー表示を読み取り、編集の根拠にしてください。'
     )
   }
 
@@ -1909,14 +1623,14 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
     try {
       completion = await callAgentLlm({
         engine,
-        apiKey,
         baseUrl,
         model,
         extraHeaders,
         messages,
         tools: TOOLS,
         toolChoice: preferRequiredTools ? 'required' : 'auto',
-        signal
+        signal,
+        sessionId
       })
     } catch (error) {
       const { isChatAbortError } = await import('./chatAbort')
@@ -1937,12 +1651,12 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       try {
         const fallback = await callAgentLlm({
           engine,
-          apiKey,
           baseUrl,
           model,
           extraHeaders,
           messages,
-          signal
+          signal,
+          sessionId
         })
         finalText = (fallback.choices?.[0]?.message?.content ?? '').trim()
         if (finalText) break
@@ -1972,6 +1686,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         name === 'read_file' ||
         name === 'list_dir' ||
         name === 'search_code' ||
+        name === 'read_skill' ||
         name === 'list_mcp_tools' ||
         name === 'list_mcp_resources' ||
         name === 'list_mcp_prompts'
@@ -2257,7 +1972,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           messages.push({
             role: 'user',
             content:
-              'システム: read + run_shell 成功です。最終回答を日本語でまとめ、Composer で差分を適用するよう促してください。'
+              'システム: read + run_shell 成功です。最終回答を日本語でまとめ、エディタ上部の「変更候補」から差分を適用するよう促してください（「Composer」という語は使わない）。'
           })
         }
       }
@@ -2336,7 +2051,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       }
       finalText =
         'Agent がツールを正しく呼び出せませんでした（文章での「手順: edit_file」などは無効です）。' +
-        'モデルを OpenAI にし、フォルダを開いた状態で再試行してください。Composer に差分が出るまで成功ではありません。'
+        'モデルを OpenAI にし、フォルダを開いた状態で再試行してください。変更候補に差分が出るまで成功ではありません。'
       break
     }
 
@@ -2408,7 +2123,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
             ? `システム: シェル検証が失敗したままです。最終回答は禁止。set_phase edit → edit_file で直し、再度 run_shell してください${
                 suggestedVerify ? `（再実行例: ${suggestedVerify}）` : ''
               }。\n--- failure ---\n${lastShellFailure || '(no output)'}`
-            : `システム: シェル検証が失敗し、自動リカバリ上限に達しています。失敗内容を明記したうえで最終回答し、Composer で人手確認を促してください。\n--- failure ---\n${lastShellFailure || '(no output)'}`
+            : `システム: シェル検証が失敗し、自動リカバリ上限に達しています。失敗内容を明記したうえで最終回答し、変更候補で人手確認を促してください。\n--- failure ---\n${lastShellFailure || '(no output)'}`
         })
         if (canRecover) {
           phase = 'edit'
@@ -2438,11 +2153,11 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
 
   if (verifyIncomplete && finalText) {
     finalText +=
-      '\n\n⚠ verify が完了していません。Composer の差分を必ず人手で確認してください。'
+      '\n\n⚠ verify が完了していません。変更候補の差分を必ず人手で確認してください。'
   }
   if (shellIncomplete && finalText) {
     finalText +=
-      '\n\n⚠ シェル検証（run_shell）が未成功です。Composer 適用前にローカルで test/typecheck を実行してください。' +
+      '\n\n⚠ シェル検証（run_shell）が未成功です。変更候補を適用する前にローカルで test/typecheck を実行してください。' +
       (lastShellFailure ? `\n\n--- last failure ---\n${lastShellFailure}` : '')
   }
 
@@ -2454,7 +2169,7 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
         lastShellCommand ? `最後のコマンド: ${lastShellCommand}` : null,
         editList ? `未適用の編集候補: ${editList}` : null,
         lastShellFailure ? `--- failure ---\n${lastShellFailure}` : null,
-        'Composer で差分を確認し、必要なら手動で修正を続けてください。'
+        '変更候補で差分を確認し、必要なら手動で修正を続けてください。'
       ]
         .filter(Boolean)
         .join('\n')
@@ -2465,14 +2180,14 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
           ? `\n実施ログ: ${progressNotes.slice(-12).join(' · ')}`
           : ''
       finalText =
-        '長時間 Agent を完了しました。Composer の差分レビューから変更を確認・適用してください。' +
+        '長時間 Agent を完了しました。エディタ上部の「変更候補」から変更を確認・適用してください。' +
         notes
     }
   }
 
-  if (editedPaths.size > 0 && shellState.passed && !finalText.includes('Composer')) {
+  if (editedPaths.size > 0 && shellState.passed && !finalText.includes('変更候補')) {
     finalText +=
-      '\n\n✅ シェル検証は成功しています。Composer で「すべて適用」すると変更がディスクに残ります。'
+      '\n\n✅ シェル検証は成功しています。変更候補バーまたは一覧で「すべて適用」すると変更がディスクに残ります。'
   }
 
   if (

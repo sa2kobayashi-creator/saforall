@@ -102,10 +102,27 @@ test('packaging: electron-builder.yml and scripts exist', async () => {
   assert.ok(pkg.devDependencies['electron-builder'])
   const yml = await readFile(join(root, 'electron-builder.yml'), 'utf8')
   assert.match(yml, /signAndEditExecutable:\s*false/)
+  assert.match(yml, /node-pty/)
+  assert.match(yml, /@cursor\/sdk/)
+  assert.match(yml, /server-filesystem/)
   const packDoc = await readFile(join(root, 'docs/PACKAGING.md'), 'utf8')
   assert.match(packDoc, /SmartScreen/)
   assert.match(packDoc, /未署名/)
   assert.match(packDoc, /electron-updater/)
+  assert.match(packDoc, /SAFORALL_API_BASE_URL/)
+  assert.match(packDoc, /インストール版だけ/)
+})
+
+test('packaged health skips dead PHP probing by default', async () => {
+  const api = await readFile(join(root, 'electron/main/api.ts'), 'utf8')
+  assert.match(api, /export function shouldProbePhpBackend/)
+  assert.match(api, /SAFORALL_FORCE_LOCAL/)
+  assert.match(api, /app\?\.isPackaged/)
+  assert.match(api, /phpProbeCooldownUntil/)
+  const mcp = await readFile(join(root, 'electron/main/mcpClient.ts'), 'utf8')
+  assert.match(mcp, /export function mcpNodeModulesRoots/)
+  assert.match(mcp, /app\.asar\.unpacked/)
+  assert.match(mcp, /mcpNodeModulesRoots\(cwd\)/)
 })
 
 test('daily: resolveProblemOpenPath joins relative paths', () => {

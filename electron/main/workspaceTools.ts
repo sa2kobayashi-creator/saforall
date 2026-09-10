@@ -243,7 +243,6 @@ export async function loadProjectRules(workspaceRoot: string): Promise<string | 
   }
 
   const candidates = [
-    '.saforall/rules',
     '.saforall/rules.md',
     'SAFORALL.md',
     'AGENTS.md',
@@ -279,6 +278,24 @@ export async function loadProjectRules(workspaceRoot: string): Promise<string | 
     }
   } catch {
     // no .cursor/rules
+  }
+
+  try {
+    const rulesDir = resolveWorkspacePath(workspaceRoot, '.saforall/rules')
+    const entries = await readdir(rulesDir, { withFileTypes: true })
+    const files = entries
+      .filter((row) => row.isFile() && /\.(mdc|md|txt)$/i.test(row.name))
+      .map((row) => row.name)
+      .sort((a, b) => a.localeCompare(b))
+    for (const name of files) {
+      if (used >= maxTotal) break
+      const content = await readBounded(join(rulesDir, name), Math.min(6_000, maxTotal - used))
+      if (!content) continue
+      parts.push(`### .saforall/rules/${name}\n${content}`)
+      used += content.length
+    }
+  } catch {
+    // no .saforall/rules dir
   }
 
   for (const rel of ['.saforall/memories.md', '.saforall/memories']) {
@@ -325,17 +342,19 @@ export async function listProjectRuleFiles(workspaceRoot: string): Promise<Proje
   await tryStat('.cursor/rules.md', 'rules')
   await tryStat('.saforall/memories.md', 'memory')
   await tryStat('.saforall/memories', 'memory')
-  try {
-    const rulesDir = resolveWorkspacePath(workspaceRoot, '.cursor/rules')
-    const entries = await readdir(rulesDir, { withFileTypes: true })
-    for (const row of entries) {
-      if (!row.isFile() || !/\.(mdc|md|txt)$/i.test(row.name)) continue
-      const rel = `.cursor/rules/${row.name}`
-      const info = await stat(join(rulesDir, row.name))
-      out.push({ path: rel, kind: 'rules', bytes: info.size })
+  for (const dirRel of ['.cursor/rules', '.saforall/rules']) {
+    try {
+      const rulesDir = resolveWorkspacePath(workspaceRoot, dirRel)
+      const entries = await readdir(rulesDir, { withFileTypes: true })
+      for (const row of entries) {
+        if (!row.isFile() || !/\.(mdc|md|txt)$/i.test(row.name)) continue
+        const rel = `${dirRel}/${row.name}`
+        const info = await stat(join(rulesDir, row.name))
+        out.push({ path: rel, kind: 'rules', bytes: info.size })
+      }
+    } catch {
+      // no dir
     }
-  } catch {
-    // no dir
   }
   return out.sort((a, b) => a.path.localeCompare(b.path))
 }
@@ -408,6 +427,118 @@ export async function readProjectRuleFile(
   return text.length > 100_000 ? `${text.slice(0, 100_000)}\n\n... (truncated)` : text
 }
 
+function parseMarkdownFrontmatter(content: string): {
+  meta: Record<string, string>
+  body: string
+} {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
+  if (!match) return { meta: {}, body: content }
+  const meta: Record<string, string> = {}
+  for (const line of match[1].split(/\r?\n/)) {
+    const row = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/)
+    if (!row) continue
+    meta[row[1]] = row[2].trim().replace(/^["']|["']$/g, '')
+  }
+  return { meta, body: match[2] }
+}
+
+export type ProjectSkill = {
+  id: string
+  name: string
+  description: string
+  path: string
+  bytes: number
+}
+
+async function collectSkillsFromDir(
+  workspaceRoot: string,
+  dirRel: string,
+  out: ProjectSkill[]
+): Promise<void> {
+  try {
+    const absoluteDir = resolveWorkspacePath(workspaceRoot, dirRel)
+    const entries = await readdir(absoluteDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const skillRel = `${dirRel}/${entry.name}/SKILL.md`.replace(/\\/g, '/')
+      try {
+        const absolute = resolveWorkspacePath(workspaceRoot, skillRel)
+        const info = await stat(absolute)
+        if (!info.isFile()) continue
+        const raw = await readFile(absolute, 'utf-8')
+        const { meta } = parseMarkdownFrontmatter(raw)
+        const id = (meta.name || entry.name).trim() || entry.name
+        out.push({
+          id,
+          name: id,
+          description: (meta.description || '').trim() || `${id} skill`,
+          path: skillRel,
+          bytes: info.size
+        })
+      } catch {
+        // skip broken skill
+      }
+    }
+  } catch {
+    // dir missing
+  }
+}
+
+/** Cursor-compatible project skills: .saforall/skills/<id>/SKILL.md and .cursor/skills/<id>/SKILL.md */
+export async function listProjectSkills(workspaceRoot: string): Promise<ProjectSkill[]> {
+  const out: ProjectSkill[] = []
+  await collectSkillsFromDir(workspaceRoot, '.saforall/skills', out)
+  await collectSkillsFromDir(workspaceRoot, '.cursor/skills', out)
+  const seen = new Set<string>()
+  return out
+    .filter((row) => {
+      const key = row.id.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .sort((a, b) => a.id.localeCompare(b.id))
+}
+
+export async function readProjectSkill(
+  workspaceRoot: string,
+  idOrPath: string
+): Promise<{ id: string; name: string; description: string; path: string; content: string }> {
+  const needle = idOrPath.replace(/\\/g, '/').replace(/^\.\//, '').trim()
+  if (!needle) throw new Error('skill id が空です')
+  const listed = await listProjectSkills(workspaceRoot)
+  const hit =
+    listed.find((row) => row.id.toLowerCase() === needle.toLowerCase()) ||
+    listed.find((row) => row.path.replace(/\\/g, '/') === needle) ||
+    listed.find((row) => row.path.replace(/\\/g, '/').endsWith(`/${needle}/SKILL.md`))
+  if (!hit) throw new Error(`skill が見つかりません: ${needle}`)
+  const absolute = resolveWorkspacePath(workspaceRoot, hit.path)
+  const raw = await readFile(absolute, 'utf-8')
+  const { meta, body } = parseMarkdownFrontmatter(raw)
+  const content = body.trim() || raw
+  return {
+    id: hit.id,
+    name: (meta.name || hit.name).trim() || hit.name,
+    description: (meta.description || hit.description).trim() || hit.description,
+    path: hit.path,
+    content: content.length > 80_000 ? `${content.slice(0, 80_000)}\n\n... (truncated)` : content
+  }
+}
+
+/** Compact catalog for Agent system prompt / @skills. */
+export async function formatSkillsCatalog(workspaceRoot: string): Promise<string | null> {
+  const skills = await listProjectSkills(workspaceRoot)
+  if (skills.length === 0) return null
+  const lines = skills.slice(0, 40).map((row) => {
+    const desc = row.description.replace(/\s+/g, ' ').slice(0, 160)
+    return `- ${row.id}: ${desc} (${row.path})`
+  })
+  return [
+    '利用可能な Skills（必要なら read_skill で本文を読む）:',
+    ...lines
+  ].join('\n')
+}
+
 export async function searchFilesByName(
   workspaceRoot: string,
   query: string,
@@ -457,6 +588,42 @@ export function assertSafeShellCommand(command: string): void {
   }
 }
 
+/**
+ * Dev servers / watchers never exit — useless (and confusing) for Agent verify.
+ * Detect common start/dev/serve patterns so we can fail fast with a clear message.
+ */
+export function isLongRunningShellCommand(command: string): boolean {
+  const normalized = command.trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!normalized) return false
+  const segments = normalized.split(/\s*(?:&&|\|\||;)\s*/).filter(Boolean)
+  return segments.some((part) => {
+    if (/^(npm|pnpm|yarn|bun)(\s+run)?\s+(start|dev|serve|watch)(\s|$)/.test(part)) return true
+    if (/^(npm|pnpm|yarn|bun)\s+start(\s|$)/.test(part)) return true
+    if (/\bvite\s+build\b/.test(part) || /\bnext\s+build\b/.test(part)) return false
+    if (/\b(next\s+dev|nuxt\s+dev|remix\s+dev|astro\s+dev|ng\s+serve)\b/.test(part)) return true
+    if (/(^|\s)vite(\s|$)/.test(part)) return true
+    if (/\b(webpack-dev-server|nodemon)\b/.test(part)) return true
+    if (/^(npx|pnpm\s+dlx|yarn\s+dlx)\s+(serve|http-server|vite|next)(\s|$)/.test(part)) return true
+    if (/^(python|py|python3)\s+(-m\s+)?(http\.server|uvicorn)\b/.test(part)) return true
+    if (/^(flask\s+run|php\s+-s)\b/.test(part)) return true
+    return false
+  })
+}
+
+export function explainLongRunningShellCommand(
+  command: string,
+  preferredVerify?: string | null
+): string {
+  const cmd = command.trim() || '(empty)'
+  const hint = preferredVerify?.trim()
+    ? `代わりに「${preferredVerify.trim()}」など、終わって結果が返るコマンドを使ってください。`
+    : '代わりに typecheck / test / lint など、終わって結果が返るコマンドを使ってください。'
+  return (
+    `「${cmd}」はアプリを起動したまま終了しないコマンドです。` +
+    `検証では使えません（ずっと待ち続けてタイムアウトになります）。${hint}`
+  )
+}
+
 export function truncateShellOutput(text: string, max = 12_000): string {
   if (text.length <= max) return text
   const head = Math.floor(max * 0.65)
@@ -489,18 +656,28 @@ export async function suggestVerifyCommands(
     const fallbacks: string[] = []
     let primary: string | null = null
 
-    // Prefer fast typecheck first; keep full test as a second gate when available.
+    // Prefer fast typecheck first. Avoid chaining `npm test` when it already embeds typecheck
+    // (common monorepo pattern) — that makes run_shell look hung for minutes.
     if (scripts.typecheck) {
       primary = 'npm run typecheck'
-      if (scripts.test) fallbacks.push('npm test')
+      const testScript = String(scripts.test || '')
+      if (scripts.test && !/\btypecheck\b/.test(testScript)) {
+        fallbacks.push('npm test')
+      }
     } else if (scripts.test) {
       primary = 'npm test'
     }
     if (scripts.lint && primary !== 'npm run lint') fallbacks.push('npm run lint')
-    if (scripts.build && !fallbacks.includes('npm run build') && primary !== 'npm run build') {
+    // build is often very slow — keep it last and only if nothing else is available
+    if (
+      scripts.build &&
+      !fallbacks.includes('npm run build') &&
+      primary !== 'npm run build' &&
+      fallbacks.length === 0
+    ) {
       fallbacks.push('npm run build')
     }
-    if (primary) return { primary, fallbacks: fallbacks.slice(0, 3) }
+    if (primary) return { primary, fallbacks: fallbacks.slice(0, 2) }
   } catch {
     // ignore
   }
@@ -564,7 +741,7 @@ export async function toolRunShell(
   assertSafeShellCommand(command)
   const cwdRel = options?.cwd?.trim() || '.'
   const cwd = resolveWorkspacePath(workspaceRoot, cwdRel)
-  const timeoutMs = Math.min(Math.max(options?.timeoutMs ?? 60_000, 5_000), 180_000)
+  const timeoutMs = Math.min(Math.max(options?.timeoutMs ?? 45_000, 5_000), 120_000)
   const signal = options?.signal
 
   if (signal?.aborted) {
@@ -620,6 +797,10 @@ export async function toolRunShell(
     const onAbort = (): void => {
       aborted = true
       killChild()
+      // Some Windows shells never emit close after taskkill — fail closed.
+      setTimeout(() => {
+        if (!settled) finish(null)
+      }, 2000)
     }
     if (signal) {
       signal.addEventListener('abort', onAbort, { once: true })

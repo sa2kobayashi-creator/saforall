@@ -31,9 +31,10 @@ export function formatAiUserError(raw: string | null | undefined): string {
     text.includes('クレジット')
   ) {
     return (
-      'Anthropic（Claude）の API クレジット残高が不足しています。' +
-      ' console.anthropic.com の Plans & Billing でチャージするか、' +
-      'チャットのエンジンを OpenAI / Gemini に切り替えて再送してください。'
+      'API クレジット／残高が不足しています。' +
+      ' エンジンが「自動」の場合は代替エンジンへ切り替えを試します。' +
+      ' 続く場合は Settings で OpenAI / Gemini のキーを確認するか、' +
+      'Anthropic は console.anthropic.com の Plans & Billing でチャージしてください。'
     )
   }
 
@@ -45,6 +46,19 @@ export function formatAiUserError(raw: string | null | undefined): string {
     return (
       'チャットセッションが見つかりませんでした。' +
       '「新規」で新しいチャットを開くか、もう一度送ってください（自動で作り直します）。'
+    )
+  }
+
+  if (
+    lower.includes('scm integration') ||
+    lower.includes('does not have access to repository') ||
+    lower.includes('verify branch existence') ||
+    (lower.includes('validation_error') && lower.includes('repository'))
+  ) {
+    return (
+      'Cursor Cloud Agent が GitHub リポジトリへアクセスできません。' +
+      'Settings の「Cursor Agent 実行場所」を「常に Local」にして保存し、再送してください。' +
+      'Cloud を使う場合は Cursor ダッシュボードの GitHub 連携で当該リポジトリを許可してください。'
     )
   }
 

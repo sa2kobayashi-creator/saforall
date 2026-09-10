@@ -96,11 +96,17 @@ export type CursorAgentResult = {
   runtime: 'local' | 'cloud'
 }
 
+export type CursorAgentImage = {
+  data: string
+  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | string
+}
+
 export async function runCursorAgent(options: {
   apiKey: string
   model: string
   cwd: string
   prompt: string
+  images?: CursorAgentImage[]
   onDelta: (text: string) => void
   runtime?: CursorRuntimePreference
   autoCreatePR?: boolean
@@ -130,7 +136,14 @@ export async function runCursorAgent(options: {
     Agent: {
       create: (input: Record<string, unknown>) => Promise<{
         agentId?: string
-        send: (prompt: string) => Promise<{
+        send: (
+          prompt:
+            | string
+            | {
+                text: string
+                images?: Array<{ data: string; mimeType: string }>
+              }
+        ) => Promise<{
           id?: string
           stream: () => AsyncIterable<unknown>
           wait: () => Promise<{ status?: string }>
@@ -151,9 +164,25 @@ export async function runCursorAgent(options: {
   }
 
   const agent = await sdk.Agent.create(createInput)
+  const images = (options.images ?? [])
+    .filter((row) => row.data && row.mimeType)
+    .slice(0, 5)
+  const promptText =
+    options.prompt.trim() ||
+    (images.length > 0 ? '添付画像を確認して、必要な修正を提案してください。' : '')
 
   try {
-    const run = await agent.send(options.prompt)
+    const run = await agent.send(
+      images.length > 0
+        ? {
+            text: promptText,
+            images: images.map((row) => ({
+              data: row.data,
+              mimeType: row.mimeType
+            }))
+          }
+        : promptText
+    )
     let text = ''
     for await (const event of run.stream()) {
       const chunk = textFromUnknown(event)

@@ -4,6 +4,13 @@ import { MessageContent } from './MessageContent'
 import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
 import { languageFromPath } from '../lib/language'
 import { DEFAULT_COST_LIMITS, USAGE_ENGINE_KEYS, DEFAULT_ENABLED_MODELS, optionsForEngine, parseModelList, type ProviderEngine } from '../lib/llmModels'
+import {
+  DEFAULT_ENABLED_CATEGORIES,
+  ROUTER_CATEGORIES,
+  parseEnabledCategories,
+  parseRouterCategory,
+  type RouterCategoryId
+} from '../lib/routerCategories'
 import { fetchAppSettings } from '../lib/settingsCache'
 import type {
   AiEngine,
@@ -25,6 +32,21 @@ import {
   parseMentionTokens,
   type MentionSuggestion
 } from '../lib/chatMentions'
+import {
+  addAttachedPath,
+  attachmentLabel,
+  pathsFromDataTransfer,
+  removeAttachedPath
+} from '../lib/chatAttachments'
+import {
+  CHAT_IMAGE_MAX_COUNT,
+  chatImageFromBlob,
+  imageBlobsFromDataTransfer,
+  isImageFileName,
+  revokeImagePreviews,
+  toImagePayloads,
+  type ChatImageAttachment
+} from '../lib/chatImages'
 import { buildBackendOfflineMessage } from '../lib/backendGuide'
 import { formatAiUserError } from '../lib/aiErrorGuide'
 import './ChatPanel.css'
@@ -70,6 +92,37 @@ function toChatMessage(row: ChatMessageRecord): ChatMessage {
   }
 }
 
+/** Hidden marker so shell progress updates replace one line instead of spamming the chat. */
+const SHELL_PROGRESS_MARKER = '<!--saforall-shell-progress-->'
+
+function upsertShellProgressLine(content: string, body: string): string {
+  const line = `\n\n${SHELL_PROGRESS_MARKER}${body}`
+  const re = new RegExp(
+    `\\n\\n${SHELL_PROGRESS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?(?=\\n\\n|$)`
+  )
+  if (re.test(content)) return content.replace(re, line)
+  if (content.startsWith(SHELL_PROGRESS_MARKER)) {
+    return content.replace(
+      new RegExp(
+        `^${SHELL_PROGRESS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?(?=\\n\\n|$)`
+      ),
+      `${SHELL_PROGRESS_MARKER}${body}`
+    )
+  }
+  return content + line
+}
+
+function stripProgressMarkersForDisplay(content: string): string {
+  return content.replaceAll(SHELL_PROGRESS_MARKER, '')
+}
+
+const AGENT_PHASE_COPY: Record<string, { title: string; blurb: string }> = {
+  plan: { title: '方針', blurb: 'これから何をするか整理しています' },
+  explore: { title: '調査', blurb: '関連するコードを読んでいます' },
+  edit: { title: '編集', blurb: '変更案を作成しています' },
+  verify: { title: '確認', blurb: '変更が正しいかチェックしています' }
+}
+
 function loadMode(): ChatMode {
   const saved = window.localStorage.getItem('saforall-chat-mode')
   return saved === 'agent' ? 'agent' : 'ask'
@@ -88,6 +141,10 @@ function loadEngine(): AiEngine {
     return saved
   }
   return 'auto'
+}
+
+function loadRouterCategory(): RouterCategoryId {
+  return parseRouterCategory(window.localStorage.getItem('saforall-router-category'))
 }
 
 function lastSessionStorageKey(workspaceId: number | null): string {
@@ -153,6 +210,10 @@ export function ChatPanel({
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<ChatMode>(loadMode)
   const [engine, setEngine] = useState<AiEngine>(loadEngine)
+  const [routerCategory, setRouterCategory] = useState<RouterCategoryId>(loadRouterCategory)
+  const [enabledCategories, setEnabledCategories] = useState<RouterCategoryId[]>([
+    ...DEFAULT_ENABLED_CATEGORIES
+  ])
   const [modelChoice, setModelChoice] = useState('auto-within-engine')
   const [enabledByEngine, setEnabledByEngine] = useState<Record<ProviderEngine, string[]>>({
     ...DEFAULT_ENABLED_MODELS
@@ -163,6 +224,15 @@ export function ChatPanel({
   const [cursorRuntime, setCursorRuntime] = useState<'auto' | 'local' | 'cloud'>('auto')
   const [autoAppliedIds, setAutoAppliedIds] = useState<Record<string, boolean>>({})
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
+  const [attachedImages, setAttachedImages] = useState<ChatImageAttachment[]>([])
+  const attachedImagesRef = useRef(attachedImages)
+  attachedImagesRef.current = attachedImages
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  const [attachDropActive, setAttachDropActive] = useState(false)
+  const [attachPickerOpen, setAttachPickerOpen] = useState(false)
+  const [attachQuery, setAttachQuery] = useState('')
+  const [attachResults, setAttachResults] = useState<Array<{ path: string; label: string }>>([])
   const [mentionOpen, setMentionOpen] = useState(false)
   const [mentionItems, setMentionItems] = useState<MentionSuggestion[]>([])
   const [mentionIndex, setMentionIndex] = useState(0)
@@ -195,6 +265,11 @@ export function ChatPanel({
   const streamRequestIdRef = useRef<string | null>(null)
   const stopRequestedRef = useRef(false)
   const stopForceTimerRef = useRef<number | null>(null)
+  /** Guards setBusy(null) so a stuck previous stream cannot unlock/steal a newer turn. */
+  const submitGenerationRef = useRef(0)
+  const inputRef = useRef(input)
+  inputRef.current = input
+  const lastSubmittedTextRef = useRef('')
 
   // 幅を狭めたタイミングだけ履歴を自動で畳む
   useEffect(() => {
@@ -282,6 +357,9 @@ export function ChatPanel({
           ),
           cursor: parseModelList(settings['llm.cursor.models'], DEFAULT_ENABLED_MODELS.cursor)
         })
+        setEnabledCategories(
+          parseEnabledCategories(settings['router.enabled_categories'] ?? DEFAULT_ENABLED_CATEGORIES)
+        )
         {
           const runtime = settings['llm.cursor.runtime']
           if (runtime === 'local' || runtime === 'cloud' || runtime === 'auto') {
@@ -294,7 +372,8 @@ export function ChatPanel({
     return () => {
       cancelled = true
     }
-  }, [backendConnected])
+    // settingsRevision: Settings 保存後に cursor runtime などを再読込する
+  }, [backendConnected, settingsRevision])
 
   const changeEngine = (next: AiEngine) => {
     setEngine(next)
@@ -308,6 +387,7 @@ export function ChatPanel({
       selection: hasSpecialMention(mentionTokens, 'selection'),
       problems: hasSpecialMention(mentionTokens, 'problems'),
       rules: hasSpecialMention(mentionTokens, 'rules'),
+      skills: hasSpecialMention(mentionTokens, 'skills'),
       codebase: hasSpecialMention(mentionTokens, 'codebase')
     }),
     [mentionTokens]
@@ -323,28 +403,166 @@ export function ChatPanel({
     } else if (file) {
       bits.push(file.path.split(/[/\\]/).pop() ?? file.path)
     }
+    if (attachedImages.length > 0) {
+      bits.push(`+${attachedImages.length} 画像`)
+    }
     if (attachedPaths.length > 0) {
       bits.push(`+${attachedPaths.length} ファイル`)
     }
     if (mentionFlags.selection) bits.push('@selection')
     if (mentionFlags.problems) bits.push('@problems')
     if (mentionFlags.rules) bits.push('@rules')
+    if (mentionFlags.skills) bits.push('@skills')
     if (mentionFlags.codebase) bits.push('@codebase')
     else if (mode === 'ask' || mode === 'agent') bits.push(`${mode === 'agent' ? 'Agent' : 'Ask'}: 自動検索あり`)
     return bits.length > 0 ? bits.join(' · ') : 'コンテキストなし'
-  }, [file, selection, attachedPaths, mentionFlags, mode])
+  }, [file, selection, attachedImages, attachedPaths, mentionFlags, mode])
 
   const toggleAttached = useCallback((path: string) => {
     setAttachedPaths((current) =>
-      current.includes(path) ? current.filter((row) => row !== path) : [...current, path]
+      current.includes(path) ? removeAttachedPath(current, path) : addAttachedPath(current, path)
     )
   }, [])
+
+  useEffect(() => {
+    return () => revokeImagePreviews(attachedImagesRef.current)
+  }, [])
+
+  const addImagesFromBlobs = useCallback(
+    async (items: Array<{ blob: Blob; name: string }>) => {
+      if (items.length === 0) return
+      const next: ChatImageAttachment[] = []
+      for (const item of items) {
+        try {
+          next.push(await chatImageFromBlob(item.blob, item.name))
+        } catch (error) {
+          setError(error instanceof Error ? error.message : String(error))
+        }
+      }
+      if (next.length === 0) return
+      setAttachedImages((current) => {
+        const merged = [...current, ...next]
+        if (merged.length <= CHAT_IMAGE_MAX_COUNT) return merged
+        const keep = merged.slice(-CHAT_IMAGE_MAX_COUNT)
+        revokeImagePreviews(merged.slice(0, merged.length - keep.length))
+        return keep
+      })
+    },
+    []
+  )
+
+  const addImagesFromPaths = useCallback(async (paths: string[]) => {
+    const imagePaths = paths.filter((path) => isImageFileName(path))
+    if (imagePaths.length === 0) return
+    if (typeof window.saforall.readFileBase64 !== 'function') {
+      setError('このビルドでは画像ファイルの読み込みに未対応です')
+      return
+    }
+    const next: ChatImageAttachment[] = []
+    for (const path of imagePaths) {
+      try {
+        const row = await window.saforall.readFileBase64(path)
+        const binary = atob(row.data_base64)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const blob = new Blob([bytes], { type: row.mime })
+        next.push(await chatImageFromBlob(blob, row.name || attachmentLabel(path)))
+      } catch (error) {
+        setError(error instanceof Error ? error.message : String(error))
+      }
+    }
+    if (next.length === 0) return
+    setAttachedImages((current) => {
+      const merged = [...current, ...next]
+      if (merged.length <= CHAT_IMAGE_MAX_COUNT) return merged
+      const keep = merged.slice(-CHAT_IMAGE_MAX_COUNT)
+      revokeImagePreviews(merged.slice(0, merged.length - keep.length))
+      return keep
+    })
+  }, [])
+
+  const removeAttachedImage = useCallback((id: string) => {
+    setAttachedImages((current) => {
+      const target = current.find((row) => row.id === id)
+      if (target) revokeImagePreviews([target])
+      return current.filter((row) => row.id !== id)
+    })
+  }, [])
+
+  const attachPaths = useCallback((paths: string[]) => {
+    if (paths.length === 0) return
+    const files = paths.filter((path) => !isImageFileName(path))
+    const images = paths.filter((path) => isImageFileName(path))
+    if (files.length > 0) {
+      setAttachedPaths((current) => {
+        let next = current
+        for (const path of files) next = addAttachedPath(next, path)
+        return next
+      })
+    }
+    if (images.length > 0) void addImagesFromPaths(images)
+  }, [addImagesFromPaths])
+
+  const openAttachPicker = useCallback(() => {
+    setAttachPickerOpen(true)
+    setAttachQuery('')
+    setAttachResults(
+      openFiles.slice(0, 12).map((row) => ({
+        path: row.path,
+        label: attachmentLabel(row.path)
+      }))
+    )
+  }, [openFiles])
+
+  useEffect(() => {
+    if (!attachPickerOpen || !workspacePath) return
+    const q = attachQuery.trim()
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        if (q.length === 0) {
+          if (!cancelled) {
+            setAttachResults(
+              openFiles.slice(0, 12).map((row) => ({
+                path: row.path,
+                label: attachmentLabel(row.path)
+              }))
+            )
+          }
+          return
+        }
+        if (typeof window.saforall.searchFiles !== 'function') return
+        try {
+          const hits = await window.saforall.searchFiles(workspacePath, q)
+          if (cancelled) return
+          setAttachResults(
+            (hits ?? []).slice(0, 12).map((rel) => {
+              const abs =
+                rel.includes(':') || rel.startsWith('/') || rel.startsWith('\\')
+                  ? rel
+                  : `${workspacePath.replace(/[/\\]+$/, '')}${
+                      workspacePath.includes('\\') ? '\\' : '/'
+                    }${String(rel).replace(/^[\\/]+/, '')}`
+              return { path: abs, label: attachmentLabel(abs) }
+            })
+          )
+        } catch {
+          if (!cancelled) setAttachResults([])
+        }
+      })()
+    }, 180)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [attachPickerOpen, attachQuery, openFiles, workspacePath])
 
   const buildContextPayload = useCallback(async () => {
     const tokens = parseMentionTokens(input)
     const wantSelection = hasSpecialMention(tokens, 'selection')
     const wantProblems = hasSpecialMention(tokens, 'problems')
     const wantRules = hasSpecialMention(tokens, 'rules')
+    const wantSkills = hasSpecialMention(tokens, 'skills')
     const wantCodebase = hasSpecialMention(tokens, 'codebase')
     // Ask: @codebase なしでもキーワードがあれば軽量検索（Agent は search_code があるので省略して TTFT 改善）
     const autoNeedles = extractCodebaseNeedles(input)
@@ -434,7 +652,13 @@ export function ChatPanel({
     const mentioned = new Set<string>()
     for (const token of tokens) {
       const lower = token.toLowerCase()
-      if (lower === 'selection' || lower === 'problems' || lower === 'rules' || lower === 'codebase')
+      if (
+        lower === 'selection' ||
+        lower === 'problems' ||
+        lower === 'rules' ||
+        lower === 'skills' ||
+        lower === 'codebase'
+      )
         continue
       for (const open of openFiles) {
         const base = (open.path.split(/[/\\]/).pop() ?? open.path).toLowerCase()
@@ -523,6 +747,20 @@ export function ChatPanel({
       }
     }
 
+    // Skills catalog: 明示 @skills（Agent は toolAgent + read_skill）
+    let skills: string | null = null
+    if (
+      wantSkills &&
+      workspacePath &&
+      typeof window.saforall.skillsCatalog === 'function'
+    ) {
+      try {
+        skills = await window.saforall.skillsCatalog(workspacePath)
+      } catch {
+        skills = null
+      }
+    }
+
     const problemLimit = wantProblems ? 40 : 20
     const activeProblemPaths = [selection?.path, file?.path]
       .filter((row): row is string => typeof row === 'string' && row.trim() !== '')
@@ -549,15 +787,20 @@ export function ChatPanel({
       return `${row.severity}: ${loc} ${row.message}`
     })
 
+    const imagePayloads = toImagePayloads(attachedImages)
+
     if (
       !file &&
       files.length === 0 &&
+      imagePayloads.length === 0 &&
       !selectionPayload &&
       !rules &&
+      !skills &&
       problemLines.length === 0 &&
       !wantSelection &&
       !wantProblems &&
       !wantRules &&
+      !wantSkills &&
       !wantCodebase &&
       !indexSummary
     ) {
@@ -570,17 +813,30 @@ export function ChatPanel({
       language: file?.language ?? null,
       selection: selectionPayload,
       files,
+      images: imagePayloads,
       rules,
+      skills,
       problems: problemLines,
       mention_flags: {
         selection: wantSelection || (mode === 'agent' && Boolean(selectionPayload)),
         problems: wantProblems || (mode === 'agent' && problemLines.length > 0),
         rules: wantRules,
+        skills: wantSkills,
         codebase: wantCodebase || Boolean(indexSummary && autoCodebase)
       },
       index_summary: indexSummary
     }
-  }, [attachedPaths, file, input, mode, openFiles, problems, selection, workspacePath])
+  }, [
+    attachedImages,
+    attachedPaths,
+    file,
+    input,
+    mode,
+    openFiles,
+    problems,
+    selection,
+    workspacePath
+  ])
 
   const refreshMentionSuggestions = useCallback(
     async (value: string, cursor: number) => {
@@ -993,8 +1249,29 @@ export function ChatPanel({
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
-    const text = input.trim()
-    if (!text || busy || loading) return
+    await submitChat({
+      text: input.trim(),
+      hasImages: attachedImages.length > 0
+    })
+  }
+
+  const submitChat = async (options: {
+    text: string
+    hasImages?: boolean
+    /** Reuse a persisted user row (edit / regenerate). */
+    userMessageId?: number
+    /** Local bubble id to keep instead of creating a new optimistic user row. */
+    reuseLocalId?: string
+    clearComposer?: boolean
+  }) => {
+    const text = options.text.trim()
+    const hasImages = Boolean(options.hasImages)
+    const reuseLocalId = options.reuseLocalId
+    const userMessageId =
+      typeof options.userMessageId === 'number' && options.userMessageId > 0
+        ? options.userMessageId
+        : undefined
+    if ((!text && !hasImages) || busy || loading) return
 
     if (!backendConnected && !localLlmReady) {
       setError(buildBackendOfflineMessage())
@@ -1003,7 +1280,14 @@ export function ChatPanel({
 
     setBusy({ phase: 'thinking', detail: backendConnected ? 'AI に問い合わせ中…' : 'ローカル LLM に問い合わせ中…' })
     setError(null)
-    setInput('')
+    const submitGeneration = ++submitGenerationRef.current
+    lastSubmittedTextRef.current = text
+    if (options.clearComposer !== false && !reuseLocalId) {
+      setInput('')
+    }
+    setAttachPickerOpen(false)
+    setEditingMessageId(null)
+    setEditDraft('')
     stopRequestedRef.current = false
     if (stopForceTimerRef.current != null) {
       window.clearTimeout(stopForceTimerRef.current)
@@ -1017,28 +1301,71 @@ export function ChatPanel({
     }
 
     const localUser: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: reuseLocalId || crypto.randomUUID(),
       role: 'user',
-      content: text
+      content: text || (hasImages ? `（画像 ${attachedImages.length} 枚）` : '')
     }
-    setMessages((prev) => [...prev.filter((m) => m.id !== 'welcome'), localUser])
+    if (!reuseLocalId) {
+      setMessages((prev) => [...prev.filter((m) => m.id !== 'welcome'), localUser])
+    } else {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === reuseLocalId ? { ...message, content: localUser.content } : message
+        )
+      )
+    }
 
     try {
-      if (stopRequestedRef.current) return
+      const ensureAssistantNote = (content: string): void => {
+        const body = content.trim() || '（応答を取得できませんでした）'
+        setMessages((prev) => {
+          const last = prev[prev.length - 1]
+          if (
+            last?.role === 'assistant' &&
+            (last.content === body ||
+              last.content.includes(body) ||
+              (/^（/.test(last.content) && /^（/.test(body)) ||
+              (last.content.startsWith('エラー:') && body.startsWith('エラー:')))
+          ) {
+            return prev
+          }
+          return [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: body
+            }
+          ]
+        })
+      }
+
+      if (stopRequestedRef.current) {
+        ensureAssistantNote('（応答を取り消しました）')
+        return
+      }
 
       let id: number | null = null
       if (backendConnected) {
         id = await ensureSession()
-        if (id === null) return
+        if (id === null) {
+          ensureAssistantNote(
+            `エラー: ${'セッションを準備できませんでした。履歴の再読み込み後に再送してください。'}`
+          )
+          return
+        }
       } else {
         id = -1
       }
 
-      if (stopRequestedRef.current) return
+      if (stopRequestedRef.current) {
+        ensureAssistantNote('（応答を取り消しました）')
+        return
+      }
 
-      const payload = {
+      const payload: Record<string, unknown> = {
         session_id: id,
-        message: text,
+        message: text || (hasImages ? '添付画像を確認して、必要な修正を提案してください。' : ''),
         engine,
         mode,
         model:
@@ -1050,8 +1377,23 @@ export function ChatPanel({
         cursor_runtime: cursorRuntime,
         context: await buildContextPayload()
       }
+      if (engine === 'auto') {
+        payload.router_category = routerCategory
+      }
+      if (userMessageId) {
+        payload.user_message_id = userMessageId
+      }
+      // Clear after the payload snapshot so a failed ensureSession keeps the chips.
+      if (!reuseLocalId) {
+        setAttachedPaths([])
+        revokeImagePreviews(attachedImages)
+        setAttachedImages([])
+      }
 
-      if (stopRequestedRef.current) return
+      if (stopRequestedRef.current) {
+        ensureAssistantNote('（応答を取り消しました）')
+        return
+      }
 
       if (typeof window.saforall.chatStream !== 'function') {
         const result = await window.saforall.request<{
@@ -1062,28 +1404,26 @@ export function ChatPanel({
         if (!result.ok || !result.data) {
           const message = formatAiUserError(result.error?.message ?? 'AI 応答に失敗しました')
           setError(message)
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              content: `エラー: ${message}`
-            }
-          ])
+          ensureAssistantNote(`エラー: ${message}`)
           return
         }
 
         const assistant = toChatMessage(result.data.assistant_message)
+        const assistantContent =
+          typeof assistant.content === 'string' && assistant.content.trim()
+            ? assistant.content
+            : '（応答本文が空でした。もう一度送信するか、エンジンを切り替えてください。）'
+        const normalizedAssistant = { ...assistant, content: assistantContent }
         setMessages((prev) => {
           const withoutLocalUser = prev.filter((message) => message.id !== localUser.id)
           return [
             ...withoutLocalUser,
             toChatMessage(result.data!.user_message),
-            assistant
+            normalizedAssistant
           ]
         })
         if (engine !== 'cursor') {
-          await runAgentActions(assistant.id, assistant.content)
+          await runAgentActions(normalizedAssistant.id, normalizedAssistant.content)
         }
         void refreshSessions()
         return
@@ -1098,6 +1438,7 @@ export function ChatPanel({
       let editProposalCount = 0
       let streamFailed: string | null = null
       let streamCancelled = false
+      let turnClosed = false
 
       const { requestId, done } = window.saforall.chatStream(
         payload,
@@ -1148,18 +1489,48 @@ export function ChatPanel({
           }
 
           if (event.type === 'agent_phase') {
-            const labels: Record<string, string> = {
-              plan: '計画',
-              explore: '探索',
-              edit: '編集',
-              verify: '検証'
+            const copy = AGENT_PHASE_COPY[event.phase] ?? {
+              title: event.phase,
+              blurb: ''
             }
-            const label = labels[event.phase] ?? event.phase
+            const isProgress = event.kind === 'progress'
+            const detail = event.note
+              ? event.note
+              : copy.blurb
+                ? `Agent ${copy.title}: ${copy.blurb}`
+                : `Agent: ${copy.title}`
             setBusy({
               phase: 'thinking',
-              detail: event.note ? `Agent ${label}: ${event.note}` : `Agent フェーズ: ${label}`
+              detail
             })
-            const line = `\n\n📍 フェーズ: **${label}**${event.note ? ` — ${event.note}` : ''}`
+            if (isProgress) {
+              const body = event.note?.trim() || copy.blurb || '確認中…'
+              const visible = `🧪 ${body}`
+              if (!sawAssistant) {
+                sawAssistant = true
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: streamAssistantId,
+                    role: 'assistant',
+                    content: `${SHELL_PROGRESS_MARKER}${visible}`
+                  }
+                ])
+              } else {
+                setMessages((prev) =>
+                  prev.map((message) =>
+                    message.id === streamAssistantId
+                      ? {
+                          ...message,
+                          content: upsertShellProgressLine(message.content, visible)
+                        }
+                      : message
+                  )
+                )
+              }
+              return
+            }
+            const line = `\n\n📍 **${copy.title}** — ${event.note?.trim() || copy.blurb || '作業中'}`
             if (!sawAssistant) {
               sawAssistant = true
               setMessages((prev) => [
@@ -1203,8 +1574,21 @@ export function ChatPanel({
           }
 
           if (event.type === 'tool_call') {
-            setBusy({ phase: 'thinking', detail: `ツール実行: ${event.name}` })
-            const line = `\n\n🔧 \`${event.name}\` …`
+            const command =
+              typeof event.args?.command === 'string' ? event.args.command.trim() : ''
+            const label = command
+              ? `確認コマンド実行: ${command.length > 72 ? `${command.slice(0, 72)}…` : command}`
+              : event.name === 'read_file'
+                ? 'ファイルを読んでいます…'
+                : event.name === 'edit_file'
+                  ? '変更案を作成しています…'
+                  : event.name === 'search_code'
+                    ? 'コードを検索しています…'
+                    : `ツール実行: ${event.name}`
+            setBusy({ phase: 'thinking', detail: label })
+            const line = command
+              ? `\n\n🧪 確認のためターミナル実行: \`${command.length > 100 ? `${command.slice(0, 100)}…` : command}\``
+              : `\n\n🔧 ${label}`
             if (!sawAssistant) {
               sawAssistant = true
               setMessages((prev) => [
@@ -1228,13 +1612,19 @@ export function ChatPanel({
               phase: 'thinking',
               detail: event.ok ? `完了: ${event.summary}` : `失敗: ${event.summary}`
             })
-            const line = event.ok ? ` ✓ ${event.summary}` : ` ✗ ${event.summary}`
+            const mark = event.ok ? '✓' : '✗'
+            const resultBody = `${mark} ${event.summary}`
             setMessages((prev) =>
-              prev.map((message) =>
-                message.id === streamAssistantId
-                  ? { ...message, content: message.content + line }
-                  : message
-              )
+              prev.map((message) => {
+                if (message.id !== streamAssistantId) return message
+                if (event.name === 'run_shell' && message.content.includes(SHELL_PROGRESS_MARKER)) {
+                  return {
+                    ...message,
+                    content: upsertShellProgressLine(message.content, `🧪 ${resultBody}`)
+                  }
+                }
+                return { ...message, content: message.content + ` ${resultBody}` }
+              })
             )
             return
           }
@@ -1277,6 +1667,7 @@ export function ChatPanel({
           }
 
           if (event.type === 'done') {
+            turnClosed = true
             if (event.engine) {
               usedEngine = event.engine
             }
@@ -1295,22 +1686,40 @@ export function ChatPanel({
             const savedAssistant = toChatMessage(
               event.assistant_message as unknown as ChatMessageRecord
             )
-            finalAssistantId = savedAssistant.id
-            finalAssistantContent = savedAssistant.content
-            setMessages((prev) =>
-              prev.map((message) =>
-                message.id === streamAssistantId ? savedAssistant : message
-              )
-            )
+            const content =
+              typeof savedAssistant.content === 'string' && savedAssistant.content.trim()
+                ? savedAssistant.content
+                : '（応答本文が空でした。もう一度送信するか、エンジンを切り替えてください。）'
+            const normalized = { ...savedAssistant, content }
+            finalAssistantId = normalized.id
+            finalAssistantContent = content
+            sawAssistant = true
+            setMessages((prev) => {
+              const hasStream = prev.some((message) => message.id === streamAssistantId)
+              if (hasStream) {
+                return prev.map((message) =>
+                  message.id === streamAssistantId ? normalized : message
+                )
+              }
+              return [...prev, normalized]
+            })
             return
           }
 
           if (event.type === 'cancelled') {
+            turnClosed = true
             streamCancelled = true
             stopRequestedRef.current = false
             if (stopForceTimerRef.current != null) {
               window.clearTimeout(stopForceTimerRef.current)
               stopForceTimerRef.current = null
+            }
+            // Unlock send immediately — do not wait for await done (can hang on run_shell).
+            if (submitGenerationRef.current === submitGeneration) {
+              setBusy(null)
+              if (!inputRef.current.trim() && lastSubmittedTextRef.current) {
+                setInput(lastSubmittedTextRef.current)
+              }
             }
             setError(null)
             const note = event.message?.trim() || '応答を取り消しました'
@@ -1337,6 +1746,7 @@ export function ChatPanel({
           }
 
           if (event.type === 'error') {
+            turnClosed = true
             streamFailed = event.message
             setError(formatAiUserError(event.message))
             setMessages((prev) => {
@@ -1364,6 +1774,14 @@ export function ChatPanel({
         if (streamRequestIdRef.current === requestId) {
           streamRequestIdRef.current = null
         }
+      }
+
+      if (!turnClosed && !streamCancelled && !streamFailed) {
+        const fallback =
+          'エラー: 応答が完了しませんでした。もう一度送信してください。'
+        setError(fallback.replace(/^エラー: /, ''))
+        ensureAssistantNote(fallback)
+        streamFailed = fallback
       }
 
       if (streamCancelled) {
@@ -1396,35 +1814,200 @@ export function ChatPanel({
           error: streamFailed ?? undefined
         })
       }
+    } catch (error) {
+      const message = formatAiUserError(
+        error instanceof Error ? error.message : String(error)
+      )
+      setError(message)
+      setMessages((prev) => {
+        const last = prev[prev.length - 1]
+        if (last?.role === 'assistant' && last.content.startsWith('エラー:')) return prev
+        return [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: `エラー: ${message}`
+          }
+        ]
+      })
     } finally {
       if (stopForceTimerRef.current != null) {
         window.clearTimeout(stopForceTimerRef.current)
         stopForceTimerRef.current = null
       }
       stopRequestedRef.current = false
-      setBusy(null)
+      // Only the latest submit may clear busy (avoid racing a newer turn).
+      if (submitGenerationRef.current === submitGeneration) {
+        setBusy(null)
+        if (streamRequestIdRef.current === streamRequestId) {
+          streamRequestIdRef.current = null
+        }
+      }
     }
   }
 
+  const releaseStuckChatUi = useCallback((restoreInput = true) => {
+    stopRequestedRef.current = false
+    streamRequestIdRef.current = null
+    setBusy(null)
+    if (restoreInput && !inputRef.current.trim() && lastSubmittedTextRef.current) {
+      setInput(lastSubmittedTextRef.current)
+    }
+  }, [])
+
   const stopChat = useCallback(() => {
-    stopRequestedRef.current = true
-    setBusy({ phase: 'thinking', detail: '停止中…' })
     const id = streamRequestIdRef.current
-    if (id && typeof window.saforall.cancelChatStream === 'function') {
+    stopRequestedRef.current = true
+    // No active stream — unlock immediately (e.g. after a hung cancel already cleared the id).
+    if (!id) {
+      releaseStuckChatUi(true)
+      return
+    }
+
+    setBusy({ phase: 'thinking', detail: '停止中…' })
+    if (typeof window.saforall.cancelChatStream === 'function') {
       void window.saforall.cancelChatStream(id)
     }
     if (stopForceTimerRef.current != null) {
       window.clearTimeout(stopForceTimerRef.current)
     }
-    // Force-clear stuck UI if main process cannot unwind promptly (e.g. hung shell before fix).
+    // Always force-unlock UI even if main never emits cancelled (stuck run_shell).
     stopForceTimerRef.current = window.setTimeout(() => {
       stopForceTimerRef.current = null
-      if (stopRequestedRef.current) {
-        setBusy(null)
-        streamRequestIdRef.current = null
+      // Bump generation so a late finally from the hung submit cannot re-lock send.
+      submitGenerationRef.current += 1
+      setMessages((prev) => {
+        const last = prev[prev.length - 1]
+        if (
+          last?.role === 'assistant' &&
+          (/取り消|停止しました|エラー:/.test(last.content) || last.content.startsWith('（'))
+        ) {
+          return prev
+        }
+        return [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content:
+              '（応答を停止しました。内容が途中の場合は再送信してください。）'
+          }
+        ]
+      })
+      releaseStuckChatUi(true)
+    }, 1500)
+  }, [releaseStuckChatUi])
+
+  const isPersistedMessageId = (id: string) => /^\d+$/.test(id)
+
+  const beginEditMessage = (message: ChatMessage) => {
+    if (busy || loading || message.role !== 'user' || message.id === 'welcome') return
+    setEditingMessageId(message.id)
+    setEditDraft(message.content)
+  }
+
+  const cancelEditMessage = () => {
+    setEditingMessageId(null)
+    setEditDraft('')
+  }
+
+  const confirmEditAndResubmit = async () => {
+    const text = editDraft.trim()
+    const messageId = editingMessageId
+    if (!text || !messageId || busy || loading) return
+
+    const idx = messages.findIndex((row) => row.id === messageId)
+    if (idx < 0) return
+
+    setMessages((prev) => {
+      const at = prev.findIndex((row) => row.id === messageId)
+      if (at < 0) return prev
+      return [...prev.slice(0, at), { ...prev[at], content: text }]
+    })
+    setEditingMessageId(null)
+    setEditDraft('')
+
+    const sid = sessionIdRef.current
+    const persisted = isPersistedMessageId(messageId)
+    if (backendConnected && sid && sid > 0 && persisted) {
+      const truncated = await window.saforall.request<{
+        messages: ChatMessageRecord[]
+        kept: ChatMessageRecord | null
+      }>('POST', `/chat/sessions/${sid}/messages/truncate`, {
+        message_id: Number(messageId),
+        mode: 'keepThrough',
+        content: text
+      })
+      if (!truncated.ok) {
+        setError(truncated.error?.message ?? '履歴の切り詰めに失敗しました')
+        return
       }
-    }, 2500)
-  }, [])
+      if (truncated.data?.messages) {
+        setMessages(truncated.data.messages.map(toChatMessage))
+      }
+      await submitChat({
+        text,
+        userMessageId: Number(messageId),
+        reuseLocalId: messageId,
+        clearComposer: false
+      })
+      return
+    }
+
+    // Unpersisted / offline-only: drop this turn and after, then send as a new message.
+    setMessages((prev) => prev.slice(0, idx))
+    await submitChat({ text, clearComposer: false })
+  }
+
+  const regenerateAssistant = async (assistantId: string) => {
+    if (busy || loading || assistantId === 'welcome') return
+    const idx = messages.findIndex((row) => row.id === assistantId)
+    if (idx <= 0) return
+    let userIdx = -1
+    for (let i = idx - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role === 'user') {
+        userIdx = i
+        break
+      }
+    }
+    if (userIdx < 0) return
+    const user = messages[userIdx]
+    const text = user.content.trim()
+    if (!text) return
+
+    setMessages((prev) => prev.slice(0, userIdx + 1))
+    setEditingMessageId(null)
+    setEditDraft('')
+
+    const sid = sessionIdRef.current
+    const persisted = isPersistedMessageId(user.id)
+    if (backendConnected && sid && sid > 0 && persisted) {
+      const truncated = await window.saforall.request<{
+        messages: ChatMessageRecord[]
+      }>('POST', `/chat/sessions/${sid}/messages/truncate`, {
+        message_id: Number(user.id),
+        mode: 'keepThrough',
+        content: text
+      })
+      if (!truncated.ok) {
+        setError(truncated.error?.message ?? '履歴の切り詰めに失敗しました')
+        return
+      }
+      if (truncated.data?.messages) {
+        setMessages(truncated.data.messages.map(toChatMessage))
+      }
+      await submitChat({
+        text,
+        userMessageId: Number(user.id),
+        reuseLocalId: user.id,
+        clearComposer: false
+      })
+      return
+    }
+
+    await submitChat({ text, reuseLocalId: user.id, clearComposer: false })
+  }
 
   const busyLabel =
     busy?.detail ??
@@ -1477,6 +2060,31 @@ export function ChatPanel({
                   <option value="workers">Workers</option>
                 </select>
               </label>
+              {engine === 'auto' && (
+                <label className="category-select">
+                  <span className="sr-only">用途</span>
+                  <select
+                    value={
+                      enabledCategories.includes(routerCategory) ? routerCategory : 'auto'
+                    }
+                    disabled={!backendConnected}
+                    title="Auto 用途カテゴリ"
+                    onChange={(event) => {
+                      const next = parseRouterCategory(event.target.value)
+                      setRouterCategory(next)
+                      window.localStorage.setItem('saforall-router-category', next)
+                    }}
+                  >
+                    {ROUTER_CATEGORIES.filter(
+                      (row) => row.id === 'auto' || enabledCategories.includes(row.id)
+                    ).map((row) => (
+                      <option key={row.id} value={row.id} title={row.hint}>
+                        {row.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {engine !== 'auto' && (
                 <label className="model-select">
                   <span className="sr-only">Model</span>
@@ -1548,7 +2156,7 @@ export function ChatPanel({
                 ) : (
                   <>
                     <strong>Agent</strong>
-                    <span>ツール必須 → Composer に載せる</span>
+                    <span>ツール必須 → 変更候補に載せる</span>
                   </>
                 )}
               </div>
@@ -1677,17 +2285,80 @@ export function ChatPanel({
                   </div>
                 </div>
               )}
-            {messages.map((message) => (
+            {messages.map((message, messageIndex) => (
               <div key={message.id} className={`chat-bubble ${message.role}`}>
-                <div className="chat-role">{message.role === 'user' ? 'You' : 'AI'}</div>
+                <div className="chat-role-row">
+                  <div className="chat-role">{message.role === 'user' ? 'You' : 'AI'}</div>
+                  {!busy && !loading && message.id !== 'welcome' && (
+                    <div className="chat-bubble-actions">
+                      {message.role === 'user' && editingMessageId !== message.id && (
+                        <button
+                          type="button"
+                          className="chat-bubble-action"
+                          title="編集して再送信"
+                          onClick={() => beginEditMessage(message)}
+                        >
+                          編集
+                        </button>
+                      )}
+                      {message.role === 'assistant' && (
+                        <button
+                          type="button"
+                          className="chat-bubble-action"
+                          title="この応答を再生成"
+                          onClick={() => void regenerateAssistant(message.id)}
+                        >
+                          再生成
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
                 {message.role === 'assistant' ? (
                   <MessageContent
-                    content={message.content}
+                    content={stripProgressMarkersForDisplay(message.content)}
                     showApply={message.id !== 'welcome'}
                     mode={mode}
                     autoApplied={autoAppliedIds[message.id] === true}
                     onApplyCode={requestApply}
                   />
+                ) : editingMessageId === message.id ? (
+                  <div className="chat-edit-box">
+                    <textarea
+                      className="chat-edit-textarea"
+                      value={editDraft}
+                      rows={Math.min(12, Math.max(3, editDraft.split('\n').length + 1))}
+                      autoFocus
+                      onChange={(event) => setEditDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape') {
+                          event.preventDefault()
+                          cancelEditMessage()
+                        }
+                        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                          event.preventDefault()
+                          void confirmEditAndResubmit()
+                        }
+                      }}
+                    />
+                    <div className="chat-edit-actions">
+                      <button type="button" onClick={cancelEditMessage}>
+                        キャンセル
+                      </button>
+                      <button
+                        type="button"
+                        className="is-primary"
+                        disabled={editDraft.trim() === ''}
+                        onClick={() => void confirmEditAndResubmit()}
+                      >
+                        再送信
+                      </button>
+                    </div>
+                    <p className="chat-edit-hint">
+                      これ以降の応答は破棄されます · Ctrl+Enter で再送信
+                      {messageIndex < messages.length - 1 ? '（後続あり）' : ''}
+                    </p>
+                  </div>
                 ) : (
                   <div className="chat-content">{message.content}</div>
                 )}
@@ -1723,72 +2394,190 @@ export function ChatPanel({
             </div>
           )}
 
-          <div className="chat-context-bar">
-            {selection?.text ? (
-              <span className="chat-context-chip is-selection" title={selection.path}>
-                選択 L{selection.startLine}
-                {selection.endLine !== selection.startLine ? `-${selection.endLine}` : ''}
-              </span>
-            ) : null}
-            {mentionFlags.selection && (
-              <span className="chat-context-chip is-mention" title="入力中の @selection">
-                @selection
-              </span>
-            )}
-            {mentionFlags.problems && (
-              <span className="chat-context-chip is-mention" title="入力中の @problems">
-                @problems
-              </span>
-            )}
-            {mentionFlags.rules && (
-              <span className="chat-context-chip is-mention" title="入力中の @rules">
-                @rules
-              </span>
-            )}
-            {mentionFlags.codebase ? (
-              <span className="chat-context-chip is-mention" title="入力中の @codebase">
-                @codebase
-              </span>
-            ) : mode === 'ask' || mode === 'agent' ? (
-              <span
-                className="chat-context-chip is-auto"
-                title={`${mode === 'agent' ? 'Agent' : 'Ask'} では関連コードを自動で軽量検索します`}
+          <div
+            className={`chat-attach-zone${attachDropActive ? ' is-drop' : ''}`}
+            onDragEnter={(event) => {
+              event.preventDefault()
+              setAttachDropActive(true)
+            }}
+            onDragOver={(event) => {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'copy'
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node)) return
+              setAttachDropActive(false)
+            }}
+            onDrop={(event) => {
+              event.preventDefault()
+              setAttachDropActive(false)
+              const imageBlobs = imageBlobsFromDataTransfer(event.dataTransfer)
+              const paths = pathsFromDataTransfer(event.dataTransfer, { workspacePath })
+              if (imageBlobs.length > 0) {
+                void addImagesFromBlobs(imageBlobs)
+                // Avoid double-adding the same PNG via path + blob.
+                attachPaths(paths.filter((path) => !isImageFileName(path)))
+              } else {
+                attachPaths(paths)
+              }
+            }}
+          >
+            <div className="chat-attach-bar" aria-label="添付ファイル">
+              <button
+                type="button"
+                className="chat-attach-add"
+                title="画像・ファイルを添付"
+                disabled={!chatReady || busy !== null}
+                onClick={() => {
+                  if (attachPickerOpen) setAttachPickerOpen(false)
+                  else openAttachPicker()
+                }}
               >
-                自動検索
-              </span>
-            ) : null}
-            {openFiles.map((open) => {
-              const name = open.path.split(/[/\\]/).pop() ?? open.path
-              const active = open.path === file?.path
-              const attached = attachedPaths.includes(open.path)
-              return (
+                +
+              </button>
+              {attachedImages.map((image) => (
                 <button
-                  key={open.path}
+                  key={image.id}
                   type="button"
-                  className={`chat-context-chip${active ? ' is-active' : ''}${attached ? ' is-attached' : ''}`}
-                  title={
-                    active
-                      ? 'アクティブファイル（常に送信）'
-                      : attached
-                        ? 'コンテキストから外す'
-                        : '@ で追加（クリック）'
-                  }
-                  disabled={active}
-                  onClick={() => toggleAttached(open.path)}
+                  className="chat-context-chip is-attached chat-attach-chip chat-attach-image-chip"
+                  title={`${image.name}\nクリックで外す`}
+                  onClick={() => removeAttachedImage(image.id)}
                 >
-                  {active ? '● ' : attached ? '@ ' : '+ '}
-                  {name}
+                  <img
+                    className="chat-attach-thumb"
+                    src={image.previewUrl}
+                    alt=""
+                    draggable={false}
+                  />
+                  <span className="chat-attach-chip-name">{image.name}</span>
+                  <span className="chat-attach-chip-x" aria-hidden>
+                    ×
+                  </span>
                 </button>
-              )
-            })}
-            {openFiles.length === 0 && (
-              <span className="chat-context-hint">
-                @ でファイル / @selection / @problems / @rules
-              </span>
+              ))}
+              {attachedPaths.map((path) => (
+                <button
+                  key={path}
+                  type="button"
+                  className="chat-context-chip is-attached chat-attach-chip"
+                  title={`${path}\nクリックで外す`}
+                  onClick={() =>
+                    setAttachedPaths((current) => removeAttachedPath(current, path))
+                  }
+                >
+                  <span className="chat-attach-chip-name">{attachmentLabel(path)}</span>
+                  <span className="chat-attach-chip-x" aria-hidden>
+                    ×
+                  </span>
+                </button>
+              ))}
+              {selection?.text ? (
+                <span className="chat-context-chip is-selection" title={selection.path}>
+                  選択 L{selection.startLine}
+                  {selection.endLine !== selection.startLine ? `-${selection.endLine}` : ''}
+                </span>
+              ) : null}
+              {mentionFlags.selection && (
+                <span className="chat-context-chip is-mention">@selection</span>
+              )}
+              {mentionFlags.problems && (
+                <span className="chat-context-chip is-mention">@problems</span>
+              )}
+              {mentionFlags.rules && (
+                <span className="chat-context-chip is-mention">@rules</span>
+              )}
+              {mentionFlags.skills && (
+                <span className="chat-context-chip is-mention">@skills</span>
+              )}
+              {mentionFlags.codebase ? (
+                <span className="chat-context-chip is-mention">@codebase</span>
+              ) : mode === 'ask' || mode === 'agent' ? (
+                <span className="chat-context-chip is-auto" title="関連コードを自動で軽量検索">
+                  自動検索
+                </span>
+              ) : null}
+              {attachedPaths.length === 0 && attachedImages.length === 0 && (
+                <span className="chat-context-hint">
+                  画像ペースト可 · + / ドロップ · @ でも追加
+                </span>
+              )}
+            </div>
+            {attachPickerOpen && (
+              <div className="chat-attach-picker" role="dialog" aria-label="ファイルを添付">
+                <input
+                  type="search"
+                  className="chat-attach-search"
+                  value={attachQuery}
+                  placeholder="ファイル名で検索…"
+                  autoFocus
+                  onChange={(event) => setAttachQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      setAttachPickerOpen(false)
+                    }
+                  }}
+                />
+                <ul className="chat-attach-results">
+                  {attachResults.length === 0 ? (
+                    <li className="chat-attach-empty">候補がありません</li>
+                  ) : (
+                    attachResults.map((row) => {
+                      const attached = attachedPaths.some(
+                        (path) => path.toLowerCase() === row.path.toLowerCase()
+                      )
+                      return (
+                        <li key={row.path}>
+                          <button
+                            type="button"
+                            className={attached ? 'is-attached' : undefined}
+                            onClick={() => {
+                              toggleAttached(row.path)
+                              setAttachPickerOpen(false)
+                              textareaRef.current?.focus()
+                            }}
+                          >
+                            <strong>{row.label}</strong>
+                            <span>{row.path}</span>
+                          </button>
+                        </li>
+                      )
+                    })
+                  )}
+                </ul>
+                <div className="chat-attach-picker-foot">
+                  <button type="button" onClick={() => setAttachPickerOpen(false)}>
+                    閉じる
+                  </button>
+                </div>
+              </div>
             )}
-            {openFiles.length > 0 && (
-              <span className="chat-context-hint">@ で追加</span>
-            )}
+            <div className="chat-context-bar chat-context-bar-tabs">
+              {openFiles.map((open) => {
+                const name = attachmentLabel(open.path)
+                const active = open.path === file?.path
+                const attached = attachedPaths.includes(open.path)
+                return (
+                  <button
+                    key={open.path}
+                    type="button"
+                    className={`chat-context-chip${active ? ' is-active' : ''}${attached ? ' is-attached' : ''}`}
+                    title={
+                      active
+                        ? 'アクティブファイル（常に送信）'
+                        : attached
+                          ? '添付を外す'
+                          : 'クリックで添付'
+                    }
+                    disabled={active}
+                    onClick={() => toggleAttached(open.path)}
+                  >
+                    {active ? '● ' : attached ? '📎 ' : '+ '}
+                    {name}
+                  </button>
+                )
+              })}
+            </div>
           </div>
           <form className="chat-input" onSubmit={(event) => void onSubmit(event)}>
             <div className="chat-input-wrap">
@@ -1820,22 +2609,35 @@ export function ChatPanel({
                   setInput(value)
                   void refreshMentionSuggestions(value, cursor)
                 }}
+                onPaste={(event) => {
+                  const imageBlobs = imageBlobsFromDataTransfer(event.clipboardData)
+                  if (imageBlobs.length > 0) {
+                    event.preventDefault()
+                    void addImagesFromBlobs(imageBlobs)
+                    return
+                  }
+                  const paths = pathsFromDataTransfer(event.clipboardData, { workspacePath })
+                  if (paths.length === 0) return
+                  // File drops into paste (Explorer copy) become attachments, not literal text.
+                  event.preventDefault()
+                  attachPaths(paths)
+                }}
                 placeholder={
                   needsApiKeySetup
                     ? 'Settings で API キーを保存するとチャットできます（XAMPP 不要）'
                     : !backendConnected && !localLlmReady
                       ? 'バックエンド未接続 — 編集は可能。Settings に API キーを保存するとローカル LLM が使えます'
                       : isLocalMode && localLlmReady
-                        ? 'ローカル: 質問する…（履歴はアプリ内に保存）'
+                        ? 'ローカル: 質問する…（スクショ貼付可 · 履歴はアプリ内）'
                         : !backendConnected && localLlmReady
-                          ? 'ローカル LLM: 質問する…'
+                          ? 'ローカル LLM: 質問する…（スクショ貼付可）'
                           : busy
                             ? busyLabel ?? '実行中…'
                             : loading
                               ? '履歴読み込み中…'
                               : mode === 'agent'
-                                ? 'Agent: 修正を依頼…（関連コードは自動検索。ツールで edit → verify。@ で追加）'
-                                : 'Ask: 質問する…（適用前に確認。関連コードは自動検索。@ で追加）'
+                                ? 'Agent: 修正を依頼…（スクショ貼付可。関連コード自動検索。edit → verify）'
+                                : 'Ask: 質問する…（スクショ貼付可。適用前に確認。@ で追加）'
                 }
                 rows={3}
                 disabled={!chatReady || busy !== null || loading}
@@ -1874,7 +2676,13 @@ export function ChatPanel({
             <button
               type={busy ? 'button' : 'submit'}
               className={busy ? 'chat-stop-submit' : undefined}
-              disabled={busy ? false : !chatReady || loading || input.trim() === ''}
+              disabled={
+                busy
+                  ? false
+                  : !chatReady ||
+                    loading ||
+                    (input.trim() === '' && attachedImages.length === 0)
+              }
               onClick={busy ? stopChat : undefined}
               title={busy ? '応答を停止' : undefined}
             >

@@ -47,7 +47,7 @@ test('AiRouter defaults to OpenAI/Gemini/Claude with budget levels', async () =>
 
 test('ChatService passes context into AiRouter::decide', async () => {
   const chat = await read('server/src/ChatService.php')
-  assert.match(chat, /AiRouter::decide\(\$pdo, \$settings, \$requested, \$message, \$mode, \$contextForRoute\)/)
+  assert.match(chat, /AiRouter::decide\(\$pdo, \$settings, \$requested, \$message, \$mode, \$contextForRoute, \$routerCategory\)/)
 })
 
 test('Chat / settings / APIs wire Claude', async () => {

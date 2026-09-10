@@ -12,14 +12,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 
 $pdo = Database::connection();
 $settings = AppSettings::load($pdo);
-$detail = UsageService::monthDetail($pdo, $settings);
+$month = isset($_GET['month']) ? (string) $_GET['month'] : null;
+$detail = UsageService::monthDetail($pdo, $settings, $month);
 
 Response::ok([
     'month' => $detail['month'],
+    'router_month' => $detail['router_month'] ?? $detail['month'],
     'total' => $detail['total'],
     'user' => $detail['user'],
     'usage' => $detail['usage'],
     'models' => $detail['models'],
     'router' => $detail['router'],
-    'note' => '金額は概算です。各プロバイダの実請求とは一致しない場合があります。Router ログは振り分け調整用です。',
+    'claude_prepaid' => AppSettings::claudePrepaidStatus($settings),
+    'note' => '金額は概算です。Claude の Anthropic 残高は手入力のチャージ残です（公式の残高APIがないため）。各プロバイダの実請求とは一致しない場合があります。',
 ]);

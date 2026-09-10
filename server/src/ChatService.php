@@ -68,7 +68,10 @@ final class ChatService
 
         if ($userMessageId <= 0) {
             $contextForRoute = isset($body['context']) && is_array($body['context']) ? $body['context'] : null;
-            $decision = AiRouter::decide($pdo, $settings, $requested, $message, $mode, $contextForRoute);
+            $routerCategory = isset($body['router_category']) && is_string($body['router_category'])
+                ? $body['router_category']
+                : null;
+            $decision = AiRouter::decide($pdo, $settings, $requested, $message, $mode, $contextForRoute, $routerCategory);
             $insertUser = $pdo->prepare(
                 'INSERT INTO chat_messages (session_id, role, content)
                  VALUES (:session_id, :role, :content)'
@@ -93,16 +96,58 @@ final class ChatService
             }
         } else {
             $saved = self::fetchMessage($pdo, $userMessageId);
-            $message = (string) $saved['content'];
-            $decision = [
-                'requested' => isset($body['requested']) ? (string) $body['requested'] : $requested,
-                'engine' => isset($body['resolved_engine']) ? (string) $body['resolved_engine'] : 'openai',
-                'task_type' => isset($body['task_type']) ? (string) $body['task_type'] : 'explain',
-                'fallback_from' => isset($body['fallback_from']) ? (string) $body['fallback_from'] : null,
-                'fallback_reason' => isset($body['fallback_reason']) ? (string) $body['fallback_reason'] : null,
-                'mode' => $mode,
-                'policy_profile' => RouterPolicy::load($settings)['profile'],
-            ];
+            if ((int) ($saved['session_id'] ?? 0) !== $sessionId) {
+                Response::error('INVALID_BODY', 'user_message_id does not belong to session', 400);
+            }
+            if (($saved['role'] ?? '') !== 'user') {
+                Response::error('INVALID_BODY', 'user_message_id must be a user message', 400);
+            }
+            if (isset($body['message']) && is_string($body['message']) && trim($body['message']) !== '') {
+                $message = trim($body['message']);
+                $upd = $pdo->prepare(
+                    'UPDATE chat_messages SET content = :content WHERE id = :id AND session_id = :session_id'
+                );
+                $upd->execute([
+                    ':content' => $message,
+                    ':id' => $userMessageId,
+                    ':session_id' => $sessionId,
+                ]);
+            } else {
+                $message = (string) $saved['content'];
+            }
+            // Drop later turns so history matches the edited / regenerated pivot.
+            $del = $pdo->prepare(
+                'DELETE FROM chat_messages WHERE session_id = :session_id AND id > :id'
+            );
+            $del->execute([
+                ':session_id' => $sessionId,
+                ':id' => $userMessageId,
+            ]);
+
+            // /ai/route のあとに /ai/chat/stream が再 prepare するときは resolved_engine 付き。
+            // 編集再送の初回 prepare では resolved_engine が無く、フル decide する。
+            $resolvedEngine = isset($body['resolved_engine']) && is_string($body['resolved_engine'])
+                ? trim($body['resolved_engine'])
+                : '';
+            if ($resolvedEngine !== '') {
+                $decision = [
+                    'requested' => isset($body['requested']) ? (string) $body['requested'] : $requested,
+                    'engine' => $resolvedEngine,
+                    'task_type' => isset($body['task_type']) ? (string) $body['task_type'] : 'explain',
+                    'fallback_from' => isset($body['fallback_from']) ? (string) $body['fallback_from'] : null,
+                    'fallback_reason' => isset($body['fallback_reason']) ? (string) $body['fallback_reason'] : null,
+                    'mode' => $mode,
+                    'policy_profile' => RouterPolicy::load($settings)['profile'],
+                    'estimated_usd' => isset($body['estimated_usd']) ? (float) $body['estimated_usd'] : 0.0,
+                    'budget_warning' => $body['budget_warning'] ?? null,
+                ];
+            } else {
+                $contextForRoute = isset($body['context']) && is_array($body['context']) ? $body['context'] : null;
+                $routerCategory = isset($body['router_category']) && is_string($body['router_category'])
+                    ? $body['router_category']
+                    : null;
+                $decision = AiRouter::decide($pdo, $settings, $requested, $message, $mode, $contextForRoute, $routerCategory);
+            }
         }
 
         $engine = $decision['engine'];
@@ -163,7 +208,22 @@ final class ChatService
                 . 'ユーザーが確認してから適用できる形で答えてください。';
         }
 
+        $routerCategoryHint = isset($body['router_category']) && is_string($body['router_category'])
+            ? $body['router_category']
+            : null;
+        $resolvedCategory = AiRouter::resolveCategory(
+            $settings,
+            $routerCategoryHint,
+            $message,
+            is_array($body['context'] ?? null) ? $body['context'] : null
+        );
+        $catHint = AiRouter::categoryPreference($resolvedCategory, $mode)['system_hint'] ?? null;
+        if (is_string($catHint) && $catHint !== '') {
+            $systemParts[] = $catHint;
+        }
+
         $context = $body['context'] ?? null;
+        $visionImages = [];
         if (is_array($context)) {
             $filePath = isset($context['path']) && is_string($context['path']) ? $context['path'] : null;
             $fileContent = isset($context['content']) && is_string($context['content']) ? $context['content'] : null;
@@ -245,6 +305,15 @@ final class ChatService
                 $systemParts[] = "プロジェクトルール:\n{$rules}";
             }
 
+            $skills = isset($context['skills']) && is_string($context['skills']) ? $context['skills'] : null;
+            if (is_string($skills) && $skills !== '') {
+                $maxSkills = 6000;
+                if (mb_strlen($skills) > $maxSkills) {
+                    $skills = mb_substr($skills, 0, $maxSkills) . "\n\n... (truncated)";
+                }
+                $systemParts[] = "Skills:\n{$skills}";
+            }
+
             $problemRows = $context['problems'] ?? null;
             $mentionFlags = $context['mention_flags'] ?? null;
             $problemCap = 20;
@@ -277,6 +346,9 @@ final class ChatService
                 if (!empty($mentionFlags['rules'])) {
                     $hints[] = 'ユーザーは @rules を明示しました。プロジェクトルールに従ってください。';
                 }
+                if (!empty($mentionFlags['skills'])) {
+                    $hints[] = 'ユーザーは @skills を明示しました。Skills カタログを参照してください。';
+                }
                 if (!empty($mentionFlags['codebase'])) {
                     $hints[] = 'ユーザーは @codebase を明示しました。ワークスペース全体の文脈を意識してください。';
                 }
@@ -290,6 +362,14 @@ final class ChatService
                 : null;
             if (is_string($indexSummary) && $indexSummary !== '') {
                 $systemParts[] = "コードベース索引:\n{$indexSummary}";
+            }
+
+            require_once __DIR__ . '/VisionContent.php';
+            $visionImages = VisionContent::parseImages($context);
+            if ($visionImages !== []) {
+                $systemParts[] =
+                    'ユーザーが画像を添付しています。UI スクショやエラー表示を読み取り、'
+                    . 'コード修正の根拠にしてください。画像の内容を無視しないでください。';
             }
         }
 
@@ -309,6 +389,18 @@ final class ChatService
                 'role' => $role,
                 'content' => (string) $row['content'],
             ];
+        }
+
+        if ($visionImages !== []) {
+            require_once __DIR__ . '/VisionContent.php';
+            if ($engine === 'claude') {
+                $messages = VisionContent::attachForClaude($messages, $visionImages);
+            } elseif ($engine === 'gemini') {
+                // GeminiClient accepts OpenAI-style or Gemini parts; OpenAI data-URL form is fine.
+                $messages = VisionContent::attachForOpenAi($messages, $visionImages);
+            } else {
+                $messages = VisionContent::attachForOpenAi($messages, $visionImages);
+            }
         }
 
         require_once __DIR__ . '/UsageService.php';
@@ -342,6 +434,7 @@ final class ChatService
             'extra_headers' => $provider['extra_headers'],
             'user_message_id' => $userMessageId,
             'messages' => $messages,
+            'images' => $visionImages,
         ];
     }
 

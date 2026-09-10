@@ -4,9 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 test('classifyTask routes fix / design / summarize', async () => {
-  const { classifyTask, engineForTask, agentPreferenceChain } = await import(
-    '../electron/main/lib/taskClassify.ts'
-  )
+  const { classifyTask, engineForTask, agentPreferenceChain, shouldAnswerWithoutTools } =
+    await import('../electron/main/lib/taskClassify.ts')
   assert.equal(classifyTask('このバグを直して'), 'codegen')
   assert.equal(classifyTask('アーキテクチャの方針を教えて'), 'design')
   assert.equal(classifyTask('要約して'), 'summarize')
@@ -16,6 +15,19 @@ test('classifyTask routes fix / design / summarize', async () => {
   assert.equal(engineForTask('summarize', 'ask'), 'gemini')
   assert.deepEqual(agentPreferenceChain('claude'), ['claude', 'openai'])
   assert.deepEqual(agentPreferenceChain('openai'), ['openai', 'claude'])
+  assert.equal(
+    shouldAnswerWithoutTools(
+      '以下は何ですか\n⚠ verify が完了していません。変更候補の差分を必ず人手で確認してください。'
+    ),
+    true
+  )
+  assert.equal(
+    shouldAnswerWithoutTools(
+      'それでは以下の適用をお願いします\n「⚠ verify が完了していません。変更候補の差分を必ず人手で確認してください。」'
+    ),
+    false
+  )
+  assert.equal(shouldAnswerWithoutTools('このバグを直して'), false)
 })
 
 test('classifyTask uses selection and problems context', async () => {

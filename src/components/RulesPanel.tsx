@@ -7,6 +7,14 @@ type RuleFile = {
   bytes: number
 }
 
+type SkillRow = {
+  id: string
+  name: string
+  description: string
+  path: string
+  bytes: number
+}
+
 type Props = {
   workspacePath: string | null
   width: number
@@ -23,8 +31,11 @@ export function RulesPanel({
   onStatusMessage
 }: Props) {
   const [files, setFiles] = useState<RuleFile[]>([])
+  const [skills, setSkills] = useState<SkillRow[]>([])
   const [selected, setSelected] = useState<string | null>(null)
+  const [selectedSkill, setSelectedSkill] = useState<string | null>(null)
   const [preview, setPreview] = useState('')
+  const [skillPreview, setSkillPreview] = useState('')
   const [memoryDraft, setMemoryDraft] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -33,6 +44,7 @@ export function RulesPanel({
   const refresh = useCallback(async () => {
     if (!workspacePath || typeof window.saforall.listRules !== 'function') {
       setFiles([])
+      setSkills([])
       return
     }
     setBusy(true)
@@ -43,6 +55,14 @@ export function RulesPanel({
       const memory = await window.saforall.readMemory(workspacePath)
       setMemoryDraft(memory)
       setSelected((current) => current ?? listed[0]?.path ?? null)
+
+      if (typeof window.saforall.listSkills === 'function') {
+        const skillRows = await window.saforall.listSkills(workspacePath)
+        setSkills(skillRows)
+        setSelectedSkill((current) => current ?? skillRows[0]?.id ?? null)
+      } else {
+        setSkills([])
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -68,6 +88,23 @@ export function RulesPanel({
       }
     })()
   }, [workspacePath, selected])
+
+  useEffect(() => {
+    if (!workspacePath || !selectedSkill || typeof window.saforall.readSkill !== 'function') {
+      setSkillPreview('')
+      return
+    }
+    void (async () => {
+      try {
+        const skill = await window.saforall.readSkill(workspacePath, selectedSkill)
+        setSkillPreview(
+          `# ${skill.name}\n\n${skill.description}\n\nPath: ${skill.path}\n\n---\n\n${skill.content}`
+        )
+      } catch (err) {
+        setSkillPreview(err instanceof Error ? err.message : String(err))
+      }
+    })()
+  }, [workspacePath, selectedSkill])
 
   const appendNote = async () => {
     if (!workspacePath || !note.trim()) return
@@ -105,16 +142,16 @@ export function RulesPanel({
   }
 
   return (
-    <aside className="rules-panel" style={{ width }} aria-label="Rules & Memories">
+    <aside className="rules-panel" style={{ width }} aria-label="Rules, Memories & Skills">
       <div className="rules-header">
-        <strong>Rules / Memories</strong>
+        <strong>Rules / Memories / Skills</strong>
         <button type="button" disabled={!workspacePath || busy} onClick={() => void refresh()}>
           ↻
         </button>
       </div>
       {!workspacePath ? (
         <div className="rules-empty">
-          <p>フォルダを開いて Rules を表示</p>
+          <p>フォルダを開いて Rules / Skills を表示</p>
           <button type="button" onClick={onOpenWorkspace}>
             フォルダを開く
           </button>
@@ -123,10 +160,10 @@ export function RulesPanel({
         <>
           {error && <p className="rules-error">{error}</p>}
           <div className="rules-files">
-            <strong>検出ファイル</strong>
+            <strong>Rules / Memories</strong>
             {files.length === 0 ? (
               <p className="rules-hint">
-                AGENTS.md / .cursor/rules / .saforall/memories.md がありません
+                AGENTS.md / .cursor/rules / .saforall/rules / .saforall/memories.md がありません
               </p>
             ) : (
               <ul>
@@ -154,8 +191,43 @@ export function RulesPanel({
             )}
           </div>
           <div className="rules-preview">
-            <strong>プレビュー</strong>
+            <strong>Rules プレビュー</strong>
             <pre>{preview || '（選択なし）'}</pre>
+          </div>
+          <div className="rules-files">
+            <strong>Skills</strong>
+            {skills.length === 0 ? (
+              <p className="rules-hint">
+                `.saforall/skills/*/SKILL.md` または `.cursor/skills/*/SKILL.md` がありません
+              </p>
+            ) : (
+              <ul>
+                {skills.map((row) => (
+                  <li key={row.id}>
+                    <button
+                      type="button"
+                      className={selectedSkill === row.id ? 'active' : ''}
+                      onClick={() => setSelectedSkill(row.id)}
+                    >
+                      <span>{row.id}</span>
+                      <em>skill</em>
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      title="エディタで開く"
+                      onClick={() => openAbsolute(row.path)}
+                    >
+                      ✎
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="rules-preview">
+            <strong>Skill プレビュー</strong>
+            <pre>{skillPreview || '（選択なし）'}</pre>
           </div>
           <div className="rules-memory">
             <strong>Memory 追記</strong>

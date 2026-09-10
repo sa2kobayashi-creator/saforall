@@ -86,3 +86,23 @@ test('api.ts wires cursor_runtime into runCursorAgent', async () => {
   assert.match(source, /runtime,\s*\n\s*autoCreatePR/)
   assert.match(source, /result\.runtime === 'cloud'/)
 })
+
+test('directLlm prefers request cursor_runtime over stored setting', async () => {
+  const source = await readFile(join(__dirname, '../electron/main/directLlm.ts'), 'utf8')
+  assert.match(source, /requestBody\.cursor_runtime/)
+  assert.match(
+    source,
+    /typeof requestBody\.cursor_runtime === 'string'[\s\S]*?getLocalSetting\('llm\.cursor\.runtime'/
+  )
+})
+
+test('ChatPanel reloads cursor runtime after Settings save', async () => {
+  const chat = await readFile(join(__dirname, '../src/components/ChatPanel.tsx'), 'utf8')
+  assert.match(chat, /llm\.cursor\.runtime/)
+  assert.match(chat, /setCursorRuntime\(runtime\)/)
+  // The settings bootstrap effect must include settingsRevision, not only backendConnected.
+  assert.match(
+    chat,
+    /setCursorRuntime\(runtime\)[\s\S]*?\}, \[backendConnected, settingsRevision\]\)/
+  )
+})

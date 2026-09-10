@@ -3,11 +3,15 @@ import { extractAgentRuntimeContext } from './lib/agentContext'
 import {
   ensureSettingsLoaded,
   getLocalSetting,
-  getOpenAiKey,
   hasUsableLocalLlm
 } from './settingsStore'
+import { hasUsableByokLlm, resolveCredential } from './ai/credentials'
 
-type ProviderMessage = { role: string; content: string }
+function hasAnyLocalLlm(): boolean {
+  return hasUsableLocalLlm() || hasUsableByokLlm()
+}
+
+type ProviderMessage = { role: string; content: string | unknown[] }
 
 function parseJsonModels(raw: string, fallback: string[]): string[] {
   try {
@@ -44,6 +48,14 @@ function buildMessages(body: Record<string, unknown>): ProviderMessage[] {
   if (Array.isArray(context.problems) && context.problems.length > 0) {
     parts.push(`# Problems\n${context.problems.slice(0, 20).join('\n')}`)
   }
+  if (Array.isArray(context.files)) {
+    for (const row of context.files.slice(0, 4)) {
+      if (!row || typeof row !== 'object') continue
+      const file = row as { path?: string; content?: string }
+      if (!file.path || typeof file.content !== 'string') continue
+      parts.push(`# File ${file.path}\n\`\`\`\n${file.content.slice(0, 6000)}\n\`\`\``)
+    }
+  }
   const selection =
     typeof context.selection === 'object' && context.selection !== null
       ? (context.selection as Record<string, unknown>)
@@ -51,120 +63,38 @@ function buildMessages(body: Record<string, unknown>): ProviderMessage[] {
   if (selection && typeof selection.text === 'string' && selection.text.trim()) {
     parts.push(`# Selection\n\`\`\`\n${selection.text.slice(0, 4000)}\n\`\`\``)
   }
+  if (Array.isArray(context.images) && context.images.length > 0) {
+    parts.push(
+      'ユーザーが画像を添付しています。UI スクショやエラー表示を読み取り、コード修正の根拠にしてください。'
+    )
+  }
   return [
     { role: 'system', content: parts.join('\n\n') },
     { role: 'user', content: userText }
   ]
 }
 
-async function callOpenAiCompatible(params: {
-  apiKey: string
-  baseUrl: string
-  model: string
-  messages: ProviderMessage[]
-}): Promise<string> {
-  const url = `${params.baseUrl.replace(/\/$/, '')}/chat/completions`
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${params.apiKey}`
-    },
-    body: JSON.stringify({
-      model: params.model,
-      messages: params.messages,
-      temperature: 0.2
-    })
-  })
-  const text = await response.text()
-  if (!response.ok) {
-    throw new Error(`LLM HTTP ${response.status}: ${text.slice(0, 400)}`)
+async function applyVisionToMessages(
+  messages: ProviderMessage[],
+  body: Record<string, unknown>,
+  engine: string
+): Promise<ProviderMessage[]> {
+  const { parseContextImages, attachImagesToOpenAiMessages, attachImagesToClaudeMessages } =
+    await import('./lib/visionMessages')
+  const context =
+    typeof body.context === 'object' && body.context !== null ? body.context : null
+  const images = parseContextImages(context)
+  if (images.length === 0) return messages
+  const shaped = messages as Array<{ role: string; content: unknown }>
+  if (engine === 'claude') {
+    return attachImagesToClaudeMessages(shaped, images) as ProviderMessage[]
   }
-  const json = JSON.parse(text) as {
-    choices?: Array<{ message?: { content?: string } }>
-  }
-  const content = json.choices?.[0]?.message?.content
-  if (!content) throw new Error('ローカル LLM から本文を取得できませんでした')
-  return content
-}
-
-async function callClaude(params: {
-  apiKey: string
-  model: string
-  messages: ProviderMessage[]
-}): Promise<string> {
-  const system = params.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
-  const msgs = params.messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => ({ role: m.role, content: m.content }))
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': params.apiKey,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: params.model,
-      max_tokens: 4096,
-      system: system || undefined,
-      messages: msgs
-    })
-  })
-  const text = await response.text()
-  if (!response.ok) {
-    throw new Error(`Claude HTTP ${response.status}: ${text.slice(0, 400)}`)
-  }
-  const json = JSON.parse(text) as {
-    content?: Array<{ type?: string; text?: string }>
-  }
-  const content = (json.content ?? [])
-    .filter((row) => row.type === 'text' && row.text)
-    .map((row) => row.text)
-    .join('\n')
-  if (!content) throw new Error('Claude から本文を取得できませんでした')
-  return content
-}
-
-async function callGemini(params: {
-  apiKey: string
-  model: string
-  messages: ProviderMessage[]
-}): Promise<string> {
-  const model = params.model || 'gemini-2.0-flash'
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
-  const contents = params.messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
-    .map((m) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }]
-    }))
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': params.apiKey
-    },
-    body: JSON.stringify({ contents })
-  })
-  const text = await response.text()
-  if (!response.ok) {
-    throw new Error(`Gemini HTTP ${response.status}: ${text.slice(0, 400)}`)
-  }
-  const json = JSON.parse(text) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-  }
-  const content = (json.candidates?.[0]?.content?.parts ?? [])
-    .map((part) => part.text ?? '')
-    .join('')
-  if (!content) throw new Error('Gemini から本文を取得できませんでした')
-  return content
+  return attachImagesToOpenAiMessages(shaped, images) as ProviderMessage[]
 }
 
 function resolveLocalEngine(requested: string): {
   engine: string
   model: string
-  apiKey: string
   baseUrl?: string
 } | null {
   const order =
@@ -173,42 +103,41 @@ function resolveLocalEngine(requested: string): {
       : [requested]
 
   for (const engine of order) {
-    if (engine === 'openai') {
-      const apiKey = getOpenAiKey()
-      if (!apiKey) continue
-      const models = parseJsonModels(getLocalSetting('llm.openai.models', ''), [
-        getLocalSetting('llm.openai.model', 'gpt-4.1-mini')
-      ])
-      return {
-        engine: 'openai',
-        model: models[0] || 'gpt-4.1-mini',
-        apiKey,
-        baseUrl: getLocalSetting('llm.openai.base_url', 'https://api.openai.com/v1')
-      }
-    }
-    if (engine === 'claude') {
-      const apiKey = getLocalSetting('llm.claude.api_key')
-      if (!apiKey) continue
-      const models = parseJsonModels(getLocalSetting('llm.claude.models', ''), [
-        getLocalSetting('llm.claude.model', 'claude-sonnet-5')
-      ])
-      return { engine: 'claude', model: models[0] || 'claude-sonnet-5', apiKey }
-    }
-    if (engine === 'gemini') {
-      const apiKey = getLocalSetting('llm.gemini.api_key')
-      if (!apiKey) continue
-      const models = parseJsonModels(getLocalSetting('llm.gemini.models', ''), [
-        getLocalSetting('llm.gemini.model', 'gemini-2.0-flash')
-      ])
-      return { engine: 'gemini', model: models[0] || 'gemini-2.0-flash', apiKey }
-    }
     if (engine === 'cursor') {
-      const apiKey = getLocalSetting('llm.cursor.api_key')
-      if (!apiKey) continue
+      const cred = resolveCredential('cursor').credential
+      if (!cred) continue
       const models = parseJsonModels(getLocalSetting('llm.cursor.models', ''), [
         getLocalSetting('llm.cursor.model', 'composer-2')
       ])
-      return { engine: 'cursor', model: models[0] || 'composer-2', apiKey }
+      return { engine: 'cursor', model: models[0] || 'composer-2' }
+    }
+    const id =
+      engine === 'openai' || engine === 'claude' || engine === 'gemini' || engine === 'workers'
+        ? engine
+        : null
+    if (!id) continue
+    const cred = resolveCredential(id).credential
+    if (!cred) continue
+    const models =
+      id === 'openai'
+        ? parseJsonModels(getLocalSetting('llm.openai.models', ''), [
+            getLocalSetting('llm.openai.model', 'gpt-4.1-mini')
+          ])
+        : id === 'claude'
+          ? parseJsonModels(getLocalSetting('llm.claude.models', ''), [
+              getLocalSetting('llm.claude.model', 'claude-sonnet-5')
+            ])
+          : id === 'gemini'
+            ? parseJsonModels(getLocalSetting('llm.gemini.models', ''), [
+                getLocalSetting('llm.gemini.model', 'gemini-2.0-flash')
+              ])
+            : parseJsonModels(getLocalSetting('llm.workers.models', ''), [
+                getLocalSetting('llm.workers.model', '@cf/meta/llama-3.1-8b-instruct')
+              ])
+    return {
+      engine: id,
+      model: models[0] || '',
+      baseUrl: cred.baseUrl || undefined
     }
   }
   return null
@@ -218,7 +147,6 @@ function resolveLocalEngine(requested: string): {
 export function resolveCompletionEngine(): {
   engine: string
   model: string
-  apiKey: string
   baseUrl?: string
 } | null {
   for (const engine of ['openai', 'gemini', 'claude']) {
@@ -242,7 +170,7 @@ export async function completeInlineLocal(body: Record<string, unknown>): Promis
   engine: string
 }> {
   await ensureSettingsLoaded()
-  if (!hasUsableLocalLlm()) {
+  if (!hasAnyLocalLlm()) {
     throw new Error('API キーがありません。設定で OpenAI / Gemini / Claude を保存してください。')
   }
   const resolved = resolveCompletionEngine()
@@ -280,7 +208,6 @@ export async function completeInlineLocal(body: Record<string, unknown>): Promis
 
   const raw = await generateAssistantText({
     engine: resolved.engine,
-    apiKey: resolved.apiKey,
     model: resolved.model,
     baseUrl: resolved.baseUrl,
     messages: [
@@ -299,7 +226,7 @@ export async function completeEditLocal(body: Record<string, unknown>): Promise<
   engine: string
 }> {
   await ensureSettingsLoaded()
-  if (!hasUsableLocalLlm()) {
+  if (!hasAnyLocalLlm()) {
     throw new Error('API キーがありません。設定で OpenAI / Gemini / Claude を保存してください。')
   }
   const resolved = resolveCompletionEngine()
@@ -349,7 +276,6 @@ export async function completeEditLocal(body: Record<string, unknown>): Promise<
 
   const raw = await generateAssistantText({
     engine: resolved.engine,
-    apiKey: resolved.apiKey,
     model: resolved.model,
     baseUrl: resolved.baseUrl,
     messages: [
@@ -362,31 +288,30 @@ export async function completeEditLocal(body: Record<string, unknown>): Promise<
 
 export async function generateAssistantText(params: {
   engine: string
-  apiKey: string
   model: string
   baseUrl?: string
   messages: ProviderMessage[]
+  sessionId?: number | null
 }): Promise<string> {
-  if (params.engine === 'claude') {
-    return callClaude({
-      apiKey: params.apiKey,
-      model: params.model,
-      messages: params.messages
-    })
+  const { executeAi } = await import('./ai')
+  const { parseProviderId } = await import('./ai/types')
+  const provider = parseProviderId(params.engine)
+  if (!provider || provider === 'cursor') {
+    throw new Error(`LLM Router 対象外の engine: ${params.engine}`)
   }
-  if (params.engine === 'gemini') {
-    return callGemini({
-      apiKey: params.apiKey,
-      model: params.model,
-      messages: params.messages
-    })
-  }
-  return callOpenAiCompatible({
-    apiKey: params.apiKey,
-    baseUrl: params.baseUrl || 'https://api.openai.com/v1',
+  const response = await executeAi({
+    provider,
+    routingMode: 'manual',
     model: params.model,
-    messages: params.messages
+    messages: params.messages,
+    baseUrl: params.baseUrl,
+    metadata: params.sessionId != null ? { sessionId: params.sessionId } : undefined
   })
+  const content = response.content
+  if (!content?.trim()) {
+    throw new Error('LLM から空の応答が返りました')
+  }
+  return content
 }
 
 /**
@@ -397,7 +322,7 @@ export async function streamChatDirect(
   onEvent: (event: ChatStreamEvent) => void
 ): Promise<boolean> {
   await ensureSettingsLoaded()
-  if (!hasUsableLocalLlm()) return false
+  if (!hasAnyLocalLlm()) return false
 
   const requestBody =
     typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {}
@@ -437,13 +362,23 @@ export async function streamChatDirect(
         return true
       }
       const { runCursorAgent } = await import('./cursorAgent')
+      const { parseContextImages, toCursorSdkImages } = await import('./lib/visionMessages')
+      const runtimeRaw =
+        typeof requestBody.cursor_runtime === 'string'
+          ? requestBody.cursor_runtime.trim().toLowerCase()
+          : getLocalSetting('llm.cursor.runtime', 'auto')
+      const runtime =
+        runtimeRaw === 'local' || runtimeRaw === 'cloud' || runtimeRaw === 'auto'
+          ? runtimeRaw
+          : 'auto'
+      const cursorCred = resolveCredential('cursor').credential
       const result = await runCursorAgent({
         cwd,
         prompt: String(requestBody.message ?? ''),
-        apiKey: resolved.apiKey,
+        images: toCursorSdkImages(parseContextImages(requestBody.context)),
+        apiKey: cursorCred?.secret ?? '',
         model: resolved.model,
-        runtime:
-          (getLocalSetting('llm.cursor.runtime', 'auto') as 'auto' | 'local' | 'cloud') || 'auto',
+        runtime,
         onDelta: (text) => onEvent({ type: 'delta', text })
       })
       onEvent({
@@ -480,11 +415,14 @@ export async function streamChatDirect(
         return true
       }
       const { runToolAgent } = await import('./toolAgent')
-      const messages = buildMessages(requestBody)
+      const messages = await applyVisionToMessages(
+        buildMessages(requestBody),
+        requestBody,
+        resolved.engine
+      )
       const agentCtx = extractAgentRuntimeContext(requestBody)
       await runToolAgent({
         workspacePath,
-        apiKey: resolved.apiKey,
         baseUrl:
           resolved.engine === 'claude'
             ? 'https://api.anthropic.com'
@@ -517,27 +455,19 @@ export async function streamChatDirect(
       return true
     }
 
-    const messages = buildMessages(requestBody)
-    let content = ''
-    if (resolved.engine === 'openai') {
-      content = await callOpenAiCompatible({
-        apiKey: resolved.apiKey,
-        baseUrl: resolved.baseUrl || 'https://api.openai.com/v1',
-        model: resolved.model,
-        messages
-      })
-    } else if (resolved.engine === 'claude') {
-      content = await callClaude({
-        apiKey: resolved.apiKey,
-        model: resolved.model,
-        messages
-      })
-    } else {
-      content = await callGemini({
-        apiKey: resolved.apiKey,
-        model: resolved.model,
-        messages
-      })
+    const messages = await applyVisionToMessages(
+      buildMessages(requestBody),
+      requestBody,
+      resolved.engine
+    )
+    const content = await generateAssistantText({
+      engine: resolved.engine,
+      model: resolved.model,
+      baseUrl: resolved.baseUrl,
+      messages
+    })
+    if (!content.trim()) {
+      throw new Error('LLM から空の応答が返りました')
     }
 
     onEvent({ type: 'delta', text: content })

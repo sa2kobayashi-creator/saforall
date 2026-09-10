@@ -142,3 +142,55 @@ export async function appendMessage(params: {
   }
   return row
 }
+
+/**
+ * Cursor-style edit/regenerate pivot:
+ * - keepThrough: update optional content and delete messages after messageId
+ * - deleteFrom: delete messageId and everything after (caller inserts a fresh user turn)
+ */
+export async function truncateMessages(params: {
+  sessionId: number
+  messageId: number
+  content?: string
+  mode: 'keepThrough' | 'deleteFrom'
+}): Promise<{ messages: LocalMessage[]; kept: LocalMessage | null }> {
+  const session = await getSession(params.sessionId)
+  if (!session) throw new Error('session not found')
+
+  const file = await readJsonFile<{ messages: LocalMessage[] }>(messagesPath(params.sessionId), {
+    messages: []
+  })
+  const index = file.messages.findIndex((row) => row.id === params.messageId)
+  if (index < 0) throw new Error('message not found')
+
+  let kept: LocalMessage | null = null
+
+  if (params.mode === 'deleteFrom') {
+    file.messages = file.messages.slice(0, index)
+  } else {
+    const target = file.messages[index]
+    if (target.role !== 'user') {
+      throw new Error('keepThrough requires a user message')
+    }
+    const nextContent =
+      typeof params.content === 'string' ? params.content.trim() : String(target.content || '')
+    if (!nextContent) throw new Error('content is required')
+    kept = { ...target, content: nextContent }
+    file.messages = [...file.messages.slice(0, index), kept]
+  }
+
+  await writeJsonFile(messagesPath(params.sessionId), file)
+
+  const now = isoNow()
+  const sessions = await loadSessions()
+  const idx = sessions.findIndex((s) => s.id === params.sessionId)
+  if (idx >= 0) {
+    sessions[idx].updated_at = now
+    if (kept && (sessions[idx].title === 'New chat' || sessions[idx].title === '')) {
+      sessions[idx].title = kept.content.trim().slice(0, 40) || 'New chat'
+    }
+    await saveSessions(sessions)
+  }
+
+  return { messages: file.messages, kept }
+}

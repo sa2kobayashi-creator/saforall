@@ -1,7 +1,6 @@
 import {
   ensureSettingsLoaded,
-  getLocalSetting,
-  getOpenAiKey
+  getLocalSetting
 } from './settingsStore'
 import { appendMessage, createSession, getSession, listMessages } from './chatStore'
 import { getLocalUsageSummary, recordLocalUsage, type MonthUsage } from './usageStore'
@@ -10,11 +9,20 @@ import {
   classifyTask,
   engineForTask
 } from './lib/taskClassify'
+import {
+  detectRouterCategoryId,
+  parseRouterCategoryId,
+  resolveCategoryPreference,
+  type RouterCategoryId
+} from './lib/routerCategories'
+import { extraHeadersFor, resolveCredential } from './ai/credentials'
+import { parseProviderId } from './ai/types'
 
 export type LocalRouteResult = {
   engine: string
   requested: string
   task_type: string
+  router_category: string
   fallback_from: string | null
   fallback_reason: string | null
   mode: string
@@ -24,9 +32,7 @@ export type LocalRouteResult = {
   user_message: Record<string, unknown>
   cursor_run_id: number | null
   usage: MonthUsage
-  cursor_api_key: string | null
   provider: {
-    api_key: string
     base_url: string
     extra_headers: string[]
     messages: Array<{ role: string; content: string }>
@@ -48,19 +54,90 @@ function parseModels(raw: string, fallback: string): string[] {
   return single ? [single] : []
 }
 
+function enabledCategoryIds(): Set<RouterCategoryId> {
+  const raw = getLocalSetting('router.enabled_categories', '')
+  const all: RouterCategoryId[] = [
+    'auto',
+    'dev_design',
+    'dev_implement',
+    'dev_test',
+    'dev_docs',
+    'writing',
+    'summarize',
+    'vision',
+    'explain_learn',
+    'brainstorm',
+    'data_format',
+    'research',
+    'support_copy',
+    'slides',
+    'meeting_notes',
+    'image_gen',
+    'video_understand'
+  ]
+  if (!raw.trim()) {
+    return new Set(all)
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (Array.isArray(parsed)) {
+      const set = new Set(
+        parsed
+          .filter((row): row is string => typeof row === 'string')
+          .map((row) => parseRouterCategoryId(row))
+      )
+      set.add('auto')
+      return set
+    }
+  } catch {
+    // fall through
+  }
+  return new Set<RouterCategoryId>(['auto'])
+}
+
 function pickEngine(
   requested: string,
   mode: string,
   message: string,
-  context: Record<string, unknown> | null
-): { engine: string; reason: string | null; taskType: string } {
-  let taskType = classifyTask(message, context)
+  context: Record<string, unknown> | null,
+  routerCategoryRaw: unknown
+): {
+  engine: string
+  reason: string | null
+  taskType: string
+  categoryId: RouterCategoryId
+  systemHint: string | null
+} {
+  let taskType: string = classifyTask(message, context)
   if (mode === 'agent' && (taskType === 'light_qa' || taskType === 'summarize')) {
     taskType = 'codegen'
   }
 
+  const allowedCats = enabledCategoryIds()
+  let categoryId = parseRouterCategoryId(routerCategoryRaw)
+  if (categoryId !== 'auto' && !allowedCats.has(categoryId)) {
+    categoryId = 'auto'
+  }
+  if (categoryId === 'auto') {
+    const images = Array.isArray(context?.images) ? context.images : []
+    const detected = detectRouterCategoryId(message, images.length > 0)
+    if (detected !== 'auto' && allowedCats.has(detected)) {
+      categoryId = detected
+    }
+  }
+  const catPref = resolveCategoryPreference(categoryId, mode)
+  if (catPref.taskType) {
+    taskType = catPref.taskType
+  }
+
   if (requested && requested !== 'auto') {
-    return { engine: requested, reason: null, taskType }
+    return {
+      engine: requested,
+      reason: null,
+      taskType,
+      categoryId,
+      systemHint: catPref.systemHint
+    }
   }
 
   const enabledRaw = getLocalSetting('router.enabled_engines', '["openai","gemini","claude"]')
@@ -74,14 +151,38 @@ function pickEngine(
     // keep default
   }
 
-  const preferred = engineForTask(taskType, mode)
+  const preferred =
+    catPref.engine ??
+    (taskType === 'image_gen'
+      ? 'openai'
+      : engineForTask(taskType as Parameters<typeof engineForTask>[0], mode))
 
   const hasKey = (engine: string): boolean => {
-    if (engine === 'openai') return Boolean(getOpenAiKey())
-    if (engine === 'claude') return Boolean(getLocalSetting('llm.claude.api_key'))
-    if (engine === 'gemini') return Boolean(getLocalSetting('llm.gemini.api_key'))
-    if (engine === 'cursor') return Boolean(getLocalSetting('llm.cursor.api_key'))
-    return false
+    const id = parseProviderId(engine)
+    if (!id) return false
+    if (!resolveCredential(id).available) return false
+    if (engine === 'claude') {
+      try {
+        const raw = getLocalSetting('llm.claude.prepaid_remaining_usd', '')
+        if (raw.trim() !== '') {
+          const n = Number(raw)
+          if (Number.isFinite(n) && n <= 0) return false
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return true
+  }
+
+  if (taskType === 'image_gen' && hasKey('openai')) {
+    return {
+      engine: 'openai',
+      reason: 'auto_image_gen_openai',
+      taskType,
+      categoryId: categoryId === 'auto' ? 'image_gen' : categoryId,
+      systemHint: catPref.systemHint
+    }
   }
 
   if (mode === 'agent') {
@@ -90,7 +191,9 @@ function pickEngine(
         return {
           engine,
           reason: preferred === engine ? `auto_agent_${engine}` : `auto_agent_fallback_${engine}`,
-          taskType
+          taskType,
+          categoryId,
+          systemHint: catPref.systemHint
         }
       }
     }
@@ -108,30 +211,62 @@ function pickEngine(
       return {
         engine,
         reason: preferred === engine ? `auto_${taskType}_${engine}` : `auto_fallback_${engine}`,
-        taskType
+        taskType,
+        categoryId,
+        systemHint: catPref.systemHint
       }
     }
   }
 
-  if (getOpenAiKey()) return { engine: 'openai', reason: 'auto_fallback_openai', taskType }
-  if (getLocalSetting('llm.claude.api_key')) {
-    return { engine: 'claude', reason: 'auto_fallback_claude', taskType }
+  if (resolveCredential('openai').available) {
+    return {
+      engine: 'openai',
+      reason: 'auto_fallback_openai',
+      taskType,
+      categoryId,
+      systemHint: catPref.systemHint
+    }
   }
-  if (getLocalSetting('llm.gemini.api_key')) {
-    return { engine: 'gemini', reason: 'auto_fallback_gemini', taskType }
+  if (resolveCredential('claude').available) {
+    return {
+      engine: 'claude',
+      reason: 'auto_fallback_claude',
+      taskType,
+      categoryId,
+      systemHint: catPref.systemHint
+    }
   }
-  return { engine: 'openai', reason: 'auto_fallback_openai', taskType }
+  if (resolveCredential('gemini').available) {
+    return {
+      engine: 'gemini',
+      reason: 'auto_fallback_gemini',
+      taskType,
+      categoryId,
+      systemHint: catPref.systemHint
+    }
+  }
+  return {
+    engine: 'openai',
+    reason: 'auto_fallback_openai',
+    taskType,
+    categoryId,
+    systemHint: catPref.systemHint
+  }
 }
 
 function buildHistoryMessages(
   history: Array<{ role: string; content: string }>,
   context: Record<string, unknown> | null,
-  userText: string
+  userText: string,
+  systemHint?: string | null
 ): Array<{ role: string; content: string }> {
   const systemParts = [
     'あなたはコードアシスタントです。簡潔に日本語で答えてください。',
     '（ローカル永続化モード）'
   ]
+  if (systemHint) {
+    systemParts.push(systemHint)
+  }
   if (context) {
     if (typeof context.path === 'string' && context.path) {
       systemParts.push(`# Active file\n${context.path}`)
@@ -173,6 +308,12 @@ function buildHistoryMessages(
     }
     if (typeof context.index_summary === 'string' && context.index_summary.trim()) {
       systemParts.push(`# Codebase\n${String(context.index_summary).slice(0, 6000)}`)
+    }
+    if (typeof context.rules === 'string' && context.rules.trim()) {
+      systemParts.push(`# Project rules\n${String(context.rules).slice(0, 12000)}`)
+    }
+    if (typeof context.skills === 'string' && context.skills.trim()) {
+      systemParts.push(`# Skills\n${String(context.skills).slice(0, 6000)}`)
     }
   }
   const messages: Array<{ role: string; content: string }> = [
@@ -219,13 +360,33 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
     typeof body.context === 'object' && body.context !== null
       ? (body.context as Record<string, unknown>)
       : null
-  const { engine, reason, taskType } = pickEngine(requested, mode, message, context)
+  const { engine, reason, taskType, categoryId, systemHint } = pickEngine(
+    requested,
+    mode,
+    message,
+    context,
+    body.router_category
+  )
 
-  const userMessage = await appendMessage({
-    sessionId,
-    role: 'user',
-    content: message
-  })
+  const reuseId = Number(body.user_message_id)
+  let userMessage
+  if (Number.isFinite(reuseId) && reuseId > 0) {
+    const { truncateMessages } = await import('./chatStore')
+    const truncated = await truncateMessages({
+      sessionId,
+      messageId: reuseId,
+      content: message,
+      mode: 'keepThrough'
+    })
+    if (!truncated.kept) throw new Error('user message not found')
+    userMessage = truncated.kept
+  } else {
+    userMessage = await appendMessage({
+      sessionId,
+      role: 'user',
+      content: message
+    })
+  }
 
   const history = await listMessages(sessionId)
   const prior = history
@@ -233,37 +394,43 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
     .map((row) => ({ role: row.role, content: row.content }))
 
   let model = typeof body.model === 'string' && body.model ? body.model : ''
-  let apiKey = ''
   let baseUrl = 'https://api.openai.com/v1'
-  let cursorKey: string | null = null
+  let extraHeaders: string[] = []
   let provider: LocalRouteResult['provider'] = null
 
+  const providerId = parseProviderId(engine)
+  const cred = providerId ? resolveCredential(providerId).credential : null
   if (engine === 'openai') {
-    apiKey = getOpenAiKey()
-    baseUrl = getLocalSetting('llm.openai.base_url', 'https://api.openai.com/v1')
+    baseUrl = cred?.baseUrl || getLocalSetting('llm.openai.base_url', 'https://api.openai.com/v1')
     if (!model) {
       model =
         parseModels(getLocalSetting('llm.openai.models', ''), 'llm.openai.model')[0] ||
         getLocalSetting('llm.openai.model', 'gpt-4.1-mini')
     }
   } else if (engine === 'claude') {
-    apiKey = getLocalSetting('llm.claude.api_key')
-    baseUrl = 'https://api.anthropic.com'
+    baseUrl = cred?.baseUrl || 'https://api.anthropic.com'
+    extraHeaders = cred ? extraHeadersFor(cred) : []
     if (!model) {
       model =
         parseModels(getLocalSetting('llm.claude.models', ''), 'llm.claude.model')[0] ||
         getLocalSetting('llm.claude.model', 'claude-sonnet-5')
     }
   } else if (engine === 'gemini') {
-    apiKey = getLocalSetting('llm.gemini.api_key')
     baseUrl = 'gemini-native'
     if (!model) {
       model =
         parseModels(getLocalSetting('llm.gemini.models', ''), 'llm.gemini.model')[0] ||
         getLocalSetting('llm.gemini.model', 'gemini-2.0-flash')
     }
+  } else if (engine === 'workers') {
+    baseUrl = cred?.baseUrl || ''
+    extraHeaders = cred ? extraHeadersFor(cred) : []
+    if (!model) {
+      model =
+        parseModels(getLocalSetting('llm.workers.models', ''), 'llm.workers.model')[0] ||
+        getLocalSetting('llm.workers.model', '@cf/meta/llama-3.1-8b-instruct')
+    }
   } else if (engine === 'cursor') {
-    cursorKey = getLocalSetting('llm.cursor.api_key') || null
     if (!model) {
       model =
         parseModels(getLocalSetting('llm.cursor.models', ''), 'llm.cursor.model')[0] ||
@@ -271,19 +438,39 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
     }
   }
 
-  if (engine === 'openai' || engine === 'claude') {
+  if (engine === 'openai' || engine === 'claude' || engine === 'workers') {
+    const { parseContextImages, attachImagesToOpenAiMessages, attachImagesToClaudeMessages } =
+      await import('./lib/visionMessages')
+    let messages = buildHistoryMessages(prior, context, message, systemHint) as Array<{
+      role: string
+      content: unknown
+    }>
+    const images = parseContextImages(context)
+    if (images.length > 0) {
+      messages =
+        engine === 'claude'
+          ? attachImagesToClaudeMessages(messages, images)
+          : attachImagesToOpenAiMessages(messages, images)
+    }
     provider = {
-      api_key: apiKey,
       base_url: baseUrl,
-      extra_headers: [],
-      messages: buildHistoryMessages(prior, context, message)
+      extra_headers: extraHeaders,
+      messages: messages as Array<{ role: string; content: string }>
     }
   } else if (engine === 'gemini') {
+    const { parseContextImages, attachImagesToOpenAiMessages } = await import('./lib/visionMessages')
+    let messages = buildHistoryMessages(prior, context, message, systemHint) as Array<{
+      role: string
+      content: unknown
+    }>
+    const images = parseContextImages(context)
+    if (images.length > 0) {
+      messages = attachImagesToOpenAiMessages(messages, images)
+    }
     provider = {
-      api_key: apiKey,
       base_url: baseUrl,
       extra_headers: [],
-      messages: buildHistoryMessages(prior, context, message)
+      messages: messages as Array<{ role: string; content: string }>
     }
   }
 
@@ -292,6 +479,7 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
     engine,
     requested,
     task_type: taskType,
+    router_category: categoryId,
     fallback_from: null,
     fallback_reason: reason,
     mode,
@@ -301,7 +489,6 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
     user_message: userMessage as unknown as Record<string, unknown>,
     cursor_run_id: null,
     usage: usageSummary.usage,
-    cursor_api_key: cursorKey,
     provider,
     estimated_usd: 0.002
   }

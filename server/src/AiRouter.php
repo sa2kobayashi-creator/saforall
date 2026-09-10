@@ -36,7 +36,8 @@ final class AiRouter
         string $requested,
         string $message,
         string $mode = 'ask',
-        ?array $context = null
+        ?array $context = null,
+        ?string $routerCategory = null
     ): array {
         $requested = strtolower(trim($requested));
         if (!in_array($requested, self::ENGINES, true)) {
@@ -77,11 +78,21 @@ final class AiRouter
                 );
             }
 
-            $preferred = self::engineForTask($taskType, $policy, $mode);
+            $category = self::resolveCategory($settings, $routerCategory, $message, $context);
+            $catPref = self::categoryPreference($category, $mode);
+            if ($catPref['task_type'] !== null) {
+                $taskType = $catPref['task_type'];
+            }
+
+            $preferred = $catPref['engine'] ?? self::engineForTask($taskType, $policy, $mode);
             // Ask で Cursor 回避など、ポリシーで希望を再調整
-            $preferred = self::applyModeGuards($preferred, $taskType, $policy, $mode);
-            // Agent は edit_file / Composer のツール実行を標準にする（Cursor/Gemini は別経路）
-            $preferred = self::preferToolAgentEngine($preferred, $mode);
+            if ($taskType !== 'image_gen') {
+                $preferred = self::applyModeGuards($preferred, $taskType, $policy, $mode);
+                // Agent は edit_file / Composer のツール実行を標準にする（Cursor/Gemini は別経路）
+                $preferred = self::preferToolAgentEngine($preferred, $mode);
+            } else {
+                $preferred = 'openai';
+            }
 
             $engine = self::firstAvailable(
                 self::preferenceChain($preferred, $policy, $mode),
@@ -242,6 +253,176 @@ final class AiRouter
         return $list !== [] ? $list : $defaults;
     }
 
+    /** @var list<string> */
+    private const CATEGORY_IDS = [
+        'auto',
+        'dev_design',
+        'dev_implement',
+        'dev_test',
+        'dev_docs',
+        'writing',
+        'summarize',
+        'vision',
+        'explain_learn',
+        'brainstorm',
+        'data_format',
+        'research',
+        'support_copy',
+        'slides',
+        'meeting_notes',
+        'image_gen',
+        'video_understand',
+    ];
+
+    /**
+     * @param array<string, mixed> $settings
+     * @return list<string>
+     */
+    public static function enabledCategories(array $settings): array
+    {
+        $raw = AppSettings::str($settings, 'router.enabled_categories');
+        if ($raw === '') {
+            return self::CATEGORY_IDS;
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return self::CATEGORY_IDS;
+        }
+        $list = [];
+        foreach ($decoded as $item) {
+            if (!is_string($item)) {
+                continue;
+            }
+            $id = strtolower(trim($item));
+            if (in_array($id, self::CATEGORY_IDS, true) && !in_array($id, $list, true)) {
+                $list[] = $id;
+            }
+        }
+        if (!in_array('auto', $list, true)) {
+            array_unshift($list, 'auto');
+        }
+        return $list !== [] ? $list : self::CATEGORY_IDS;
+    }
+
+    /**
+     * @param array<string, mixed>|null $context
+     */
+    public static function resolveCategory(
+        array $settings,
+        ?string $routerCategory,
+        string $message,
+        ?array $context
+    ): string {
+        $allowed = self::enabledCategories($settings);
+        $id = is_string($routerCategory) ? strtolower(trim($routerCategory)) : 'auto';
+        if (!in_array($id, self::CATEGORY_IDS, true)) {
+            $id = 'auto';
+        }
+        if ($id !== 'auto' && !in_array($id, $allowed, true)) {
+            $id = 'auto';
+        }
+        if ($id !== 'auto') {
+            return $id;
+        }
+        $detected = self::detectCategory($message, $context);
+        if ($detected !== 'auto' && in_array($detected, $allowed, true)) {
+            return $detected;
+        }
+        return 'auto';
+    }
+
+    /**
+     * @param array<string, mixed>|null $context
+     */
+    public static function detectCategory(string $message, ?array $context): string
+    {
+        $hasImages = is_array($context)
+            && isset($context['images'])
+            && is_array($context['images'])
+            && $context['images'] !== [];
+        $text = mb_strtolower($message);
+        if (self::matches($text, ['画像を生成', 'イラストを', 'generate an image', 'draw me', 'dall-e', 'イメージを作'])) {
+            return 'image_gen';
+        }
+        if ($hasImages && self::matches($text, ['動画', 'video', 'フレーム', 'タイムスタンプ'])) {
+            return 'video_understand';
+        }
+        if ($hasImages) {
+            return 'vision';
+        }
+        if (self::matches($text, ['設計', '要件', 'アーキテクチャ', '方針', 'レビュー', 'architecture', 'design'])) {
+            return 'dev_design';
+        }
+        if (self::matches($text, ['テスト', 'typecheck', '型エラー', 'pytest', 'jest', 'make tests', '検証'])) {
+            return 'dev_test';
+        }
+        if (self::matches($text, ['ドキュメント', 'readme', 'コメントを', 'docs'])) {
+            return 'dev_docs';
+        }
+        if (self::matches($text, ['翻訳', '要約', 'summarize', 'translate', '短く'])) {
+            return 'summarize';
+        }
+        if (self::matches($text, ['csv', 'tsv', '表計算', 'スプレッド', 'データ整形', '列を', '整形して'])) {
+            return 'data_format';
+        }
+        if (self::matches($text, ['比較表', 'リサーチ', '調査して', 'pros and cons', 'メリデメ'])) {
+            return 'research';
+        }
+        if (self::matches($text, ['お問い合わせ', 'サポート', 'お客様へ', '返信文', 'クレーム対応'])) {
+            return 'support_copy';
+        }
+        if (self::matches($text, ['スライド', '発表資料', 'プレゼン', 'pitch deck'])) {
+            return 'slides';
+        }
+        if (self::matches($text, ['議事録', 'ミーティングメモ', '音声起こし', '決定事項', 'アクションアイテム'])) {
+            return 'meeting_notes';
+        }
+        if (self::matches($text, ['文章', 'メール', '文面', '企画書', 'ブログ', 'writing'])) {
+            return 'writing';
+        }
+        if (self::matches($text, ['アイデア', 'ブレスト', 'ブレイン', '案を出', 'brainstorm'])) {
+            return 'brainstorm';
+        }
+        if (self::matches($text, ['説明して', 'なぜ', 'どう動', '仕組み', 'explain', '教えて'])) {
+            return 'explain_learn';
+        }
+        if (self::matches($text, ['実装', '直して', '修正', 'バグ', 'コードを', '書いて', 'implement', 'fix'])) {
+            return 'dev_implement';
+        }
+        return 'auto';
+    }
+
+    /**
+     * @return array{engine:?string, task_type:?string, system_hint:?string}
+     */
+    public static function categoryPreference(string $category, string $mode): array
+    {
+        $map = [
+            'dev_design' => ['ask' => 'claude', 'agent' => 'claude', 'task' => 'design', 'hint' => '用途: 設計・要件定義。トレードオフと方針を明確に述べてください。'],
+            'dev_implement' => ['ask' => 'openai', 'agent' => 'openai', 'task' => 'codegen', 'hint' => '用途: 実装。具体的なコード変更を優先してください。'],
+            'dev_test' => ['ask' => 'openai', 'agent' => 'openai', 'task' => 'test_fix', 'hint' => '用途: テスト・型チェック。失敗原因と検証手順を具体的に。'],
+            'dev_docs' => ['ask' => 'gemini', 'agent' => 'openai', 'task' => 'summarize', 'hint' => '用途: ドキュメント作成。読者がすぐ使える構成にしてください。'],
+            'writing' => ['ask' => 'gemini', 'agent' => 'openai', 'task' => 'summarize', 'hint' => '用途: 文章作成。目的・読者・トーンを意識した完成文を出してください。'],
+            'summarize' => ['ask' => 'gemini', 'agent' => 'openai', 'task' => 'summarize', 'hint' => '用途: 要約・翻訳。要点を落とさず簡潔に。'],
+            'explain_learn' => ['ask' => 'openai', 'agent' => 'openai', 'task' => 'explain', 'hint' => '用途: 解説・学習。段階的に分かりやすく説明してください。'],
+            'brainstorm' => ['ask' => 'claude', 'agent' => 'claude', 'task' => 'design', 'hint' => '用途: ブレインストーム。複数案と選定基準を出してください。'],
+            'research' => ['ask' => 'claude', 'agent' => 'claude', 'task' => 'design', 'hint' => '用途: リサーチ・比較。観点を揃え、表形式で長所短所を整理してください。不明点は仮説と明示。'],
+            'data_format' => ['ask' => 'openai', 'agent' => 'openai', 'task' => 'codegen', 'hint' => '用途: データ整形。CSV/TSV/表としてそのまま貼れる結果を優先。変換ルールも短く添える。'],
+            'support_copy' => ['ask' => 'gemini', 'agent' => 'openai', 'task' => 'summarize', 'hint' => '用途: カスタマー／社内サポート文面。丁寧・明確・次アクション付きの完成文を出してください。'],
+            'slides' => ['ask' => 'claude', 'agent' => 'claude', 'task' => 'design', 'hint' => '用途: スライド構成。枚数・各スライドの見出しと箇条書き（短文）を提案してください。'],
+            'meeting_notes' => ['ask' => 'gemini', 'agent' => 'openai', 'task' => 'summarize', 'hint' => '用途: 議事録・メモ整理。決定事項・宿題・次回までにを分けて整理してください。'],
+            'vision' => ['ask' => 'gemini', 'agent' => 'openai', 'task' => 'explain', 'hint' => '用途: 画像理解。添付画像の内容を根拠に答えてください。'],
+            'image_gen' => ['ask' => 'openai', 'agent' => 'openai', 'task' => 'image_gen', 'hint' => '用途: 画像生成。プロンプトから画像を生成するレーンです。'],
+            'video_understand' => ['ask' => 'gemini', 'agent' => 'openai', 'task' => 'explain', 'hint' => '用途: 動画理解。添付のフレーム画像やタイムスタンプ付きメモを時系列で解釈してください。長尺動画の直接解析は未対応のため、重要なコマのスクショ添付を推奨します。'],
+        ];
+        if (!isset($map[$category])) {
+            return ['engine' => null, 'task_type' => null, 'system_hint' => null];
+        }
+        $row = $map[$category];
+        $engine = $mode === 'agent' ? $row['agent'] : $row['ask'];
+        return ['engine' => $engine, 'task_type' => $row['task'], 'system_hint' => $row['hint']];
+    }
+
     /**
      * @param array<string, mixed> $settings
      * @return array<string, bool>
@@ -267,7 +448,7 @@ final class AiRouter
         return [
             'openai' => $openaiKey !== '',
             'gemini' => $geminiKey !== '',
-            'claude' => $claudeKey !== '',
+            'claude' => $claudeKey !== '' && !AppSettings::claudePrepaidStatus($settings)['depleted'],
             'cursor' => $cursorKey !== '',
             'workers' => $workersToken !== '' && $workersAccount !== '',
         ];

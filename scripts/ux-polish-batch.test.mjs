@@ -22,6 +22,12 @@ test('formatAiUserError guides rate limit / key / budget', async () => {
     formatAiUserError('session not found'),
     /セッション|新規/
   )
+  assert.match(
+    formatAiUserError(
+      '[validation_error] The SCM integration does not have access to repository sa2kobayashi-creator/signboard to verify branch existence.'
+    ),
+    /Local|GitHub/
+  )
   assert.match(formatAiUserError('fetch failed'), /タイムアウト|通信/)
   assert.match(formatAiUserError(''), /再送/)
 })
@@ -44,9 +50,11 @@ test('Composer accept-all shortcut and PendingEditsBar primary CTA', () => {
   const app = readFileSync(join(root, 'src/App.tsx'), 'utf8')
   assert.match(composer, /event\.shiftKey\) onAcceptAll/)
   assert.match(composer, /Ctrl\+Shift\+Enter すべて適用/)
+  assert.match(composer, /<strong>変更候補<\/strong>/)
   assert.match(bar, /すべて適用[\s\S]*差分を確認/)
   assert.match(app, /event\.shiftKey/)
   assert.match(app, /applyQueue\.length > 0/)
+  assert.match(app, /applyQueue\.length >= 1/)
   assert.match(app, /acceptAllProposals/)
   assert.match(app, /すべて適用/)
 })

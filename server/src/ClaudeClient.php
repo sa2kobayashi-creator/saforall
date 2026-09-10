@@ -147,17 +147,25 @@ final class ClaudeClient
         $converted = [];
         foreach ($messages as $row) {
             $role = strtolower((string) ($row['role'] ?? 'user'));
-            $content = (string) ($row['content'] ?? '');
+            $content = $row['content'] ?? '';
             if ($role === 'system') {
-                $system .= ($system === '' ? '' : "\n\n") . $content;
+                $system .= ($system === '' ? '' : "\n\n") . (is_string($content) ? $content : '');
                 continue;
             }
             if ($role !== 'assistant') {
                 $role = 'user';
             }
+            // Multimodal user turns already carry Anthropic content blocks.
+            if (is_array($content)) {
+                $converted[] = [
+                    'role' => $role,
+                    'content' => $content,
+                ];
+                continue;
+            }
             $converted[] = [
                 'role' => $role,
-                'content' => $content,
+                'content' => (string) $content,
             ];
         }
         if ($converted === []) {

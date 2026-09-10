@@ -34,6 +34,14 @@ import {
   saveAutoSaveEnabled
 } from '../lib/autoSave'
 import { KeybindingsEditor } from './KeybindingsEditor'
+import { RouterGuideModal } from './RouterGuideModal'
+import {
+  DEFAULT_ENABLED_CATEGORIES,
+  ROUTER_CATEGORIES,
+  ROUTER_CATEGORY_GROUP_LABELS,
+  parseEnabledCategories,
+  type RouterCategoryId
+} from '../lib/routerCategories'
 import './SettingsPanel.css'
 
 type Props = {
@@ -48,6 +56,47 @@ type Props = {
 }
 
 type SettingsMap = Record<string, string | boolean>
+
+type ByokProviderId = 'openai' | 'claude' | 'gemini' | 'workers'
+type ByokPublicStatus = {
+  providerId: ByokProviderId
+  configured: boolean
+  fingerprint: string
+  lastVerifiedAt: string | null
+  lastTestOk: boolean | null
+  status: 'not_configured' | 'saved' | 'connected' | 'failed'
+}
+
+const BYOK_PROVIDERS: Array<{ id: ByokProviderId; label: string }> = [
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'claude', label: 'Claude' },
+  { id: 'gemini', label: 'Gemini' },
+  { id: 'workers', label: 'Workers AI' }
+]
+
+function emptyByokStatus(id: ByokProviderId): ByokPublicStatus {
+  return {
+    providerId: id,
+    configured: false,
+    fingerprint: '',
+    lastVerifiedAt: null,
+    lastTestOk: null,
+    status: 'not_configured'
+  }
+}
+
+function byokStatusLabel(status: ByokPublicStatus['status']): string {
+  if (status === 'connected') return 'Connected'
+  if (status === 'failed') return 'Failed'
+  if (status === 'saved') return 'Saved'
+  return 'Not configured'
+}
+
+function rowsFromByokList(credentials: ByokPublicStatus[]): ByokPublicStatus[] {
+  return BYOK_PROVIDERS.map(
+    (row) => credentials.find((item) => item.providerId === row.id) ?? emptyByokStatus(row.id)
+  )
+}
 
 export function SettingsPanel({
   open,
@@ -89,6 +138,8 @@ export function SettingsPanel({
   const [limitGemini, setLimitGemini] = useState(String(DEFAULT_COST_LIMITS.gemini))
   const [limitClaude, setLimitClaude] = useState(String(DEFAULT_COST_LIMITS.claude))
   const [limitWorkers, setLimitWorkers] = useState(String(DEFAULT_COST_LIMITS.workers))
+  const [claudePrepaid, setClaudePrepaid] = useState('')
+  const [claudePrepaidWarn, setClaudePrepaidWarn] = useState('1')
   const [userPlan, setUserPlan] = useState<UserPlan>(DEFAULT_USER_PLAN)
   const [routerEngines, setRouterEngines] = useState<Array<(typeof USAGE_ENGINE_KEYS)[number]>>([
     ...DEFAULT_ROUTER_ENGINES
@@ -97,8 +148,14 @@ export function SettingsPanel({
   const [routerPolicy, setRouterPolicy] = useState<RouterAutoPolicy>(() =>
     routerPolicyPreset(DEFAULT_ROUTER_PROFILE)
   )
+  const [enabledCategories, setEnabledCategories] = useState<RouterCategoryId[]>([
+    ...DEFAULT_ENABLED_CATEGORIES
+  ])
+  const [routerGuideOpen, setRouterGuideOpen] = useState(false)
 
-  const [usageText, setUsageText] = useState<string | null>(null)
+  const [usageRows, setUsageRows] = useState<
+    Array<{ engine: string; spent: string; limit: string }>
+  >([])
   const [status, setStatus] = useState<string | null>(null)
   const [testStatus, setTestStatus] = useState<
     Partial<Record<ProviderEngine, { ok: boolean; text: string }>>
@@ -108,6 +165,17 @@ export function SettingsPanel({
   const [autoSave, setAutoSave] = useState(true)
   const [autoSaveDelay, setAutoSaveDelay] = useState(1500)
   const [settingsTab, setSettingsTab] = useState<'keys' | 'auto' | 'budget' | 'advanced'>('keys')
+  const [byokRows, setByokRows] = useState<ByokPublicStatus[]>(
+    BYOK_PROVIDERS.map((row) => emptyByokStatus(row.id))
+  )
+  const [byokInput, setByokInput] = useState<Record<ByokProviderId, string>>({
+    openai: '',
+    claude: '',
+    gemini: '',
+    workers: ''
+  })
+  const [byokBusy, setByokBusy] = useState<ByokProviderId | null>(null)
+  const [byokMessage, setByokMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -198,8 +266,17 @@ export function SettingsPanel({
         if (typeof settings['cost.workers.monthly_usd'] === 'string') {
           setLimitWorkers(settings['cost.workers.monthly_usd'])
         }
+        if (typeof settings['llm.claude.prepaid_remaining_usd'] === 'string') {
+          setClaudePrepaid(settings['llm.claude.prepaid_remaining_usd'])
+        }
+        if (typeof settings['llm.claude.prepaid_warn_usd'] === 'string') {
+          setClaudePrepaidWarn(settings['llm.claude.prepaid_warn_usd'] || '1')
+        }
         setUserPlan(parseUserPlan(settings['billing.user_plan']))
         setRouterEngines(parseEngineList(settings['router.enabled_engines'], DEFAULT_ROUTER_ENGINES))
+        setEnabledCategories(
+          parseEnabledCategories(settings['router.enabled_categories'] ?? DEFAULT_ENABLED_CATEGORIES)
+        )
         if (typeof settings['app.locale'] === 'string') {
           setLocale(parseLocale(settings['app.locale']))
         }
@@ -208,13 +285,20 @@ export function SettingsPanel({
         setRouterPolicy(parseRouterAutoPolicy(settings['router.auto_policy'], profile))
       }
 
+      if (typeof window.saforall.listByokCredentials === 'function') {
+        const listed = await window.saforall.listByokCredentials()
+        if (!cancelled && listed.ok && listed.credentials) {
+          setByokRows(rowsFromByokList(listed.credentials))
+        }
+      }
+
       if (!backendConnected) {
         if (typeof window.saforall.getLocalSettings === 'function') {
           const local = await window.saforall.getLocalSettings()
           if (!cancelled && local) applySettings(local)
           if (!cancelled) {
             setStatus(t('settings.loadingLocal'))
-            setUsageText(null)
+            setUsageRows([])
           }
         }
         return
@@ -233,11 +317,18 @@ export function SettingsPanel({
       }
 
       if (usageResult.ok && usageResult.data?.usage) {
-        const parts = USAGE_ENGINE_KEYS.map((key) => {
-          const row = usageResult.data!.usage[key]
-          return `${key} $${(row?.spent ?? 0).toFixed(2)} / $${row?.limit ?? DEFAULT_COST_LIMITS[key]}`
-        })
-        setUsageText(parts.join(' · '))
+        setUsageRows(
+          USAGE_ENGINE_KEYS.map((key) => {
+            const row = usageResult.data!.usage[key]
+            return {
+              engine: key,
+              spent: (row?.spent ?? 0).toFixed(2),
+              limit: String(row?.limit ?? DEFAULT_COST_LIMITS[key])
+            }
+          })
+        )
+      } else {
+        setUsageRows([])
       }
       setStatus(null)
       setTestStatus({})
@@ -357,6 +448,51 @@ export function SettingsPanel({
     )
   }
 
+  const patchByokRow = (status: ByokPublicStatus): void => {
+    setByokRows((prev) => prev.map((row) => (row.providerId === status.providerId ? status : row)))
+  }
+
+  const saveByok = async (providerId: ByokProviderId): Promise<void> => {
+    const secret = byokInput[providerId].trim()
+    if (!secret) {
+      setByokMessage('新しい API Key を入力してから保存してください')
+      return
+    }
+    setByokBusy(providerId)
+    setByokMessage(null)
+    const result = await window.saforall.saveByokCredential({ providerId, secret })
+    setByokBusy(null)
+    if (!result.ok || !result.status) {
+      setByokMessage(result.error?.message ?? 'BYOK の保存に失敗しました')
+      return
+    }
+    patchByokRow(result.status)
+    setByokInput((prev) => ({ ...prev, [providerId]: '' }))
+    setByokMessage(`${BYOK_PROVIDERS.find((row) => row.id === providerId)?.label} を保存しました`)
+  }
+
+  const testByok = async (providerId: ByokProviderId): Promise<void> => {
+    setByokBusy(providerId)
+    setByokMessage(null)
+    const result = await window.saforall.testByokCredential(providerId)
+    setByokBusy(null)
+    if (result.status) patchByokRow(result.status)
+    setByokMessage(result.ok ? `接続OK: ${result.message ?? ''}` : result.error?.message ?? result.message ?? '接続テストに失敗しました')
+  }
+
+  const deleteByok = async (providerId: ByokProviderId): Promise<void> => {
+    setByokBusy(providerId)
+    setByokMessage(null)
+    const result = await window.saforall.deleteByokCredential(providerId)
+    setByokBusy(null)
+    if (!result.ok || !result.status) {
+      setByokMessage(result.error?.message ?? 'BYOK の削除に失敗しました')
+      return
+    }
+    patchByokRow(result.status)
+    setByokMessage(`${BYOK_PROVIDERS.find((row) => row.id === providerId)?.label} の BYOK を削除しました（Development へフォールバックします）`)
+  }
+
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
 
@@ -371,6 +507,7 @@ export function SettingsPanel({
     const settings: Record<string, string> = {
       'app.locale': locale,
       'router.enabled_engines': JSON.stringify(routerEngines),
+      'router.enabled_categories': JSON.stringify(enabledCategories),
       'router.profile': routerProfile,
       'router.auto_policy': JSON.stringify(routerPolicy),
       'llm.openai.base_url': openaiBaseUrl.trim(),
@@ -397,6 +534,8 @@ export function SettingsPanel({
       'cost.gemini.monthly_usd': limitGemini.trim() || String(DEFAULT_COST_LIMITS.gemini),
       'cost.claude.monthly_usd': limitClaude.trim() || String(DEFAULT_COST_LIMITS.claude),
       'cost.workers.monthly_usd': limitWorkers.trim() || String(DEFAULT_COST_LIMITS.workers),
+      'llm.claude.prepaid_remaining_usd': claudePrepaid.trim(),
+      'llm.claude.prepaid_warn_usd': claudePrepaidWarn.trim() || '1',
       'billing.user_plan': userPlan
     }
     if (openaiKey.trim() !== '') {
@@ -595,7 +734,16 @@ export function SettingsPanel({
           </div>
 
           <div hidden={settingsTab !== 'auto'}>
-          <h3 className="settings-section-title">Auto パイプライン</h3>
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">Auto パイプライン</h3>
+            <button
+              type="button"
+              className="settings-link-btn"
+              onClick={() => setRouterGuideOpen(true)}
+            >
+              説明・設定例
+            </button>
+          </div>
           <p className="settings-hint">
             チャットで「自動」を選んだときの振り分け方針です。標準は「バランス（おすすめ）」＝安価分散の改善版です。
           </p>
@@ -690,69 +838,258 @@ export function SettingsPanel({
             ))}
           </div>
 
+          <p className="settings-hint">
+            用途カテゴリ: チャットの「自動」時に選べるカテゴリです。オフにすると選択・自動検出から外れます。
+          </p>
+          <div className="router-engines" role="group" aria-label="Auto 用途カテゴリ">
+            {(['dev', 'knowledge', 'work', 'media'] as const).map((group) => (
+              <div key={group} className="router-category-group">
+                <div className="router-category-group-title">{ROUTER_CATEGORY_GROUP_LABELS[group]}</div>
+                {ROUTER_CATEGORIES.filter((row) => row.group === group).map((row) => (
+                  <label key={row.id} className="router-engine-item" title={row.hint}>
+                    <span>
+                      {row.label}
+                      <span className="router-category-hint"> — {row.hint}</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={enabledCategories.includes(row.id)}
+                      disabled={!backendConnected}
+                      onChange={() => {
+                        setEnabledCategories((current) => {
+                          if (current.includes(row.id)) {
+                            return current.filter((id) => id !== row.id)
+                          }
+                          return [...current, row.id]
+                        })
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            ))}
           </div>
 
-          <div hidden={settingsTab !== 'budget'}>
-          <h3 className="settings-section-title">月額上限</h3>
-          <p className="settings-hint">
-            Provider 上限（開発者側の API 予算）と、ユーザープラン上限（販売時の利用者枠）を分けて管理します。
-            Auto は推定コストが残予算を超える Provider を避けます。
-          </p>
-          <label>
-            ユーザープラン
-            <select
-              value={userPlan}
-              disabled={!backendConnected}
-              onChange={(event) => setUserPlan(parseUserPlan(event.target.value))}
-            >
-              {(Object.keys(USER_PLAN_LABELS) as UserPlan[]).map((plan) => (
-                <option key={plan} value={plan}>
-                  {USER_PLAN_LABELS[plan]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="settings-hint">
-            ローカル開発は Unlimited 推奨。販売時は Free / Light / Standard で利用者ごとの月枠を制限します。
-          </p>
-          {usageText && <p className="settings-hint">今月の概算: {usageText}</p>}
-          {onOpenUsage && (
-            <button
-              type="button"
-              className="settings-secondary"
-              onClick={() => {
-                onClose()
-                onOpenUsage()
-              }}
-            >
-              使用量の詳細を見る
-            </button>
-          )}
+          <RouterGuideModal open={routerGuideOpen} onClose={() => setRouterGuideOpen(false)} />
 
-          <label>
-            Cursor 月上限 USD
-            <input value={limitCursor} onChange={(event) => setLimitCursor(event.target.value)} />
-          </label>
-          <label>
-            OpenAI 月上限 USD
-            <input value={limitOpenai} onChange={(event) => setLimitOpenai(event.target.value)} />
-          </label>
-          <label>
-            Gemini 月上限 USD
-            <input value={limitGemini} onChange={(event) => setLimitGemini(event.target.value)} />
-          </label>
-          <label>
-            Claude 月上限 USD
-            <input value={limitClaude} onChange={(event) => setLimitClaude(event.target.value)} />
-          </label>
-          <label>
-            Workers AI 月上限 USD
-            <input value={limitWorkers} onChange={(event) => setLimitWorkers(event.target.value)} />
-          </label>
+          </div>
 
+          <div className="settings-tab-panel" hidden={settingsTab !== 'budget'}>
+            <h3 className="settings-section-title">月額上限</h3>
+            <p className="settings-hint">
+              Provider 上限（開発者側の API 予算）と、ユーザープラン上限（販売時の利用者枠）を分けて管理します。
+              Auto は推定コストが残予算を超える Provider を避けます。
+            </p>
+
+            <label className="settings-field">
+              <span className="settings-field-label">ユーザープラン</span>
+              <select
+                value={userPlan}
+                disabled={!backendConnected}
+                onChange={(event) => setUserPlan(parseUserPlan(event.target.value))}
+              >
+                {(Object.keys(USER_PLAN_LABELS) as UserPlan[]).map((plan) => (
+                  <option key={plan} value={plan}>
+                    {USER_PLAN_LABELS[plan]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="settings-hint">
+              ローカル開発は Unlimited 推奨。販売時は Free / Light / Standard で利用者ごとの月枠を制限します。
+            </p>
+
+            {usageRows.length > 0 && (
+              <div className="settings-budget-usage" aria-label="今月の概算">
+                <div className="settings-budget-usage-title">今月の概算</div>
+                <ul>
+                  {usageRows.map((row) => (
+                    <li key={row.engine}>
+                      <span className="settings-budget-engine">{row.engine}</span>
+                      <span className="settings-budget-spent">
+                        ${row.spent} / ${row.limit}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {onOpenUsage && (
+              <button
+                type="button"
+                className="settings-secondary"
+                onClick={() => {
+                  onClose()
+                  onOpenUsage()
+                }}
+              >
+                使用量の詳細を見る
+              </button>
+            )}
+
+            <h3 className="settings-section-title">Anthropic（Claude）チャージ残</h3>
+            <p className="settings-hint">
+              Anthropic は残高 API を公開していないため、console で確認した残りをここに手入力します。
+              Claude 利用のたびにアプリ概算で減算し、0 になると Auto は Claude を避けます。$5
+              購入直後なら「5」と入れてください。
+            </p>
+            <div className="settings-budget-grid" role="group" aria-label="Anthropic チャージ残">
+              <label className="settings-budget-item">
+                <span>残り USD</span>
+                <input
+                  inputMode="decimal"
+                  placeholder="例: 5"
+                  value={claudePrepaid}
+                  onChange={(event) => setClaudePrepaid(event.target.value)}
+                />
+              </label>
+              <label className="settings-budget-item">
+                <span>警告しきい値</span>
+                <input
+                  inputMode="decimal"
+                  value={claudePrepaidWarn}
+                  onChange={(event) => setClaudePrepaidWarn(event.target.value)}
+                />
+              </label>
+            </div>
+            <p className="settings-hint">
+              空欄 = 追跡しない（従来どおり）。Anthropic 側で切れた場合も、エラー後に 0
+              へ自動更新します。
+            </p>
+
+            <h3 className="settings-section-title">Provider 月上限（USD）</h3>
+            <div className="settings-budget-grid" role="group" aria-label="Provider 月上限">
+              <label className="settings-budget-item">
+                <span>Cursor</span>
+                <input
+                  inputMode="decimal"
+                  value={limitCursor}
+                  onChange={(event) => setLimitCursor(event.target.value)}
+                />
+              </label>
+              <label className="settings-budget-item">
+                <span>OpenAI</span>
+                <input
+                  inputMode="decimal"
+                  value={limitOpenai}
+                  onChange={(event) => setLimitOpenai(event.target.value)}
+                />
+              </label>
+              <label className="settings-budget-item">
+                <span>Gemini</span>
+                <input
+                  inputMode="decimal"
+                  value={limitGemini}
+                  onChange={(event) => setLimitGemini(event.target.value)}
+                />
+              </label>
+              <label className="settings-budget-item">
+                <span>Claude</span>
+                <input
+                  inputMode="decimal"
+                  value={limitClaude}
+                  onChange={(event) => setLimitClaude(event.target.value)}
+                />
+              </label>
+              <label className="settings-budget-item">
+                <span>Workers AI</span>
+                <input
+                  inputMode="decimal"
+                  value={limitWorkers}
+                  onChange={(event) => setLimitWorkers(event.target.value)}
+                />
+              </label>
+            </div>
           </div>
 
           <div hidden={settingsTab !== 'keys'}>
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">自分の API Key（BYOK）</h3>
+          </div>
+          <p className="settings-hint">
+            ユーザー自身のキーを OS 保護つきで暗号化保存します。優先順位は BYOK → 開発 settings → 開発
+            env です。保存済みキーは再表示しません。Cursor は対象外です。Workers AI の Account ID /
+            Gateway は下の開発設定を使います。
+          </p>
+          {byokMessage ? <p className="settings-hint">{byokMessage}</p> : null}
+          {BYOK_PROVIDERS.map((row) => {
+            const current = byokRows.find((item) => item.providerId === row.id) ?? emptyByokStatus(row.id)
+            const mask = current.configured
+              ? `******** …${current.fingerprint || '****'}`
+              : '未保存'
+            return (
+              <div className="settings-byok-row" key={row.id}>
+                <div className="settings-byok-head">
+                  <strong>{row.label}</strong>
+                  <span className={`settings-byok-status is-${current.status}`}>
+                    {byokStatusLabel(current.status)}
+                  </span>
+                </div>
+                <p className="settings-byok-mask">{mask}</p>
+                {current.lastVerifiedAt ? (
+                  <p className="settings-hint">最終確認: {current.lastVerifiedAt}</p>
+                ) : null}
+                <label>
+                  新しい API Key
+                  <input
+                    type="password"
+                    value={byokInput[row.id]}
+                    onChange={(event) =>
+                      setByokInput((prev) => ({ ...prev, [row.id]: event.target.value }))
+                    }
+                    autoComplete="off"
+                    placeholder={current.configured ? '変更する場合のみ入力' : ''}
+                  />
+                </label>
+                <div className="settings-byok-actions">
+                  <button
+                    type="button"
+                    className="settings-test-btn"
+                    disabled={byokBusy !== null || byokInput[row.id].trim() === ''}
+                    onClick={() => void saveByok(row.id)}
+                  >
+                    {byokBusy === row.id ? '処理中…' : '保存'}
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-test-btn"
+                    disabled={byokBusy !== null || !current.configured}
+                    onClick={() => void testByok(row.id)}
+                  >
+                    接続テスト
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-test-btn"
+                    disabled={byokBusy !== null || !current.configured}
+                    onClick={() => void deleteByok(row.id)}
+                  >
+                    削除
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">開発 Credential</h3>
+          </div>
+          <p className="settings-hint">
+            開発用の settings / 環境変数です。BYOK が無い Provider だけ使います。Cursor は従来どおり
+            Development / @cursor/sdk です。
+          </p>
+          <ul className="settings-hint">
+            <li>OpenAI: {openaiKeySet || openaiKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
+            <li>Gemini: {geminiKeySet || geminiKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
+            <li>Claude: {claudeKeySet || claudeKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
+            <li>
+              Workers AI: {workersTokenSet || workersToken.trim() ? 'Connected' : 'Not configured'} ·
+              Development
+            </li>
+            <li>Cursor: {cursorKeySet || cursorKey.trim() ? 'Connected' : 'Not configured'} · Coding Agent</li>
+          </ul>
+
           <div className="settings-section-head">
             <h3 className="settings-section-title">Workers AI モデル（複数選択）</h3>
             <button
@@ -912,8 +1249,9 @@ export function SettingsPanel({
             </select>
           </label>
           <p className="settings-hint">
-            Cloud は origin が GitHub のとき有効です。API キーと GitHub 連携が Cursor
-            側で済んでいる必要があります。
+            変更後は下の「保存」を押してください。保存しないとチャットは以前の実行場所のままです。
+            SCM / GitHub 権限エラーが出る場合は Local を選んで保存してください。Cloud は origin が
+            GitHub のとき有効で、Cursor 側の GitHub 連携も必要です。
           </p>
 
           <div className="settings-section-head">

@@ -63,10 +63,10 @@ export function ComposerPanel({
   if (proposals.length === 0) return null
 
   return (
-    <aside className="composer-panel" aria-label="Composer 変更一覧">
+    <aside className="composer-panel" aria-label="変更候補一覧">
       <div className="composer-head">
         <div>
-          <strong>Composer</strong>
+          <strong>変更候補</strong>
           <span>{proposals.length} ファイル</span>
         </div>
         <button type="button" onClick={onClose} title="一覧を隠す">

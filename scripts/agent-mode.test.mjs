@@ -3,9 +3,9 @@ import test from 'node:test'
 
 test('agent mode banner copy distinguishes tool execution', () => {
   const ask = '説明・提案。差分は確認してから適用'
-  const agent = 'ツール必須 → Composer に載せる'
+  const agent = 'ツール必須 → 変更候補に載せる'
   assert.match(ask, /確認/)
-  assert.match(agent, /Composer/)
+  assert.match(agent, /変更候補/)
 })
 
 test('prose-only block message requires edit_file', () => {
@@ -72,10 +72,12 @@ test('normalizeToolCalls skips sparse / flat / missing function', async () => {
   assert.match(src, /const toolCalls = normalizeToolCalls\(message\.tool_calls\)/)
   assert.match(src, /!next\?\.function\?\.name/)
   assert.match(src, /export function parseRetryAfterMs/)
-  assert.match(src, /response\.status === 429/)
-  assert.match(src, /分間トークン上限/)
   assert.match(src, /MAX_EMPTY_TOOL_RETRIES/)
   assert.match(src, /read_required/)
+  const openaiTools = await readFile(join(root, 'electron/main/ai/adapters/openaiTools.ts'), 'utf8')
+  const messages = await readFile(join(root, 'electron/main/ai/agentMessages.ts'), 'utf8')
+  assert.match(openaiTools, /response\.status === 429/)
+  assert.match(messages, /分間トークン上限/)
 })
 
 test('ChatService asks model to tolerate typos', async () => {
@@ -86,4 +88,20 @@ test('ChatService asks model to tolerate typos', async () => {
   const src = await readFile(join(root, 'server/src/ChatService.php'), 'utf8')
   assert.match(src, /誤字・変換ミス/)
   assert.match(src, /大備考/)
+})
+
+test('UI copy uses 変更候補 instead of Composer', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { dirname, join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const chat = await readFile(join(root, 'src/components/ChatPanel.tsx'), 'utf8')
+  assert.match(chat, /変更候補に載せる/)
+  const panel = await readFile(join(root, 'src/components/ComposerPanel.tsx'), 'utf8')
+  assert.match(panel, /<strong>変更候補<\/strong>/)
+  const app = await readFile(join(root, 'src/App.tsx'), 'utf8')
+  assert.match(app, /applyQueue\.length >= 1/)
+  const agent = await readFile(join(root, 'electron/main/toolAgent.ts'), 'utf8')
+  assert.match(agent, /変更候補バーまたは一覧/)
+  assert.doesNotMatch(agent, /Composer で「すべて適用」/)
 })

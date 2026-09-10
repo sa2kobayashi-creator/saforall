@@ -1,4 +1,37 @@
 import { extractAgentRuntimeContext } from './lib/agentContext'
+import { resolveCredential } from './ai/credentials'
+import { parseProviderId } from './ai/types'
+
+function hasUsableLlm(engine: string): boolean {
+  const id = parseProviderId(engine)
+  if (!id || id === 'cursor') return false
+  return resolveCredential(id).available
+}
+
+async function noteClaudeCreditFailure(
+  message: string | null | undefined,
+  engine?: string | null
+): Promise<void> {
+  try {
+    if (engine && engine !== 'claude') return
+    const { isCreditOrQuotaError } = await import('./lib/providerErrors')
+    if (!isCreditOrQuotaError(message)) return
+    const lower = String(message || '').toLowerCase()
+    const looksAnthropic =
+      !engine &&
+      (lower.includes('anthropic') || lower.includes('claude') || textIncludesCreditJp(message))
+    if (!engine && !looksAnthropic) return
+    const { markClaudePrepaidDepleted } = await import('./lib/claudePrepaid')
+    await markClaudePrepaidDepleted()
+  } catch {
+    // ignore
+  }
+}
+
+function textIncludesCreditJp(message: string | null | undefined): boolean {
+  const text = String(message || '')
+  return text.includes('クレジット') || text.includes('残高')
+}
 
 export type ApiResponse<T = unknown> = {
   ok: boolean
@@ -34,9 +67,32 @@ const DEFAULT_TIMEOUT_MS = 3000
 
 /** True when last health check reached MySQL-backed PHP. */
 let phpOnline = false
+/** After a failed PHP probe in packaged apps, skip re-probing for a while. */
+let phpProbeCooldownUntil = 0
 
 export function isPhpBackendOnline(): boolean {
   return phpOnline
+}
+
+/**
+ * Packaged installs are meant to run without XAMPP. Probing localhost:8081 on
+ * every health check / chat adds multi-second stalls when nothing is listening.
+ * Dev and explicit SAFORALL_API_BASE_URL keep PHP probing.
+ */
+export function shouldProbePhpBackend(now = Date.now()): boolean {
+  if (process.env.SAFORALL_FORCE_LOCAL === '1') return false
+  if (process.env.SAFORALL_API_BASE_URL) return true
+  if (phpOnline) return true
+  if (now < phpProbeCooldownUntil) return false
+  try {
+    // Lazy require so unit tests can import this module without Electron.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const electron = require('electron') as { app?: { isPackaged?: boolean } }
+    if (electron.app?.isPackaged) return false
+  } catch {
+    // not running under Electron
+  }
+  return true
 }
 
 export function getApiBaseUrl(): string {
@@ -89,23 +145,31 @@ async function fetchJson<T>(
 export async function checkHealth(): Promise<HealthResult> {
   const baseUrl = getApiBaseUrl()
 
-  try {
-    const result = await fetchJson<HealthData & { hint?: string; detail?: string }>(
-      'GET',
-      '/health'
-    )
-    if (result.ok && result.data && result.data.database === 'connected') {
-      phpOnline = true
-      return {
-        connected: true,
-        mode: 'php',
-        baseUrl,
-        message: 'バックエンド接続済み（XAMPP）',
-        data: result.data
+  if (shouldProbePhpBackend()) {
+    try {
+      const result = await fetchJson<HealthData & { hint?: string; detail?: string }>(
+        'GET',
+        '/health',
+        undefined,
+        // Packaged users rarely have XAMPP; fail fast when something is half-open.
+        { timeoutMs: 800 }
+      )
+      if (result.ok && result.data && result.data.database === 'connected') {
+        phpOnline = true
+        phpProbeCooldownUntil = 0
+        return {
+          connected: true,
+          mode: 'php',
+          baseUrl,
+          message: 'バックエンド接続済み（XAMPP）',
+          data: result.data
+        }
       }
+    } catch {
+      // fall through to local
     }
-  } catch {
-    // fall through to local
+    // Avoid hammering a dead :8081 every 30s from the installed app / idle UI.
+    phpProbeCooldownUntil = Date.now() + 60_000
   }
 
   phpOnline = false
@@ -156,19 +220,58 @@ export async function apiRequest<T = unknown>(
             await markLocalSettingsClean()
           }
         }
-        if (method.toUpperCase() === 'GET' && path.replace(/^\//, '') === 'ai/usage' && result.data) {
+        if (
+          method.toUpperCase() === 'GET' &&
+          path.replace(/^\//, '').split('?')[0] === 'ai/usage' &&
+          result.data
+        ) {
+          const data: Record<string, unknown> = {
+            ...(result.data as Record<string, unknown>)
+          }
           try {
             const { getFeedbackSummary } = await import('./feedbackStore')
-            const feedback = await getFeedbackSummary(7)
-            return {
-              ...result,
-              data: {
-                ...(result.data as Record<string, unknown>),
-                feedback
-              } as T
+            data.feedback = await getFeedbackSummary(7)
+          } catch {
+            // feedback is optional
+          }
+          try {
+            const router = data.router as
+              | { recent?: Array<{ engine: string; created_at: string }> }
+              | undefined
+            if (router && Array.isArray(router.recent) && router.recent.length > 0) {
+              const { enrichRecentWithBillingMode, billingModeForUi } = await import('./ai/usage')
+              const { resolveCredential } = await import('./ai/credentials')
+              const { parseProviderId } = await import('./ai/types')
+              let events: Awaited<
+                ReturnType<(typeof import('./ai/usage'))['listPersistedUsageEvents']>
+              > = []
+              try {
+                const { listPersistedUsageEvents } = await import('./ai/usage')
+                events = await listPersistedUsageEvents()
+              } catch {
+                events = []
+              }
+              data.router = {
+                ...router,
+                recent: enrichRecentWithBillingMode(router.recent, events, (engine) => {
+                  try {
+                    const id = parseProviderId(engine)
+                    if (!id || id === 'cursor') return null
+                    return (
+                      billingModeForUi(resolveCredential(id).billingMode) ?? 'DEVELOPMENT'
+                    )
+                  } catch {
+                    return 'DEVELOPMENT'
+                  }
+                })
+              }
             }
           } catch {
-            return result
+            // keep usage payload even if billingMode enrichment fails
+          }
+          return {
+            ...result,
+            data: data as T
           }
         }
         return result
@@ -257,6 +360,8 @@ export type ChatStreamEvent =
       type: 'agent_phase'
       phase: 'plan' | 'explore' | 'edit' | 'verify'
       note?: string
+      /** progress = same shell check updating in place (do not spam phase lines) */
+      kind?: 'status' | 'progress'
     }
   | {
       type: 'agent_checkpoint'
@@ -293,9 +398,10 @@ type RouteData = {
   user_message: Record<string, unknown>
   cursor_run_id: number | null
   usage: MonthUsage
-  cursor_api_key: string | null
+  cursor_api_key?: string | null
   provider?: {
-    api_key: string
+    /** PHP legacy only. Electron LLM execution must not read this. */
+    api_key?: string
     base_url: string
     extra_headers: string[]
     messages: Array<{ role: string; content: string }>
@@ -307,18 +413,48 @@ export async function streamChat(
   onEvent: (event: ChatStreamEvent) => void,
   signal?: AbortSignal | null
 ): Promise<void> {
-  const { throwIfChatAborted, isChatAbortError } = await import('./chatAbort')
+  const { isChatAbortError } = await import('./chatAbort')
+  let terminal = false
+  const emit = (event: ChatStreamEvent): void => {
+    if (event.type === 'done' || event.type === 'error' || event.type === 'cancelled') {
+      terminal = true
+    }
+    onEvent(event)
+  }
   try {
-    await streamChatInner(body, onEvent, signal)
+    await streamChatInner(body, emit, signal)
   } catch (error) {
     if (isChatAbortError(error) || signal?.aborted) {
-      onEvent({
+      if (!terminal) {
+        emit({
+          type: 'cancelled',
+          message: 'ユーザーが応答を取り消しました'
+        })
+      }
+      return
+    }
+    if (!terminal) {
+      emit({
+        type: 'error',
+        code: 'STREAM_FAILED',
+        message: error instanceof Error ? error.message : String(error)
+      })
+    }
+    return
+  }
+  if (!terminal) {
+    if (signal?.aborted) {
+      emit({
         type: 'cancelled',
         message: 'ユーザーが応答を取り消しました'
       })
-      return
+    } else {
+      emit({
+        type: 'error',
+        code: 'STREAM_INCOMPLETE',
+        message: '応答が完了しませんでした。もう一度送信してください。'
+      })
     }
-    throw error
   }
 }
 
@@ -407,13 +543,54 @@ async function streamChatInner(
         return
       }
 
+      if (decided.task_type === 'image_gen') {
+        if (decided.engine !== 'openai' || !hasUsableLlm('openai')) {
+          onEvent({
+            type: 'error',
+            code: 'IMAGE_GEN_UNAVAILABLE',
+            message:
+              '画像生成には OpenAI API キーが必要です。設定で OpenAI を保存するか、用途を切り替えてください。'
+          })
+          return
+        }
+        onEvent({ type: 'delta', text: '🖼 画像を生成しています…\n' })
+        const { generateOpenAiImage } = await import('./lib/imageGenerate')
+        const workspacePath =
+          typeof requestBody.workspace_path === 'string' ? requestBody.workspace_path : ''
+        const prompt =
+          typeof requestBody.message === 'string' ? requestBody.message : ''
+        const generated = await generateOpenAiImage({
+          prompt,
+          baseUrl: decided.provider?.base_url,
+          workspacePath
+        })
+        onEvent({ type: 'delta', text: generated.content })
+        const completed = await completeLocalRoute({
+          sessionId: decided.session_id,
+          content: generated.content,
+          engine: decided.engine,
+          model: generated.model
+        })
+        onEvent({
+          type: 'done',
+          model: generated.model,
+          engine: decided.engine,
+          task_type: 'image_gen',
+          estimated_usd: completed.estimated_usd,
+          usage: completed.usage,
+          assistant_message: completed.assistant_message
+        })
+        return
+      }
+
       const mode = typeof decided.mode === 'string' ? decided.mode : 'ask'
       const workspacePath =
         typeof requestBody.workspace_path === 'string' ? requestBody.workspace_path : ''
       const canToolAgent =
         mode === 'agent' &&
         workspacePath.trim() !== '' &&
-        Boolean(decided.provider?.api_key) &&
+        Boolean(decided.provider) &&
+        hasUsableLlm(decided.engine) &&
         (decided.engine === 'openai' || decided.engine === 'claude')
 
       if (mode === 'agent' && !canToolAgent) {
@@ -440,7 +617,6 @@ async function streamChatInner(
         const agentCtx = extractAgentRuntimeContext(requestBody)
         await runToolAgent({
           workspacePath,
-          apiKey: decided.provider.api_key,
           baseUrl: decided.provider.base_url,
           model: decided.model,
           extraHeaders: decided.provider.extra_headers ?? [],
@@ -463,7 +639,7 @@ async function streamChatInner(
         return
       }
 
-      if (!decided.provider?.api_key) {
+      if (!hasUsableLlm(decided.engine)) {
         onEvent({
           type: 'error',
           code: 'NO_API_KEY',
@@ -474,30 +650,109 @@ async function streamChatInner(
 
       throwIfChatAborted(signal)
       const { generateAssistantText } = await import('./directLlm')
-      const content = await generateAssistantText({
-        engine: decided.engine,
-        apiKey: decided.provider!.api_key,
-        model: decided.model,
-        baseUrl: decided.provider!.base_url,
-        messages: decided.provider!.messages ?? []
-      })
-      onEvent({ type: 'delta', text: content })
-      const completed = await completeLocalRoute({
-        sessionId: decided.session_id,
-        content,
-        engine: decided.engine,
-        model: decided.model
-      })
-      onEvent({
-        type: 'done',
-        model: decided.model,
-        engine: decided.engine,
-        task_type: decided.task_type,
-        estimated_usd: completed.estimated_usd,
-        usage: completed.usage,
-        assistant_message: completed.assistant_message
-      })
-      return
+      const { isCreditOrQuotaError, autoRuntimeFallbackEngines } = await import(
+        './lib/providerErrors'
+      )
+      const requestedEngine =
+        typeof requestBody.engine === 'string' ? requestBody.engine.trim().toLowerCase() : 'auto'
+
+      const runLocalText = async (
+        engine: string,
+        provider: NonNullable<RouteData['provider']>,
+        model: string,
+        taskType: string
+      ): Promise<void> => {
+        const content = await generateAssistantText({
+          engine,
+          model,
+          baseUrl: provider.base_url,
+          messages: provider.messages ?? [],
+          sessionId: decided.session_id
+        })
+        onEvent({ type: 'delta', text: content })
+        const completed = await completeLocalRoute({
+          sessionId: decided.session_id,
+          content,
+          engine,
+          model
+        })
+        onEvent({
+          type: 'done',
+          model,
+          engine,
+          task_type: taskType,
+          estimated_usd: completed.estimated_usd,
+          usage: completed.usage,
+          assistant_message: completed.assistant_message
+        })
+      }
+
+      try {
+        await runLocalText(
+          decided.engine,
+          decided.provider!,
+          decided.model,
+          decided.task_type
+        )
+        return
+      } catch (genError) {
+        const { isChatAbortError } = await import('./chatAbort')
+        if (isChatAbortError(genError) || signal?.aborted) throw genError
+        const msg = genError instanceof Error ? genError.message : String(genError)
+        const canAutoRetry =
+          (requestedEngine === 'auto' || requestedEngine === '') && isCreditOrQuotaError(msg)
+        if (isCreditOrQuotaError(msg)) {
+          await noteClaudeCreditFailure(msg, decided.engine)
+        }
+        if (!canAutoRetry) throw genError
+
+        for (const nextEngine of autoRuntimeFallbackEngines(decided.engine, mode)) {
+          throwIfChatAborted(signal)
+          onEvent({
+            type: 'delta',
+            text: `\n↻ ${decided.engine} のクレジット／上限のため ${nextEngine} に切り替えます…\n`
+          })
+          const retryLocal = await prepareLocalRoute({
+            ...requestBody,
+            engine: nextEngine,
+            user_message_id: decided.user_message_id
+          })
+          if (!retryLocal.provider || !hasUsableLlm(retryLocal.engine)) continue
+          onEvent({
+            type: 'route',
+            engine: retryLocal.engine,
+            task_type: retryLocal.task_type,
+            model: retryLocal.model,
+            session_id: retryLocal.session_id,
+            fallback_reason: `runtime_credit_fallback_from_${decided.engine}`,
+            mode: retryLocal.mode,
+            usage: retryLocal.usage
+          })
+          try {
+            await runLocalText(
+              retryLocal.engine,
+              retryLocal.provider,
+              retryLocal.model,
+              retryLocal.task_type
+            )
+            return
+          } catch (retryError) {
+            const { isChatAbortError: isAbort } = await import('./chatAbort')
+            if (isAbort(retryError) || signal?.aborted) throw retryError
+            const retryMsg =
+              retryError instanceof Error ? retryError.message : String(retryError)
+            if (!isCreditOrQuotaError(retryMsg)) throw retryError
+          }
+        }
+        onEvent({
+          type: 'error',
+          code: 'CREDIT_EXHAUSTED',
+          message:
+            msg +
+            ' Auto で代替エンジンも試しました。Settings で OpenAI / Gemini のキーと残高を確認してください。'
+        })
+        return
+      }
     } catch (error) {
       const { isChatAbortError } = await import('./chatAbort')
       if (isChatAbortError(error) || signal?.aborted) throw error
@@ -541,7 +796,7 @@ async function streamChatInner(
     typeof requestBody.workspace_path === 'string' ? requestBody.workspace_path : ''
   const providerOk = Boolean(
     decided.provider &&
-      decided.provider.api_key &&
+      hasUsableLlm(decided.engine) &&
       decided.provider.base_url &&
       decided.provider.base_url !== 'gemini-native'
   )
@@ -574,7 +829,7 @@ async function streamChatInner(
       if (!decided.provider) {
         reasons.push('provider 情報なし（アプリ再起動 / API 接続を確認）')
       } else {
-        if (!decided.provider.api_key) reasons.push(`${decided.engine} の API キー未設定`)
+        if (!hasUsableLlm(decided.engine)) reasons.push(`${decided.engine} の API キー未設定`)
         if (!decided.provider.base_url || decided.provider.base_url === 'gemini-native') {
           reasons.push('ツール呼び出し可能な base_url が無い')
         }
@@ -596,74 +851,153 @@ async function streamChatInner(
   }
 
   if (canToolAgent && decided.provider) {
-    try {
-      onEvent({
-        type: 'agent_phase',
-        phase: 'plan',
-        note: 'ツール Agent 起動（edit_file / run_shell）'
-      })
-      onEvent({
-        type: 'delta',
-        text: '🔧 ツール Agent を開始します。説明だけで終わらず、ツールで編集・検証します。\n'
-      })
-      const { runToolAgent } = await import('./toolAgent')
-      const agentCtx = extractAgentRuntimeContext(requestBody)
-      await runToolAgent({
-        workspacePath,
-        apiKey: decided.provider.api_key,
-        baseUrl: decided.provider.base_url,
-        model: decided.model,
-        extraHeaders: decided.provider.extra_headers ?? [],
-        messages: decided.provider.messages ?? [],
-        engine: decided.engine,
-        taskType: decided.task_type,
-        sessionId: decided.session_id,
-        problems: agentCtx.problems,
-        anchorPaths: agentCtx.anchors,
-        signal: signal ?? undefined,
-        onEvent,
-        complete: async (content) => {
-          const completed = await fetchJson<{
-            assistant_message: Record<string, unknown>
-            estimated_usd: number
-            usage: MonthUsage
-          }>(
-            'POST',
-            '/ai/complete',
-            {
-              session_id: decided.session_id,
-              content,
-              engine: decided.engine,
-              task_type: decided.task_type,
-              model: decided.model,
-              fallback_from: decided.fallback_from
-            },
-            { timeoutMs: 15_000 }
-          )
-          if (!completed.ok || !completed.data) return null
-          return completed.data
-        }
-      })
-    } catch (error) {
-      const { isChatAbortError } = await import('./chatAbort')
-      if (isChatAbortError(error) || signal?.aborted) {
+    const requestedEngine =
+      typeof requestBody.engine === 'string' ? requestBody.engine.trim().toLowerCase() : 'auto'
+    const tryToolAgent = async (
+      agentDecided: RouteData
+    ): Promise<{ ok: boolean; cancelled?: boolean; errorMessage?: string }> => {
+      if (!agentDecided.provider) {
+        return { ok: false, errorMessage: 'provider 情報なし' }
+      }
+      try {
         onEvent({
-          type: 'cancelled',
-          message: 'ユーザーが応答を取り消しました'
+          type: 'agent_phase',
+          phase: 'plan',
+          note: 'ツール Agent 起動（edit_file / run_shell）'
         })
-        return
+        onEvent({
+          type: 'delta',
+          text: '🔧 ツール Agent を開始します。説明だけで終わらず、ツールで編集・検証します。\n'
+        })
+        const { runToolAgent } = await import('./toolAgent')
+        const agentCtx = extractAgentRuntimeContext(requestBody)
+        await runToolAgent({
+          workspacePath,
+          baseUrl: agentDecided.provider.base_url,
+          model: agentDecided.model,
+          extraHeaders: agentDecided.provider.extra_headers ?? [],
+          messages: agentDecided.provider.messages ?? [],
+          engine: agentDecided.engine,
+          taskType: agentDecided.task_type,
+          sessionId: agentDecided.session_id,
+          problems: agentCtx.problems,
+          anchorPaths: agentCtx.anchors,
+          signal: signal ?? undefined,
+          onEvent,
+          complete: async (content) => {
+            const completed = await fetchJson<{
+              assistant_message: Record<string, unknown>
+              estimated_usd: number
+              usage: MonthUsage
+            }>(
+              'POST',
+              '/ai/complete',
+              {
+                session_id: agentDecided.session_id,
+                content,
+                engine: agentDecided.engine,
+                task_type: agentDecided.task_type,
+                model: agentDecided.model,
+                fallback_from: agentDecided.fallback_from
+              },
+              { timeoutMs: 15_000 }
+            )
+            if (!completed.ok || !completed.data) return null
+            return completed.data
+          }
+        })
+        return { ok: true }
+      } catch (error) {
+        const { isChatAbortError } = await import('./chatAbort')
+        if (isChatAbortError(error) || signal?.aborted) {
+          onEvent({
+            type: 'cancelled',
+            message: 'ユーザーが応答を取り消しました'
+          })
+          return { ok: false, cancelled: true }
+        }
+        return {
+          ok: false,
+          errorMessage: error instanceof Error ? error.message : 'Tool Agent の実行に失敗しました'
+        }
+      }
+    }
+
+    const first = await tryToolAgent(decided)
+    if (first.cancelled) return
+    if (first.ok) return
+
+    const { isCreditOrQuotaError, autoRuntimeFallbackEngines } = await import('./lib/providerErrors')
+    const canAutoRetry =
+      (requestedEngine === 'auto' || requestedEngine === '') &&
+      isCreditOrQuotaError(first.errorMessage)
+    if (isCreditOrQuotaError(first.errorMessage)) {
+      await noteClaudeCreditFailure(first.errorMessage, decided.engine)
+    }
+    if (canAutoRetry) {
+      for (const nextEngine of autoRuntimeFallbackEngines(decided.engine, mode)) {
+        if (nextEngine !== 'openai' && nextEngine !== 'claude') continue
+        throwIfChatAborted(signal)
+        onEvent({
+          type: 'delta',
+          text: `\n↻ ${decided.engine} のクレジット／上限のため ${nextEngine} に切り替えます…\n`
+        })
+        const retryRoute = await fetchJson<RouteData>(
+          'POST',
+          '/ai/route',
+          {
+            ...requestBody,
+            engine: nextEngine,
+            user_message_id: decided.user_message_id
+          },
+          { timeoutMs: 8_000 },
+          { 'X-Saforall-Client': 'electron-main' }
+        )
+        if (!retryRoute.ok || !retryRoute.data?.provider) continue
+        onEvent({
+          type: 'route',
+          engine: retryRoute.data.engine,
+          task_type: retryRoute.data.task_type,
+          model: retryRoute.data.model,
+          session_id: retryRoute.data.session_id,
+          fallback_reason: `runtime_credit_fallback_from_${decided.engine}`,
+          mode,
+          usage: retryRoute.data.usage
+        })
+        const retry = await tryToolAgent(retryRoute.data)
+        if (retry.cancelled) return
+        if (retry.ok) return
+        if (!isCreditOrQuotaError(retry.errorMessage)) {
+          onEvent({
+            type: 'error',
+            code: 'TOOL_AGENT_FAILED',
+            message: retry.errorMessage ?? 'Tool Agent の実行に失敗しました'
+          })
+          return
+        }
       }
       onEvent({
         type: 'error',
-        code: 'TOOL_AGENT_FAILED',
-        message: error instanceof Error ? error.message : 'Tool Agent の実行に失敗しました'
+        code: 'CREDIT_EXHAUSTED',
+        message:
+          (first.errorMessage ?? 'クレジット不足') +
+          ' Auto で代替エンジンも試しました。Settings で OpenAI のキーを確認するか、Anthropic をチャージしてください。'
       })
+      return
     }
+
+    onEvent({
+      type: 'error',
+      code: 'TOOL_AGENT_FAILED',
+      message: first.errorMessage ?? 'Tool Agent の実行に失敗しました'
+    })
     return
   }
 
   throwIfChatAborted(signal)
-  await streamProviderChat(
+  const requestedEngine =
+    typeof requestBody.engine === 'string' ? requestBody.engine.trim().toLowerCase() : 'auto'
+  const streamResult = await streamProviderChat(
     {
       ...requestBody,
       engine: decided.engine,
@@ -675,8 +1009,80 @@ async function streamChatInner(
       fallback_reason: decided.fallback_reason
     },
     onEvent,
-    signal
+    signal,
+    { emitErrors: false }
   )
+  if (streamResult.cancelled) return
+  if (streamResult.ok) return
+
+  const { isCreditOrQuotaError, autoRuntimeFallbackEngines } = await import('./lib/providerErrors')
+  const canAutoRetry =
+    (requestedEngine === 'auto' || requestedEngine === '') &&
+    isCreditOrQuotaError(streamResult.errorMessage)
+
+  if (isCreditOrQuotaError(streamResult.errorMessage)) {
+    await noteClaudeCreditFailure(streamResult.errorMessage, decided.engine)
+  }
+
+  if (!canAutoRetry) {
+    onEvent({
+      type: 'error',
+      code: streamResult.errorCode ?? 'STREAM_FAILED',
+      message: streamResult.errorMessage ?? 'ストリームに失敗しました'
+    })
+    return
+  }
+
+  for (const nextEngine of autoRuntimeFallbackEngines(decided.engine, mode)) {
+    throwIfChatAborted(signal)
+    onEvent({
+      type: 'delta',
+      text: `\n↻ ${decided.engine} のクレジット／上限のため ${nextEngine} に切り替えます…\n`
+    })
+    onEvent({
+      type: 'route',
+      engine: nextEngine,
+      task_type: decided.task_type,
+      model: decided.model,
+      session_id: decided.session_id,
+      fallback_reason: `runtime_credit_fallback_from_${decided.engine}`,
+      mode,
+      usage: decided.usage
+    })
+    const retry = await streamProviderChat(
+      {
+        ...requestBody,
+        engine: nextEngine,
+        user_message_id: decided.user_message_id,
+        resolved_engine: nextEngine,
+        requested: 'auto',
+        task_type: decided.task_type,
+        fallback_from: decided.engine,
+        fallback_reason: `runtime_credit_fallback_from_${decided.engine}`
+      },
+      onEvent,
+      signal,
+      { emitErrors: false }
+    )
+    if (retry.cancelled) return
+    if (retry.ok) return
+    if (!isCreditOrQuotaError(retry.errorMessage)) {
+      onEvent({
+        type: 'error',
+        code: retry.errorCode ?? 'STREAM_FAILED',
+        message: retry.errorMessage ?? 'ストリームに失敗しました'
+      })
+      return
+    }
+  }
+
+  onEvent({
+    type: 'error',
+    code: 'CREDIT_EXHAUSTED',
+    message:
+      (streamResult.errorMessage ?? 'クレジット不足') +
+      ' Auto で代替エンジンも試しました。Settings で OpenAI / Gemini のキーと残高を確認するか、Anthropic をチャージしてください。'
+  })
 }
 
 async function runCursorStream(
@@ -697,7 +1103,13 @@ async function runCursorStream(
       : ''
   const prompt =
     typeof requestBody.message === 'string' ? requestBody.message : ''
-  const apiKey = decided.cursor_api_key ?? process.env.CURSOR_API_KEY ?? ''
+  const apiKey =
+    decided.cursor_api_key ||
+    resolveCredential('cursor').credential?.secret ||
+    process.env.CURSOR_API_KEY ||
+    ''
+  const { parseContextImages, toCursorSdkImages } = await import('./lib/visionMessages')
+  const cursorImages = toCursorSdkImages(parseContextImages(requestBody.context))
 
   if (cwd.trim() === '') {
     onEvent({
@@ -733,6 +1145,7 @@ async function runCursorStream(
       model: decided.model,
       cwd,
       prompt,
+      images: cursorImages,
       runtime,
       autoCreatePR,
       onDelta: (text) => {
@@ -844,12 +1257,24 @@ async function runCursorStream(
 async function streamProviderChat(
   body: unknown,
   onEvent: (event: ChatStreamEvent) => void,
-  outerSignal?: AbortSignal | null
-): Promise<void> {
+  outerSignal?: AbortSignal | null,
+  options?: { emitErrors?: boolean }
+): Promise<{ ok: boolean; cancelled?: boolean; errorMessage?: string; errorCode?: string }> {
+  const emitErrors = options?.emitErrors !== false
   const baseUrl = getApiBaseUrl()
   const url = `${baseUrl}/ai/chat/stream`
   const { linkedAbortSignal, isChatAbortError, throwIfChatAborted } = await import('./chatAbort')
   const linked = linkedAbortSignal(120_000, outerSignal)
+
+  const fail = (
+    code: string,
+    message: string
+  ): { ok: false; errorMessage: string; errorCode: string } => {
+    if (emitErrors) {
+      onEvent({ type: 'error', code, message })
+    }
+    return { ok: false, errorMessage: message, errorCode: code }
+  }
 
   try {
     throwIfChatAborted(outerSignal)
@@ -865,21 +1290,14 @@ async function streamProviderChat(
     // ストリーム開始前の JSON エラー（未設定キーなど）
     if (!contentType.includes('text/event-stream')) {
       const payload = (await response.json()) as ApiResponse
-      onEvent({
-        type: 'error',
-        code: payload.error?.code ?? 'HTTP_ERROR',
-        message: payload.error?.message ?? `HTTP ${response.status}`
-      })
-      return
+      return fail(
+        payload.error?.code ?? 'HTTP_ERROR',
+        payload.error?.message ?? `HTTP ${response.status}`
+      )
     }
 
     if (!response.body) {
-      onEvent({
-        type: 'error',
-        code: 'NETWORK_ERROR',
-        message: 'ストリーム本文がありません'
-      })
-      return
+      return fail('NETWORK_ERROR', 'ストリーム本文がありません')
     }
 
     const reader = response.body.getReader()
@@ -906,11 +1324,22 @@ async function streamProviderChat(
           try {
             const event = JSON.parse(data) as ChatStreamEvent
             if (event.type === 'user_message' || event.type === 'route') {
+              separator = buffer.indexOf('\n\n')
               continue
             }
+            if (event.type === 'error') {
+              if (emitErrors) onEvent(event)
+              return {
+                ok: false,
+                errorMessage: event.message,
+                errorCode: event.code
+              }
+            }
             onEvent(event)
-            if (event.type === 'done' || event.type === 'error' || event.type === 'cancelled') {
-              return
+            if (event.type === 'done' || event.type === 'cancelled') {
+              return event.type === 'cancelled'
+                ? { ok: false, cancelled: true }
+                : { ok: true }
             }
           } catch {
             // ignore malformed event
@@ -920,13 +1349,15 @@ async function streamProviderChat(
         separator = buffer.indexOf('\n\n')
       }
     }
+
+    return fail('STREAM_INCOMPLETE', '応答ストリームが途中終了しました。もう一度送信してください。')
   } catch (error) {
     if (isChatAbortError(error) || outerSignal?.aborted) {
       onEvent({
         type: 'cancelled',
         message: 'ユーザーが応答を取り消しました'
       })
-      return
+      return { ok: false, cancelled: true }
     }
     const message =
       error instanceof Error && error.name === 'AbortError'
@@ -935,11 +1366,7 @@ async function streamProviderChat(
           ? error.message
           : 'バックエンド未接続'
 
-    onEvent({
-      type: 'error',
-      code: 'NETWORK_ERROR',
-      message
-    })
+    return fail('NETWORK_ERROR', message)
   } finally {
     linked.dispose()
   }

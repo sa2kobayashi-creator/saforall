@@ -112,7 +112,7 @@ final class UsageService
      * }
      * @param array<string, mixed> $settings
      */
-    public static function monthDetail(PDO $pdo, array $settings): array
+    public static function monthDetail(PDO $pdo, array $settings, ?string $month = null): array
     {
         $usage = self::monthSummary($pdo, $settings);
         $totalSpent = 0.0;
@@ -124,8 +124,11 @@ final class UsageService
             $totalRequests += (int) $row['requests'];
         }
 
+        $routerMonth = self::normalizeMonth($month) ?? date('Y-m');
+
         return [
             'month' => date('Y-m'),
+            'router_month' => $routerMonth,
             'total' => [
                 'spent' => round($totalSpent, 4),
                 'limit' => round($totalLimit, 4),
@@ -135,8 +138,27 @@ final class UsageService
             'user' => self::userBudgetSummary($pdo, $settings),
             'usage' => $usage,
             'models' => self::modelMonthStats($pdo),
-            'router' => self::routeMonthInsight($pdo, $settings),
+            'router' => self::routeMonthInsight($pdo, $settings, $routerMonth),
         ];
+    }
+
+    /** @return ?string YYYY-MM */
+    public static function normalizeMonth(?string $month): ?string
+    {
+        if ($month === null) {
+            return null;
+        }
+        $trimmed = trim($month);
+        if (!preg_match('/^\d{4}-\d{2}$/', $trimmed)) {
+            return null;
+        }
+        $parts = explode('-', $trimmed);
+        $y = (int) $parts[0];
+        $m = (int) $parts[1];
+        if ($y < 2020 || $y > 2100 || $m < 1 || $m > 12) {
+            return null;
+        }
+        return sprintf('%04d-%02d', $y, $m);
     }
 
     /**
@@ -149,12 +171,13 @@ final class UsageService
      *   by_engine:list<array{engine:string,count:int,estimated_usd:float}>,
      *   by_task:list<array{task_type:string,engine:string,count:int}>,
      *   recent:list<array{id:int,engine:string,task_type:string,mode:string,model:?string,estimated_usd:float,fallback_from:?string,fallback_reason:?string,created_at:string}>,
-     *   hints:list<array{level:string,text:string}>
+     *   hints:list<array{code:string,level:string,text:string}>
      * }
      * @param array<string, mixed> $settings
      */
-    public static function routeMonthInsight(PDO $pdo, array $settings): array
+    public static function routeMonthInsight(PDO $pdo, array $settings, ?string $month = null): array
     {
+        $monthKey = self::normalizeMonth($month) ?? date('Y-m');
         $empty = [
             'total' => 0,
             'fallbacks' => 0,
@@ -162,19 +185,28 @@ final class UsageService
             'by_engine' => [],
             'by_task' => [],
             'recent' => [],
+            'month' => $monthKey,
+            'recent_total' => 0,
             'hints' => [[
+                'code' => 'no_logs',
                 'level' => 'info',
                 'text' => 'まだ Router ログがありません。チャットで「自動」を使うと記録されます。',
             ]],
         ];
 
         try {
-            $totalStmt = $pdo->query(
+            $monthStart = $monthKey . '-01 00:00:00';
+            $totalStmt = $pdo->prepare(
                 'SELECT COUNT(*) AS c,
                         SUM(CASE WHEN fallback_from IS NOT NULL AND fallback_from <> \'\' THEN 1 ELSE 0 END) AS fb
                  FROM ai_route_log
-                 WHERE created_at >= DATE_FORMAT(NOW(), \'%Y-%m-01\')'
+                 WHERE created_at >= :month_start
+                   AND created_at < DATE_ADD(:month_start2, INTERVAL 1 MONTH)'
             );
+            $totalStmt->execute([
+                ':month_start' => $monthStart,
+                ':month_start2' => $monthStart,
+            ]);
             $totalRow = $totalStmt->fetch() ?: ['c' => 0, 'fb' => 0];
             $total = (int) $totalRow['c'];
             $fallbacks = (int) $totalRow['fb'];
@@ -183,15 +215,20 @@ final class UsageService
             }
 
             $byEngine = [];
-            $engineStmt = $pdo->query(
+            $engineStmt = $pdo->prepare(
                 'SELECT engine,
                         COUNT(*) AS count,
                         COALESCE(SUM(estimated_usd), 0) AS estimated_usd
                  FROM ai_route_log
-                 WHERE created_at >= DATE_FORMAT(NOW(), \'%Y-%m-01\')
+                 WHERE created_at >= :month_start
+                   AND created_at < DATE_ADD(:month_start2, INTERVAL 1 MONTH)
                  GROUP BY engine
                  ORDER BY count DESC'
             );
+            $engineStmt->execute([
+                ':month_start' => $monthStart,
+                ':month_start2' => $monthStart,
+            ]);
             foreach ($engineStmt->fetchAll() as $row) {
                 $byEngine[] = [
                     'engine' => (string) $row['engine'],
@@ -201,14 +238,19 @@ final class UsageService
             }
 
             $byTask = [];
-            $taskStmt = $pdo->query(
+            $taskStmt = $pdo->prepare(
                 'SELECT task_type, engine, COUNT(*) AS count
                  FROM ai_route_log
-                 WHERE created_at >= DATE_FORMAT(NOW(), \'%Y-%m-01\')
+                 WHERE created_at >= :month_start
+                   AND created_at < DATE_ADD(:month_start2, INTERVAL 1 MONTH)
                  GROUP BY task_type, engine
                  ORDER BY count DESC
                  LIMIT 40'
             );
+            $taskStmt->execute([
+                ':month_start' => $monthStart,
+                ':month_start2' => $monthStart,
+            ]);
             foreach ($taskStmt->fetchAll() as $row) {
                 $byTask[] = [
                     'task_type' => (string) $row['task_type'],
@@ -218,13 +260,19 @@ final class UsageService
             }
 
             $recent = [];
-            $recentStmt = $pdo->query(
+            $recentStmt = $pdo->prepare(
                 'SELECT id, engine, task_type, mode, model, estimated_usd,
                         fallback_from, fallback_reason, created_at
                  FROM ai_route_log
+                 WHERE created_at >= :month_start
+                   AND created_at < DATE_ADD(:month_start2, INTERVAL 1 MONTH)
                  ORDER BY id DESC
-                 LIMIT 30'
+                 LIMIT 200'
             );
+            $recentStmt->execute([
+                ':month_start' => $monthStart,
+                ':month_start2' => $monthStart,
+            ]);
             foreach ($recentStmt->fetchAll() as $row) {
                 $recent[] = [
                     'id' => (int) $row['id'],
@@ -251,6 +299,8 @@ final class UsageService
                 'by_engine' => $byEngine,
                 'by_task' => $byTask,
                 'recent' => $recent,
+                'month' => $monthKey,
+                'recent_total' => $total,
                 'hints' => $hints,
             ];
         } catch (Throwable) {
@@ -261,7 +311,10 @@ final class UsageService
                 'by_engine' => [],
                 'by_task' => [],
                 'recent' => [],
+                'month' => $monthKey,
+                'recent_total' => 0,
                 'hints' => [[
+                    'code' => 'missing_table',
                     'level' => 'warn',
                     'text' => 'ai_route_log テーブルが未作成の可能性があります。migration_ai_route_log.sql を実行してください。',
                 ]],
@@ -269,12 +322,7 @@ final class UsageService
         }
     }
 
-    /**
-     * @param list<array{engine:string,count:int,estimated_usd:float}> $byEngine
-     * @param list<array{task_type:string,engine:string,count:int}> $byTask
-     * @param array<string, mixed> $settings
-     * @return list<array{level:string,text:string}>
-     */
+
     private static function buildRouteHints(
         array $byEngine,
         array $byTask,
@@ -285,6 +333,7 @@ final class UsageService
         $hints = [];
         if ($total < 8) {
             $hints[] = [
+                'code' => 'sparse_sample',
                 'level' => 'info',
                 'text' => "記録は {$total} 件です。もう少し「自動」で使うと振り分け傾向がはっきりします。",
             ];
@@ -292,6 +341,7 @@ final class UsageService
 
         if ($fallbackRate >= 25.0) {
             $hints[] = [
+                'code' => 'high_fallback',
                 'level' => 'warn',
                 'text' => "フォールバック率が {$fallbackRate}% と高めです。API キー未設定や月額上限を確認してください。",
             ];
@@ -307,6 +357,7 @@ final class UsageService
 
         if ($total >= 8 && $openai > 0 && ($openai / $total) >= 0.75) {
             $hints[] = [
+                'code' => 'openai_concentrated',
                 'level' => 'tip',
                 'text' => 'OpenAI への集中が高いです。安価な質問が多いなら設定で Gemini を Auto に含め、gemini_for_mid_tasks を有効にしてください。',
             ];
@@ -314,6 +365,7 @@ final class UsageService
 
         if ($total >= 8 && $gemini === 0 && $openai + $claude > 0) {
             $hints[] = [
+                'code' => 'gemini_unused',
                 'level' => 'tip',
                 'text' => '今月 Gemini が選ばれていません。キー未設定か Auto 無効の可能性があります。',
             ];
@@ -337,12 +389,14 @@ final class UsageService
         }
         if ($lightOnExpensive >= 5) {
             $hints[] = [
+                'code' => 'light_on_expensive',
                 'level' => 'tip',
                 'text' => "簡単な質問・要約が有料寄りのエンジンに {$lightOnExpensive} 回流れています。Gemini 優先を強めるとコストを抑えやすいです。",
             ];
         }
         if ($designOnCheap >= 3) {
             $hints[] = [
+                'code' => 'design_on_cheap',
                 'level' => 'warn',
                 'text' => "設計・大規模修正が安価エンジンに {$designOnCheap} 回流れています。Claude / OpenAI の残予算や Auto 有効リストを確認してください。",
             ];
@@ -350,6 +404,7 @@ final class UsageService
 
         if ($claude === 0 && $total >= 10) {
             $hints[] = [
+                'code' => 'claude_unused',
                 'level' => 'info',
                 'text' => 'Claude が未使用です。難しい修正で品質を上げたい場合は Auto に Claude を含め、キーを設定してください。',
             ];
@@ -358,6 +413,7 @@ final class UsageService
         $profile = AppSettings::str($settings, 'router.profile', 'balanced');
         if ($hints === []) {
             $hints[] = [
+                'code' => 'profile_ok',
                 'level' => 'info',
                 'text' => "プロファイル「{$profile}」の振り分けは概ね安定しています。気になる偏りがあれば設定の Auto ポリシーを調整してください。",
             ];
@@ -605,6 +661,39 @@ final class UsageService
                 ':fallback_from' => $row['fallback_from'] ?? null,
                 ':cursor_run_id' => $row['cursor_run_id'] ?? null,
             ]);
+            try {
+                $input = (int) ($row['input_tokens'] ?? 0);
+                $output = (int) ($row['output_tokens'] ?? 0);
+                $event = $pdo->prepare(
+                    'INSERT INTO ai_usage_events
+                     (request_id, provider, model, input_tokens, output_tokens, total_tokens,
+                      estimated_cost, status, session_id)
+                     VALUES
+                     (:request_id, :provider, :model, :input_tokens, :output_tokens, :total_tokens,
+                      :estimated_cost, :status, :session_id)'
+                );
+                $event->execute([
+                    ':request_id' => $row['request_id'] ?? ('php_' . bin2hex(random_bytes(6))),
+                    ':provider' => $row['engine'],
+                    ':model' => $row['model'] ?? null,
+                    ':input_tokens' => $input,
+                    ':output_tokens' => $output,
+                    ':total_tokens' => $input + $output,
+                    ':estimated_cost' => $row['estimated_usd'] ?? 0,
+                    ':status' => $row['status'] ?? 'ok',
+                    ':session_id' => $row['session_id'] ?? null,
+                ]);
+            } catch (Throwable) {
+                // ai_usage_events 未作成でも既存 ai_usage 記録は維持
+            }
+            if (($row['engine'] ?? '') === 'claude') {
+                $settings = AppSettings::load($pdo);
+                AppSettings::deductClaudePrepaid(
+                    $pdo,
+                    $settings,
+                    (float) ($row['estimated_usd'] ?? 0)
+                );
+            }
         } catch (Throwable) {
             // マイグレーション前でもチャットは継続する
         }

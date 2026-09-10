@@ -3,6 +3,32 @@ import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { delimiter, join } from 'path'
 
+/** Candidate node_modules roots for packaged Electron (asar + unpacked). */
+export function mcpNodeModulesRoots(cwd = process.cwd()): string[] {
+  const roots = [cwd, process.cwd()]
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const electron = require('electron') as {
+      app?: { isPackaged?: boolean; getAppPath?: () => string }
+    }
+    const appPath = electron.app?.getAppPath?.()
+    if (appPath) {
+      roots.push(appPath)
+      roots.push(join(appPath, '..'))
+    }
+  } catch {
+    // tests / non-electron
+  }
+  const resources = process.resourcesPath
+  if (resources) {
+    roots.push(join(resources, 'app.asar'))
+    roots.push(join(resources, 'app.asar.unpacked'))
+    roots.push(resources)
+  }
+  // Unique while preserving order.
+  return roots.filter((value, index) => value && roots.indexOf(value) === index)
+}
+
 export type McpServerConfig = {
   id: string
   /** stdio transport */
@@ -254,17 +280,9 @@ export function resolveMcpSpawn(
   )
   if (fsPkgIdx >= 0) {
     const allowedDirs = args.slice(fsPkgIdx + 1)
-    const entryCandidates = [
-      join(cwd, 'node_modules', '@modelcontextprotocol', 'server-filesystem', 'dist', 'index.js'),
-      join(
-        process.cwd(),
-        'node_modules',
-        '@modelcontextprotocol',
-        'server-filesystem',
-        'dist',
-        'index.js'
-      )
-    ]
+    const entryCandidates = mcpNodeModulesRoots(cwd).map((root) =>
+      join(root, 'node_modules', '@modelcontextprotocol', 'server-filesystem', 'dist', 'index.js')
+    )
     for (const entry of entryCandidates) {
       if (!existsSync(entry)) continue
       for (const dir of [...windowsNodeDirs(), 'C:\\Program Files\\nodejs']) {

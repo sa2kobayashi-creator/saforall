@@ -70,6 +70,7 @@ export type ChatStreamEvent =
       type: 'agent_phase'
       phase: 'plan' | 'explore' | 'edit' | 'verify'
       note?: string
+      kind?: 'status' | 'progress'
     }
   | {
       type: 'agent_checkpoint'
@@ -101,6 +102,15 @@ const api = {
     ipcRenderer.invoke('dialog:openDirectory'),
   readFile: (filePath: string): Promise<string> =>
     ipcRenderer.invoke('fs:readFile', filePath),
+  readFileBase64: (
+    filePath: string
+  ): Promise<{
+    path: string
+    name: string
+    mime: string
+    data_base64: string
+    bytes: number
+  }> => ipcRenderer.invoke('fs:readFileBase64', filePath),
   writeFile: (filePath: string, content: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:writeFile', filePath, content),
   mkdir: (dirPath: string): Promise<boolean> => ipcRenderer.invoke('fs:mkdir', dirPath),
@@ -550,6 +560,61 @@ const api = {
     message?: string
     settings?: Record<string, string | boolean>
   }> => ipcRenderer.invoke('settings:importFile'),
+  listByokCredentials: (): Promise<{
+    ok: boolean
+    credentials: Array<{
+      providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      configured: boolean
+      fingerprint: string
+      lastVerifiedAt: string | null
+      lastTestOk: boolean | null
+      status: 'not_configured' | 'saved' | 'connected' | 'failed'
+    }>
+  }> => ipcRenderer.invoke('credentials:listByok'),
+  saveByokCredential: (input: {
+    providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+    secret: string
+  }): Promise<{
+    ok: boolean
+    status?: {
+      providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      configured: boolean
+      fingerprint: string
+      lastVerifiedAt: string | null
+      lastTestOk: boolean | null
+      status: 'not_configured' | 'saved' | 'connected' | 'failed'
+    }
+    error?: { code: string; message: string }
+  }> => ipcRenderer.invoke('credentials:saveByok', input),
+  deleteByokCredential: (
+    providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+  ): Promise<{
+    ok: boolean
+    status?: {
+      providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      configured: boolean
+      fingerprint: string
+      lastVerifiedAt: string | null
+      lastTestOk: boolean | null
+      status: 'not_configured' | 'saved' | 'connected' | 'failed'
+    }
+    error?: { code: string; message: string }
+  }> => ipcRenderer.invoke('credentials:deleteByok', providerId),
+  testByokCredential: (
+    providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+  ): Promise<{
+    ok: boolean
+    message?: string
+    status?: {
+      providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      configured: boolean
+      fingerprint: string
+      lastVerifiedAt: string | null
+      lastTestOk: boolean | null
+      status: 'not_configured' | 'saved' | 'connected' | 'failed'
+    }
+    error?: { code: string; message: string }
+  }> => ipcRenderer.invoke('credentials:testByok', providerId),
   request: <T = unknown>(
     method: string,
     path: string,
@@ -565,32 +630,67 @@ const api = {
     const requestId = options?.requestId?.trim() || crypto.randomUUID()
 
     const done = new Promise<void>((resolve) => {
+      let settled = false
+      let sawTerminal = false
+      const settle = (): void => {
+        if (settled) return
+        settled = true
+        ipcRenderer.removeListener('api:chatStream:event', listener)
+        resolve()
+      }
       const listener = (
         _event: unknown,
         payload: { requestId: string; event: ChatStreamEvent }
       ): void => {
         if (payload.requestId !== requestId) return
-        handlers.onEvent(payload.event)
+        try {
+          handlers.onEvent(payload.event)
+        } catch {
+          // UI handler errors must not leave the stream promise hanging.
+        }
         if (
           payload.event.type === 'done' ||
           payload.event.type === 'error' ||
           payload.event.type === 'cancelled'
         ) {
-          ipcRenderer.removeListener('api:chatStream:event', listener)
-          resolve()
+          sawTerminal = true
+          settle()
         }
       }
 
       ipcRenderer.on('api:chatStream:event', listener)
-      void ipcRenderer.invoke('api:chatStream', requestId, body).catch((error: unknown) => {
-        ipcRenderer.removeListener('api:chatStream:event', listener)
-        handlers.onEvent({
-          type: 'error',
-          code: 'NETWORK_ERROR',
-          message: String(error)
-        })
-        resolve()
-      })
+      void ipcRenderer.invoke('api:chatStream', requestId, body).then(
+        () => {
+          if (!settled && !sawTerminal) {
+            try {
+              handlers.onEvent({
+                type: 'error',
+                code: 'STREAM_INCOMPLETE',
+                message: '応答が完了しませんでした。もう一度送信してください。'
+              })
+            } catch {
+              // ignore
+            }
+            sawTerminal = true
+          }
+          settle()
+        },
+        (error: unknown) => {
+          if (!settled && !sawTerminal) {
+            try {
+              handlers.onEvent({
+                type: 'error',
+                code: 'NETWORK_ERROR',
+                message: String(error)
+              })
+            } catch {
+              // ignore
+            }
+            sawTerminal = true
+          }
+          settle()
+        }
+      )
     })
 
     return { requestId, done }
@@ -716,6 +816,23 @@ const api = {
     content: string
   ): Promise<{ path: string; bytes: number }> =>
     ipcRenderer.invoke('rules:saveMemory', cwd, content),
+  listSkills: (
+    cwd: string
+  ): Promise<
+    Array<{ id: string; name: string; description: string; path: string; bytes: number }>
+  > => ipcRenderer.invoke('skills:list', cwd),
+  readSkill: (
+    cwd: string,
+    idOrPath: string
+  ): Promise<{
+    id: string
+    name: string
+    description: string
+    path: string
+    content: string
+  }> => ipcRenderer.invoke('skills:read', cwd, idOrPath),
+  skillsCatalog: (cwd: string): Promise<string | null> =>
+    ipcRenderer.invoke('skills:catalog', cwd),
   bitbucketRemote: (
     cwd: string
   ): Promise<{

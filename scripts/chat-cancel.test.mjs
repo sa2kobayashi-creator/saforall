@@ -36,9 +36,12 @@ test('tool agent accepts AbortSignal', () => {
   const src = fs.readFileSync(path.join(root, 'electron/main/toolAgent.ts'), 'utf8')
   assert.match(src, /signal\?: AbortSignal/)
   assert.match(src, /throwIfChatAborted\(signal\)/)
-  assert.match(src, /linkedAbortSignal/)
   assert.match(src, /toolRunShell\([\s\S]*signal/)
   assert.match(src, /isChatAbortError\(error\) \|\| signal\?\.aborted/)
+  const openaiTools = fs.readFileSync(path.join(root, 'electron/main/ai/adapters/openaiTools.ts'), 'utf8')
+  const claudeTools = fs.readFileSync(path.join(root, 'electron/main/ai/adapters/claudeTools.ts'), 'utf8')
+  assert.match(openaiTools, /linkedAbortSignal/)
+  assert.match(claudeTools, /linkedAbortSignal/)
 })
 
 test('toolRunShell kills process tree on abort', () => {
@@ -56,4 +59,21 @@ test('ChatPanel shows Stop while busy', () => {
   assert.match(src, /event\.type === 'cancelled'/)
   assert.match(src, /停止中/)
   assert.match(src, /停止/)
+  assert.match(src, /submitGenerationRef/)
+  assert.match(src, /releaseStuckChatUi/)
+  assert.match(src, /lastSubmittedTextRef/)
+})
+
+test('preload settles chatStream even if onEvent throws', () => {
+  const src = fs.readFileSync(path.join(root, 'electron/preload/index.ts'), 'utf8')
+  assert.match(src, /let settled = false/)
+  assert.match(src, /handlers\.onEvent\(payload\.event\)/)
+  assert.match(src, /STREAM_INCOMPLETE/)
+  assert.match(src, /sawTerminal/)
+})
+
+test('toolRunShell force-finishes after abort if close never fires', () => {
+  const src = fs.readFileSync(path.join(root, 'electron/main/workspaceTools.ts'), 'utf8')
+  assert.match(src, /Some Windows shells never emit close after taskkill/)
+  assert.match(src, /if \(!settled\) finish\(null\)/)
 })

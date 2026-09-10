@@ -58,6 +58,47 @@ try {
         'estimated_usd' => $prepared['estimated_usd'] ?? 0,
     ]);
 
+    if (($prepared['task_type'] ?? '') === 'image_gen') {
+        require_once dirname(__DIR__) . '/src/ImageGenerateClient.php';
+        $send([
+            'type' => 'delta',
+            'text' => "🖼 画像を生成しています…\n",
+        ]);
+        $prompt = isset($body['message']) && is_string($body['message']) ? $body['message'] : '';
+        $generated = ImageGenerateClient::generate(
+            $prepared['api_key'],
+            $prompt,
+            $prepared['base_url'] ?? 'https://api.openai.com/v1'
+        );
+        $send([
+            'type' => 'delta',
+            'text' => $generated['content'],
+        ]);
+        $assistantMessage = ChatService::saveAssistant($pdo, $prepared['session_id'], $generated['content']);
+        $estimated = 0.04;
+        UsageService::record($pdo, [
+            'session_id' => $prepared['session_id'],
+            'engine' => $prepared['engine'],
+            'task_type' => 'image_gen',
+            'model' => $generated['model'],
+            'input_tokens' => UsageService::tokensFromText($prompt),
+            'output_tokens' => 0,
+            'estimated_usd' => $estimated,
+            'fallback_from' => $prepared['fallback_from'] ?? null,
+        ]);
+        $settings = AppSettings::load($pdo);
+        $send([
+            'type' => 'done',
+            'model' => $generated['model'],
+            'engine' => $prepared['engine'],
+            'task_type' => 'image_gen',
+            'estimated_usd' => $estimated,
+            'usage' => UsageService::monthSummary($pdo, $settings),
+            'assistant_message' => $assistantMessage,
+        ]);
+        exit;
+    }
+
     if ($prepared['engine'] === 'gemini') {
         $assistantText = GeminiClient::chatStream(
             $prepared['api_key'],

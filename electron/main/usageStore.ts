@@ -62,6 +62,14 @@ export async function recordLocalUsage(params: {
   const add = Math.max(0, Number(params.estimatedUsd) || 0.002)
   file.byEngine[engine] = (file.byEngine[engine] ?? 0) + add
   await writeJsonFile(usagePath(), file)
+  if (engine === 'claude' && add > 0) {
+    try {
+      const { deductClaudePrepaid } = await import('./lib/claudePrepaid')
+      await deductClaudePrepaid(add)
+    } catch {
+      // prepaid tracker is best-effort
+    }
+  }
   return summarizeUsage(file)
 }
 

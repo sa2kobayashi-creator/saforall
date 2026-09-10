@@ -31,6 +31,13 @@ export const SPECIAL_MENTIONS: MentionSuggestion[] = [
     kind: 'special'
   },
   {
+    id: 'special:skills',
+    label: '@skills',
+    insert: '@skills',
+    detail: 'プロジェクト Skills カタログ',
+    kind: 'special'
+  },
+  {
     id: 'special:codebase',
     label: '@codebase',
     insert: '@codebase',

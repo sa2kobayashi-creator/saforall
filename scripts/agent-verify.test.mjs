@@ -24,18 +24,58 @@ test('excerptShellFailure prefers the tail', async () => {
   assert.match(excerpt, /truncated/)
 })
 
+test('isLongRunningShellCommand rejects npm start / dev servers', () => {
+  function isLongRunningShellCommand(command) {
+    const normalized = command.trim().toLowerCase().replace(/\s+/g, ' ')
+    if (!normalized) return false
+    const segments = normalized.split(/\s*(?:&&|\|\||;)\s*/).filter(Boolean)
+    return segments.some((part) => {
+      if (/^(npm|pnpm|yarn|bun)(\s+run)?\s+(start|dev|serve|watch)(\s|$)/.test(part)) return true
+      if (/^(npm|pnpm|yarn|bun)\s+start(\s|$)/.test(part)) return true
+      if (/\bvite\s+build\b/.test(part) || /\bnext\s+build\b/.test(part)) return false
+      if (/\b(next\s+dev|nuxt\s+dev|remix\s+dev|astro\s+dev|ng\s+serve)\b/.test(part)) return true
+      if (/(^|\s)vite(\s|$)/.test(part)) return true
+      if (/\b(webpack-dev-server|nodemon)\b/.test(part)) return true
+      if (/^(npx|pnpm\s+dlx|yarn\s+dlx)\s+(serve|http-server|vite|next)(\s|$)/.test(part)) return true
+      if (/^(python|py|python3)\s+(-m\s+)?(http\.server|uvicorn)\b/.test(part)) return true
+      if (/^(flask\s+run|php\s+-s)\b/.test(part)) return true
+      return false
+    })
+  }
+  assert.equal(isLongRunningShellCommand('npm start'), true)
+  assert.equal(isLongRunningShellCommand('npm run dev'), true)
+  assert.equal(isLongRunningShellCommand('pnpm run serve'), true)
+  assert.equal(isLongRunningShellCommand('npm run typecheck'), false)
+  assert.equal(isLongRunningShellCommand('npm test'), false)
+  assert.equal(isLongRunningShellCommand('vite build'), false)
+})
+
 test('suggestVerifyCommands prefers typecheck before test', async () => {
   const scripts = { typecheck: 'tsc -p .', test: 'npm run typecheck && node --test' }
   let primary = null
   const fallbacks = []
   if (scripts.typecheck) {
     primary = 'npm run typecheck'
-    if (scripts.test) fallbacks.push('npm test')
+    const testScript = String(scripts.test || '')
+    if (scripts.test && !/\btypecheck\b/.test(testScript)) {
+      fallbacks.push('npm test')
+    }
   } else if (scripts.test) {
     primary = 'npm test'
   }
   assert.equal(primary, 'npm run typecheck')
-  assert.deepEqual(fallbacks, ['npm test'])
+  assert.deepEqual(fallbacks, [])
+})
+
+test('ChatPanel collapses shell progress and clarifies verify copy', async () => {
+  const src = await readFile(join(root, 'src/components/ChatPanel.tsx'), 'utf8')
+  assert.match(src, /SHELL_PROGRESS_MARKER/)
+  assert.match(src, /upsertShellProgressLine/)
+  assert.match(src, /変更が正しいか/)
+  const agent = await readFile(join(root, 'electron/main/toolAgent.ts'), 'utf8')
+  assert.match(agent, /isLongRunningShellCommand/)
+  assert.match(agent, /kind: 'progress'/)
+  assert.match(agent, /起動しっぱなし/)
 })
 
 test('prioritizeProblemsByPaths elevates active file diagnostics', async () => {

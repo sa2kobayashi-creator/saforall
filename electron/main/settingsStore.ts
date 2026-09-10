@@ -35,6 +35,20 @@ export function isSecretSettingKey(key: string): boolean {
   return (SECRET_SETTING_KEYS as readonly string[]).includes(key)
 }
 
+function envTrim(name: string): string {
+  const value = process.env[name]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function credentialSource(
+  settingsValue: string | undefined,
+  envNames: string[]
+): string {
+  if (settingsValue && settingsValue.trim()) return 'settings'
+  if (envNames.some((name) => envTrim(name))) return 'env'
+  return ''
+}
+
 /** Mask secrets for renderer — never return raw API keys. */
 export function maskSettingsForRenderer(settings: SettingsMap): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {}
@@ -42,16 +56,31 @@ export function maskSettingsForRenderer(settings: SettingsMap): Record<string, s
     if (isSecretSettingKey(key)) continue
     out[key] = value
   }
-  out['llm.api_key_set'] = Boolean(settings['llm.api_key'] || settings['llm.openai.api_key'])
-  out['llm.openai.api_key_set'] = Boolean(settings['llm.openai.api_key'] || settings['llm.api_key'])
-  out['llm.gemini.api_key_set'] = Boolean(settings['llm.gemini.api_key'])
-  out['llm.claude.api_key_set'] = Boolean(settings['llm.claude.api_key'])
-  out['llm.cursor.api_key_set'] = Boolean(settings['llm.cursor.api_key'])
+  const openaiSettings = Boolean(settings['llm.api_key'] || settings['llm.openai.api_key'])
+  const openaiEnv = Boolean(envTrim('OPENAI_API_KEY') || envTrim('SAFORALL_API_KEY'))
+  out['llm.api_key_set'] = openaiSettings || openaiEnv
+  out['llm.openai.api_key_set'] = Boolean(settings['llm.openai.api_key'] || settings['llm.api_key'] || openaiEnv)
+  out['llm.gemini.api_key_set'] = Boolean(settings['llm.gemini.api_key'] || envTrim('GEMINI_API_KEY'))
+  out['llm.claude.api_key_set'] = Boolean(settings['llm.claude.api_key'] || envTrim('ANTHROPIC_API_KEY'))
+  out['llm.cursor.api_key_set'] = Boolean(settings['llm.cursor.api_key'] || envTrim('CURSOR_API_KEY'))
   out['llm.workers.api_token_set'] = Boolean(
-    settings['llm.workers.api_token'] || settings['llm.simple.api_token']
+    settings['llm.workers.api_token'] || settings['llm.simple.api_token'] || envTrim('CLOUDFLARE_API_TOKEN')
   )
   out['llm.simple.api_token_set'] = Boolean(
-    settings['llm.simple.api_token'] || settings['llm.workers.api_token']
+    settings['llm.simple.api_token'] || settings['llm.workers.api_token'] || envTrim('CLOUDFLARE_API_TOKEN')
+  )
+  out['llm.openai.credential_source'] = credentialSource(
+    settings['llm.openai.api_key'] || settings['llm.api_key'],
+    ['OPENAI_API_KEY', 'SAFORALL_API_KEY']
+  )
+  out['llm.gemini.credential_source'] = credentialSource(settings['llm.gemini.api_key'], ['GEMINI_API_KEY'])
+  out['llm.claude.credential_source'] = credentialSource(settings['llm.claude.api_key'], [
+    'ANTHROPIC_API_KEY'
+  ])
+  out['llm.cursor.credential_source'] = credentialSource(settings['llm.cursor.api_key'], ['CURSOR_API_KEY'])
+  out['llm.workers.credential_source'] = credentialSource(
+    settings['llm.workers.api_token'] || settings['llm.simple.api_token'],
+    ['CLOUDFLARE_API_TOKEN']
   )
   return out
 }
@@ -62,7 +91,12 @@ export function hasUsableLocalLlm(settings: SettingsMap = memory): boolean {
       settings['llm.api_key'] ||
       settings['llm.claude.api_key'] ||
       settings['llm.gemini.api_key'] ||
-      settings['llm.cursor.api_key']
+      settings['llm.cursor.api_key'] ||
+      settings['llm.workers.api_token'] ||
+      envTrim('OPENAI_API_KEY') ||
+      envTrim('GEMINI_API_KEY') ||
+      envTrim('ANTHROPIC_API_KEY') ||
+      envTrim('CURSOR_API_KEY')
   )
 }
 
@@ -128,7 +162,12 @@ export function getLocalSecret(key: SecretKey | string): string {
 }
 
 export function getOpenAiKey(): string {
-  return memory['llm.openai.api_key'] || memory['llm.api_key'] || ''
+  return (
+    memory['llm.openai.api_key'] ||
+    memory['llm.api_key'] ||
+    envTrim('OPENAI_API_KEY') ||
+    envTrim('SAFORALL_API_KEY')
+  )
 }
 
 export function getLocalSetting(key: string, fallback = ''): string {

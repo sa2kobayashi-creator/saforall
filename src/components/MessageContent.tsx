@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useMemo, type ReactNode } from 'react'
 import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
 import type { ChatMode } from '../types'
 import './MessageContent.css'
@@ -9,6 +9,36 @@ type Props = {
   mode: ChatMode
   autoApplied?: boolean
   onApplyCode: (code: string, pathHint?: string, language?: string) => void
+}
+
+const IMAGE_MD_RE = /!\[([^\]]*)\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+|[^)\s]+)\)/g
+
+function renderTextWithImages(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  let last = 0
+  let match: RegExpExecArray | null
+  const re = new RegExp(IMAGE_MD_RE.source, 'g')
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > last) {
+      nodes.push(text.slice(last, match.index))
+    }
+    const alt = match[1] || 'image'
+    const src = match[2].replace(/\s+/g, '')
+    nodes.push(
+      <img
+        key={`${keyPrefix}-img-${match.index}`}
+        className="message-inline-image"
+        src={src}
+        alt={alt}
+        loading="lazy"
+      />
+    )
+    last = match.index + match[0].length
+  }
+  if (last < text.length) {
+    nodes.push(text.slice(last))
+  }
+  return nodes
 }
 
 /**
@@ -31,7 +61,7 @@ export const MessageContent = memo(function MessageContent({
           if (part.text.trim() === '') return null
           return (
             <div key={`text-${index}`} className="message-text">
-              {part.text}
+              {renderTextWithImages(part.text, `t${index}`)}
             </div>
           )
         }

@@ -171,11 +171,16 @@ export function classifyTask(
     matches(text, [
       '説明して',
       '何をしている',
+      '何ですか',
+      'とは何',
+      'どういう意味',
       'なぜ',
       'explain',
       'what does',
+      'what is',
       'どう動く',
-      '仕組み'
+      '仕組み',
+      '教えて'
     ])
   ) {
     return 'explain'
@@ -203,6 +208,50 @@ export function classifyTask(
 
   if (message.trim().length < workersMax) return 'light_qa'
   return 'explain'
+}
+
+/** Agent mode should not run edit/verify tools for pure Q&A. */
+export function shouldAnswerWithoutTools(message: string): boolean {
+  const trimmed = message.trim()
+  if (!trimmed) return false
+  const lower = trimmed.toLowerCase()
+
+  // Apply / edit / implement intent must always use tools (even if the message is short
+  // or quotes a previous warning like "verify が完了していません").
+  if (
+    matches(lower, [
+      '直して',
+      'なおして',
+      '修正して',
+      '実装して',
+      '追加して',
+      '作って',
+      '適用',
+      '反映',
+      '書き込',
+      '保存して',
+      'fix',
+      'implement',
+      'apply',
+      'refactor',
+      'リファクタ',
+      'edit_file',
+      'run_shell',
+      'typecheck',
+      'テストして'
+    ])
+  ) {
+    return false
+  }
+
+  // Only skip tools for clear "what does this mean?" style questions.
+  const isMeaningQuestion =
+    /(何ですか|どういう意味|とは何|とは\b|what is|what does|why\s)/i.test(trimmed) ||
+    /(教えて|説明して)[。．]?$/.test(trimmed)
+  if (!isMeaningQuestion) return false
+
+  const task = classifyTask(trimmed, null)
+  return task === 'light_qa' || task === 'summarize' || task === 'explain' || trimmed.length <= 500
 }
 
 export function engineForTask(taskType: RouterTaskType, mode: string): 'openai' | 'gemini' | 'claude' {

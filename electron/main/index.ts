@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
-import { dirname, join } from 'path'
+import { dirname, join, basename, extname } from 'path'
 import { watch, type FSWatcher } from 'fs'
 import { mkdir, readFile, writeFile, readdir, stat, unlink, rename, rm } from 'fs/promises'
 import { apiRequest, checkHealth, streamChat, syncSettingsFromServer } from './api'
@@ -26,7 +26,7 @@ import {
   resizeTerminal,
   writeTerminal
 } from './terminal'
-import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch, listProjectRuleFiles, readProjectMemory, appendProjectMemory, saveProjectMemory, readProjectRuleFile, replaceInWorkspace } from './workspaceTools'
+import { loadProjectRules, searchFilesByName, suggestVerifyCommands, toolSearch, listProjectRuleFiles, readProjectMemory, appendProjectMemory, saveProjectMemory, readProjectRuleFile, replaceInWorkspace, listProjectSkills, readProjectSkill, formatSkillsCatalog } from './workspaceTools'
 import { createWorkspaceIgnoreMatcher, resolveIgnoreRoot } from './gitIgnore'
 import { loadWorkspaceExtensions, scaffoldExtensionFromMarketplace, setWorkspaceExtensionEnabled } from './extensions'
 import {
@@ -110,6 +110,18 @@ app.whenReady().then(() => {
     configureSettingsStore(join(userData, 'settings-cache.json'))
     void ensureSettingsLoaded()
   })
+  void import('./ai/credentialVault').then(async ({ configureCredentialVault, warmByokCache }) => {
+    const { safeStorage } = await import('electron')
+    configureCredentialVault({
+      filePath: join(userData, 'credentials-vault.json'),
+      wrap: {
+        isAvailable: () => safeStorage.isEncryptionAvailable(),
+        wrap: (plain) => safeStorage.encryptString(plain).toString('base64'),
+        unwrap: (wrapped) => safeStorage.decryptString(Buffer.from(wrapped, 'base64'))
+      }
+    })
+    void warmByokCache()
+  })
   void loadPersistedJobs()
   setupApplicationMenu('ja')
   createWindow()
@@ -150,6 +162,34 @@ ipcMain.handle('dialog:openDirectory', async () => {
 ipcMain.handle('fs:readFile', async (_event, filePath: string) => {
   const decoded = await readTextFile(filePath)
   return decoded.text
+})
+
+ipcMain.handle('fs:readFileBase64', async (_event, filePath: string) => {
+  const buf = await readFile(filePath)
+  const ext = extname(filePath).toLowerCase()
+  const mime =
+    ext === '.png'
+      ? 'image/png'
+      : ext === '.jpg' || ext === '.jpeg'
+        ? 'image/jpeg'
+        : ext === '.webp'
+          ? 'image/webp'
+          : ext === '.gif'
+            ? 'image/gif'
+            : 'application/octet-stream'
+  if (!mime.startsWith('image/')) {
+    throw new Error('画像ファイルのみ読み込めます')
+  }
+  if (buf.byteLength > 8 * 1024 * 1024) {
+    throw new Error('画像が大きすぎます（8MB 以下）')
+  }
+  return {
+    path: filePath,
+    name: basename(filePath),
+    mime,
+    data_base64: buf.toString('base64'),
+    bytes: buf.byteLength
+  }
 })
 
 ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {
@@ -355,7 +395,8 @@ ipcMain.handle('settings:putLocal', async (_event, settings: Record<string, stri
 ipcMain.handle('settings:hasLocalLlm', async () => {
   const { ensureSettingsLoaded, hasUsableLocalLlm } = await import('./settingsStore')
   await ensureSettingsLoaded()
-  return hasUsableLocalLlm()
+  const { hasUsableByokLlm } = await import('./ai/credentials')
+  return hasUsableLocalLlm() || hasUsableByokLlm()
 })
 
 ipcMain.handle('settings:syncFromServer', async () => syncSettingsFromServer())
@@ -380,6 +421,27 @@ ipcMain.handle('settings:exportFile', async () => {
   }
   await writeFile(picked.filePath, JSON.stringify(payload, null, 2), 'utf8')
   return { ok: true as const, path: picked.filePath }
+})
+
+ipcMain.handle('credentials:listByok', async () => {
+  const { handleListByok } = await import('./ai/byokIpc')
+  return handleListByok()
+})
+
+ipcMain.handle('credentials:saveByok', async (_event, input: unknown) => {
+  const { handleSaveByok } = await import('./ai/byokIpc')
+  const body = input && typeof input === 'object' ? (input as { providerId?: unknown; secret?: unknown }) : {}
+  return handleSaveByok(body)
+})
+
+ipcMain.handle('credentials:deleteByok', async (_event, providerId: unknown) => {
+  const { handleDeleteByok } = await import('./ai/byokIpc')
+  return handleDeleteByok(providerId)
+})
+
+ipcMain.handle('credentials:testByok', async (_event, providerId: unknown) => {
+  const { handleTestByok } = await import('./ai/byokIpc')
+  return handleTestByok(providerId)
 })
 
 ipcMain.handle('settings:importFile', async () => {
@@ -813,6 +875,11 @@ ipcMain.handle('rules:appendMemory', async (_event, cwd: string, note: string) =
 ipcMain.handle('rules:saveMemory', async (_event, cwd: string, content: string) =>
   saveProjectMemory(cwd, content)
 )
+ipcMain.handle('skills:list', async (_event, cwd: string) => listProjectSkills(cwd))
+ipcMain.handle('skills:read', async (_event, cwd: string, idOrPath: string) =>
+  readProjectSkill(cwd, idOrPath)
+)
+ipcMain.handle('skills:catalog', async (_event, cwd: string) => formatSkillsCatalog(cwd))
 
 ipcMain.handle('bitbucket:remote', async (_event, cwd: string) => {
   const info = await detectBitbucketRemote(cwd)

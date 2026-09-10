@@ -13,16 +13,23 @@ async function read(rel) {
 
 test('toolAgent supports Anthropic Claude tool_use path', async () => {
   const src = await read('electron/main/toolAgent.ts')
-  assert.match(src, /function callAnthropicMessages/)
   assert.match(src, /function callAgentLlm/)
-  assert.match(src, /toAnthropicTools/)
-  assert.match(src, /anthropic-version/)
-  assert.match(src, /tool_use/)
+  assert.match(src, /executeAiWithTools/)
+  assert.doesNotMatch(src, /fetch\(/)
+  assert.doesNotMatch(src, /api\.anthropic\.com/)
+  assert.doesNotMatch(src, /chat\/completions/)
   assert.doesNotMatch(
     src,
     /engine === 'workers' \|\| engine === 'gemini' \|\| engine === 'claude' \|\| engine === 'cursor'/
   )
   assert.match(src, /engine === 'claude' \|\| u\.includes\('anthropic\.com'\)/)
+  const claudeTools = await read('electron/main/ai/adapters/claudeTools.ts')
+  assert.match(claudeTools, /function claudeMessagesWithTools/)
+  assert.match(claudeTools, /toAnthropicTools/)
+  assert.match(claudeTools, /anthropic-version/)
+  assert.match(claudeTools, /tool_use/)
+  const messages = await read('electron/main/ai/agentMessages.ts')
+  assert.match(messages, /tool_result/)
 })
 
 test('api allows Claude tool agent', async () => {

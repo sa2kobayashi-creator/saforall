@@ -37,8 +37,18 @@ npm run pack
 ## 注意
 
 - エンドユーザー向け配布では **XAMPP は不要**です。設定に API キーを入れればローカルモードで Chat / Tab / Agent が動きます。
+- インストール版は既定で PHP（`localhost:8081`）を探しません。開発用 XAMPP を使いたい場合は環境変数 `SAFORALL_API_BASE_URL=http://localhost:8081/saforall/api` を設定してください。
 - 開発時のみ任意で `server/` を XAMPP DocumentRoot に置けます。
-- `node-pty` は native モジュールのため、ビルド環境の Electron 向け rebuild が必要な場合があります（実行中の Electron を止めてから pack）。
+- `node-pty` / `@cursor/sdk` は native・実行ファイルのため `asarUnpack` 対象です。
+- **バージョンを上げてから `dist` する**と、古い Setup.exe と区別できます（例: `0.1.1`）。
+
+## トラブル: インストール版だけチャットが遅い／動かない
+
+よくある原因:
+
+1. **古い Setup** — `npm run dev` は最新ソース、Setup は以前のビルド。`npm run dist` で作り直す。
+2. **API キー未設定** — インストール版の Settings は別途キー保存が必要（userData）。
+3. **Cursor 実行場所が Cloud** — GitHub SCM 権限エラーになる。Settings で Local にして**保存**。
 
 ## トラブル: app.asar が削除できない
 

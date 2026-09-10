@@ -36,6 +36,8 @@ server/config/database.php
 # Test / coverage
 coverage/
 
-# Local workspace data
-.saforall/
+# Local workspace data (keep shipped skills templates)
+.saforall/*
+!.saforall/skills/
+!.saforall/skills/**
 *.local

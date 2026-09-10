@@ -3,13 +3,15 @@ import {
   createSession,
   deleteSession,
   listMessages,
-  listSessions
+  listSessions,
+  truncateMessages
 } from './chatStore'
 import { getLocalUsageSummary } from './usageStore'
 import { getFeedbackSummary } from './feedbackStore'
 import { upsertWorkspaceByPath } from './workspaceStore'
 import {
   ensureSettingsLoaded,
+  getLocalSetting,
   getLocalSettingsMasked,
   mergeLocalSettings,
   markLocalSettingsClean
@@ -121,6 +123,35 @@ export async function localApiRequest<T = unknown>(
       return ok({ messages }) as ApiResponse<T>
     }
 
+    const truncateMatch = pathname.match(/^\/chat\/sessions\/(\d+)\/messages\/truncate$/)
+    if (truncateMatch && m === 'POST') {
+      const id = Number(truncateMatch[1])
+      const payload =
+        typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {}
+      const messageId = Number(payload.message_id)
+      if (!Number.isFinite(messageId) || messageId <= 0) {
+        return fail('INVALID_BODY', 'message_id is required') as ApiResponse<T>
+      }
+      const modeRaw = typeof payload.mode === 'string' ? payload.mode : 'deleteFrom'
+      const mode = modeRaw === 'keepThrough' ? 'keepThrough' : 'deleteFrom'
+      const content = typeof payload.content === 'string' ? payload.content : undefined
+      try {
+        const result = await truncateMessages({
+          sessionId: id,
+          messageId,
+          content,
+          mode
+        })
+        return ok(result) as ApiResponse<T>
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes('not found')) {
+          return fail('NOT_FOUND', message) as ApiResponse<T>
+        }
+        return fail('INVALID_BODY', message) as ApiResponse<T>
+      }
+    }
+
     if (pathname === '/ai/usage' && m === 'GET') {
       const summary = await getLocalUsageSummary()
       const feedback = await getFeedbackSummary(7)
@@ -131,8 +162,67 @@ export async function localApiRequest<T = unknown>(
         totalSpent += row.spent
         totalLimit += row.limit
       }
+      const routerMonthRaw = (query.get('month') || '').trim()
+      const routerMonth = /^\d{4}-\d{2}$/.test(routerMonthRaw)
+        ? routerMonthRaw
+        : summary.month
+      const {
+        listPersistedUsageEvents,
+        usageEventsToRecentRows,
+        billingModeForUi
+      } = await import('./ai/usage')
+      const { resolveCredential } = await import('./ai/credentials')
+      const { parseProviderId } = await import('./ai/types')
+      const allEvents = await listPersistedUsageEvents()
+      const usageEvents = allEvents.filter((event) =>
+        String(event.timestamp || '').startsWith(routerMonth)
+      )
+      const recent = usageEventsToRecentRows(usageEvents, 200).map((row) => {
+        if (row.billingMode) return row
+        const id = parseProviderId(row.engine)
+        if (!id || id === 'cursor') return row
+        return {
+          ...row,
+          billingMode: billingModeForUi(resolveCredential(id).billingMode)
+        }
+      })
+      const byEngineMap = new Map<string, { engine: string; count: number; estimated_usd: number }>()
+      for (const event of usageEvents) {
+        const cur = byEngineMap.get(event.provider) ?? {
+          engine: event.provider,
+          count: 0,
+          estimated_usd: 0
+        }
+        cur.count += 1
+        cur.estimated_usd += Number(event.estimatedCost) || 0
+        byEngineMap.set(event.provider, cur)
+      }
+      const router = {
+        total: usageEvents.length,
+        fallbacks: 0,
+        fallback_rate: 0,
+        by_engine: Array.from(byEngineMap.values()).map((row) => ({
+          ...row,
+          estimated_usd: Math.round(row.estimated_usd * 10000) / 10000
+        })),
+        by_task: [] as Array<{ task_type: string; engine: string; count: number }>,
+        recent,
+        month: routerMonth,
+        recent_total: usageEvents.length,
+        hints:
+          usageEvents.length === 0
+            ? [
+                {
+                  code: 'no_logs',
+                  level: 'info',
+                  text: 'まだ Usage イベントがありません。チャットすると記録されます。'
+                }
+              ]
+            : []
+      }
       return ok({
         month: summary.month,
+        router_month: routerMonth,
         usage,
         models: [],
         total: {
@@ -141,8 +231,23 @@ export async function localApiRequest<T = unknown>(
           remaining: Math.max(0, totalLimit - totalSpent),
           requests: 0
         },
+        router,
         feedback,
-        note: 'ローカル usage + 直近7日の検索/Agentフィードバック'
+        claude_prepaid: (() => {
+          const raw = getLocalSetting('llm.claude.prepaid_remaining_usd', '')
+          const warnRaw = getLocalSetting('llm.claude.prepaid_warn_usd', '1')
+          if (raw.trim() === '') {
+            return { tracking: false, remaining: null, warn_at: Number(warnRaw) || 1 }
+          }
+          const remaining = Number(raw)
+          return {
+            tracking: true,
+            remaining: Number.isFinite(remaining) ? remaining : 0,
+            warn_at: Number(warnRaw) || 1
+          }
+        })(),
+        note:
+          'ローカル usage + 直近7日の検索/Agentフィードバック。Claude の「Anthropic 残高」は手入力のチャージ残です（公式残高APIなし）。'
       }) as ApiResponse<T>
     }
 

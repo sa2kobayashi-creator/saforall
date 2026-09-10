@@ -22,6 +22,7 @@ if ($path === '/' || $path === '/api') {
             'GET|POST /api/chat/sessions',
             'GET|PATCH|DELETE /api/chat/sessions/{id}',
             'GET|POST /api/chat/sessions/{id}/messages',
+            'POST /api/chat/sessions/{id}/messages/truncate',
             'POST /api/ai/chat',
             'POST /api/ai/chat/stream',
             'POST /api/ai/route',
@@ -58,6 +59,11 @@ if ($path === '/api/chat/sessions') {
 if (preg_match('#^/api/chat/sessions/(\d+)$#', $path, $matches) === 1) {
     $sessionId = (int) $matches[1];
     require dirname(__DIR__) . '/api/chat_session.php';
+}
+
+if (preg_match('#^/api/chat/sessions/(\d+)/messages/truncate$#', $path, $matches) === 1) {
+    $sessionId = (int) $matches[1];
+    require dirname(__DIR__) . '/api/chat_messages_truncate.php';
 }
 
 if (preg_match('#^/api/chat/sessions/(\d+)/messages$#', $path, $matches) === 1) {

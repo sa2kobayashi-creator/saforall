@@ -1934,7 +1934,7 @@ export default function App() {
                     </>
                   )}
                 </div>
-                {composerOpen && applyQueue.length > 1 && (
+                {composerOpen && applyQueue.length >= 1 && (
                   <ComposerPanel
                     proposals={applyQueue}
                     activeIndex={Math.min(reviewIndex, Math.max(0, applyQueue.length - 1))}

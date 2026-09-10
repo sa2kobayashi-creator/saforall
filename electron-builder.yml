@@ -12,7 +12,11 @@ files:
   - package.json
 asar: true
 asarUnpack:
+  # Native / executable bits that must be spawned from a real path, not asar.
   - node_modules/node-pty/**/*
+  - node_modules/@cursor/sdk/**/*
+  - node_modules/@cursor/sdk-win32-x64/**/*
+  - node_modules/@modelcontextprotocol/server-filesystem/**/*
 win:
   # Unsigned builds for local/dev distribution (SmartScreen may warn).
   # Set CSC_LINK + CSC_KEY_PASSWORD and flip to true for production signing.
