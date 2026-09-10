@@ -3,6 +3,8 @@ import { estimateCostUsd } from './cost'
 import { newRequestId, type BillingMode, type ProviderId } from './types'
 export {
   billingModeForUi,
+  credentialIdForUi,
+  formatCredentialIdShort,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   type UsageRecentRow

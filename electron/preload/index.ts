@@ -564,8 +564,11 @@ const api = {
     ok: boolean
     credentials: Array<{
       providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      credentialId: string | null
+      billingMode: 'BYOK' | null
       configured: boolean
       fingerprint: string
+      createdAt: string | null
       lastVerifiedAt: string | null
       lastTestOk: boolean | null
       status: 'not_configured' | 'saved' | 'connected' | 'failed'
@@ -578,8 +581,11 @@ const api = {
     ok: boolean
     status?: {
       providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      credentialId: string | null
+      billingMode: 'BYOK' | null
       configured: boolean
       fingerprint: string
+      createdAt: string | null
       lastVerifiedAt: string | null
       lastTestOk: boolean | null
       status: 'not_configured' | 'saved' | 'connected' | 'failed'
@@ -592,8 +598,11 @@ const api = {
     ok: boolean
     status?: {
       providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      credentialId: string | null
+      billingMode: 'BYOK' | null
       configured: boolean
       fingerprint: string
+      createdAt: string | null
       lastVerifiedAt: string | null
       lastTestOk: boolean | null
       status: 'not_configured' | 'saved' | 'connected' | 'failed'
@@ -607,8 +616,11 @@ const api = {
     message?: string
     status?: {
       providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      credentialId: string | null
+      billingMode: 'BYOK' | null
       configured: boolean
       fingerprint: string
+      createdAt: string | null
       lastVerifiedAt: string | null
       lastTestOk: boolean | null
       status: 'not_configured' | 'saved' | 'connected' | 'failed'

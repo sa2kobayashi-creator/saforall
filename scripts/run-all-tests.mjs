@@ -64,7 +64,9 @@ const tests = [
   'scripts/ai-foundation.test.mjs',
   'scripts/ai-tool-adapter.test.mjs',
   'scripts/ai-byok.test.mjs',
-  'scripts/ai-byok-phase-2b2.test.mjs'
+  'scripts/ai-byok-phase-2b2.test.mjs',
+  'scripts/ai-byok-phase-2b31.test.mjs',
+  'scripts/ai-usage-credential-ui.test.mjs'
 ]
 
 const result = spawnSync(process.execPath, ['--test', ...tests], {

@@ -19,12 +19,24 @@ import {
 
 export { LOCAL_BYOK_OWNER_ID }
 
+/**
+ * BYOK UI status (existing enum — keep; do not add a second status enum).
+ * Mapping to Phase wording:
+ * - not_configured ≈ not configured
+ * - saved ≈ configured, not yet verified
+ * - connected ≈ verified OK
+ * - failed ≈ invalid / error after health check
+ */
 export type ByokUiStatus = 'not_configured' | 'saved' | 'connected' | 'failed'
 
 export type ByokPublicStatus = {
   providerId: LlmProviderId
+  /** Stable vault id (e.g. byok_openai_…). Never the API key. */
+  credentialId: string | null
+  billingMode: 'BYOK' | null
   configured: boolean
   fingerprint: string
+  createdAt: string | null
   lastVerifiedAt: string | null
   lastTestOk: boolean | null
   status: ByokUiStatus
@@ -85,8 +97,11 @@ function statusFromFields(fields: ByokPublicFields, providerId: LlmProviderId): 
   }
   return {
     providerId,
+    credentialId: fields.credentialId,
+    billingMode: fields.billingMode,
     configured: fields.configured,
     fingerprint: fields.fingerprint,
+    createdAt: fields.createdAt,
     lastVerifiedAt: fields.lastVerifiedAt,
     lastTestOk: fields.lastTestOk,
     status

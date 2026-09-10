@@ -63,8 +63,12 @@ export type ByokStoredSecret = {
 
 export type ByokPublicFields = {
   providerId: string
+  /** Vault record id when configured (never derived from the API key). */
+  credentialId: string | null
+  billingMode: 'BYOK' | null
   configured: boolean
   fingerprint: string
+  createdAt: string | null
   lastVerifiedAt: string | null
   lastTestOk: boolean | null
 }
@@ -513,16 +517,22 @@ export function publicFieldsFromRecord(
   if (!record || record.revokedAt) {
     return {
       providerId,
+      credentialId: null,
+      billingMode: null,
       configured: false,
       fingerprint: '',
+      createdAt: null,
       lastVerifiedAt: null,
       lastTestOk: null
     }
   }
   return {
     providerId,
+    credentialId: record.id,
+    billingMode: 'BYOK',
     configured: true,
     fingerprint: record.fingerprint,
+    createdAt: record.createdAt,
     lastVerifiedAt: record.lastVerifiedAt,
     lastTestOk: record.lastTestOk
   }

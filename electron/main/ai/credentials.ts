@@ -1,6 +1,6 @@
 import { getLocalSetting } from '../settingsStore'
 import { pickDevelopmentSecret } from './credentialLogic'
-import { hasByokRecord, loadByokSecretSync } from './credentialVault'
+import { loadByokSecretSync } from './credentialVault'
 import {
   LLM_PROVIDER_IDS,
   PROVIDER_NAMES,
@@ -193,7 +193,8 @@ export function requireCredential(providerId: ProviderId): Credential {
 }
 
 export function hasUsableByokLlm(): boolean {
-  return LLM_PROVIDER_IDS.some((id) => hasByokRecord(id) || Boolean(loadByokSecretSync(id)))
+  // Only when vault decrypt succeeds (record presence alone is not enough).
+  return LLM_PROVIDER_IDS.some((id) => Boolean(loadByokSecretSync(id)))
 }
 
 export function credentialStatus(

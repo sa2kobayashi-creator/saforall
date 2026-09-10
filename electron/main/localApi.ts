@@ -177,6 +177,7 @@ export async function localApiRequest<T = unknown>(
       const usageEvents = allEvents.filter((event) =>
         String(event.timestamp || '').startsWith(routerMonth)
       )
+      // credentialId comes only from UsageEvent; never invent from current vault.
       const recent = usageEventsToRecentRows(usageEvents, 200).map((row) => {
         if (row.billingMode) return row
         const id = parseProviderId(row.engine)

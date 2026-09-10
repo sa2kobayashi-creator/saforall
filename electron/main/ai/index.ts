@@ -36,6 +36,8 @@ export {
   listUsageEvents,
   listPersistedUsageEvents,
   billingModeForUi,
+  credentialIdForUi,
+  formatCredentialIdShort,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   resetUsageForTests,

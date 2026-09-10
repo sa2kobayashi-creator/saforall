@@ -60,8 +60,11 @@ type SettingsMap = Record<string, string | boolean>
 type ByokProviderId = 'openai' | 'claude' | 'gemini' | 'workers'
 type ByokPublicStatus = {
   providerId: ByokProviderId
+  credentialId: string | null
+  billingMode: 'BYOK' | null
   configured: boolean
   fingerprint: string
+  createdAt: string | null
   lastVerifiedAt: string | null
   lastTestOk: boolean | null
   status: 'not_configured' | 'saved' | 'connected' | 'failed'
@@ -77,8 +80,11 @@ const BYOK_PROVIDERS: Array<{ id: ByokProviderId; label: string }> = [
 function emptyByokStatus(id: ByokProviderId): ByokPublicStatus {
   return {
     providerId: id,
+    credentialId: null,
+    billingMode: null,
     configured: false,
     fingerprint: '',
+    createdAt: null,
     lastVerifiedAt: null,
     lastTestOk: null,
     status: 'not_configured'

@@ -63,6 +63,8 @@ type RouteRecent = {
   created_at: string
   /** From Electron usage events. BYOK or DEVELOPMENT when known. */
   billingMode?: 'BYOK' | 'DEVELOPMENT' | null
+  /** From Electron usage events only. Never invent; never a secret. */
+  credentialId?: string | null
 }
 
 type RouterInsight = {
@@ -147,6 +149,15 @@ function formatBillingMode(mode: RouteRecent['billingMode']): string {
   return '—'
 }
 
+/** Shorten credentialId for table; full value in title. Never show secrets. */
+function formatCredentialId(id: RouteRecent['credentialId']): string {
+  const raw = String(id || '').trim()
+  if (!raw) return '—'
+  if (raw.startsWith('dev:')) return raw
+  if (raw.length <= 18) return raw
+  return `${raw.slice(0, 10)}…${raw.slice(-4)}`
+}
+
 const LLM_ENGINES = new Set(['openai', 'gemini', 'claude', 'workers'])
 const RECENT_PAGE_SIZE = 20
 
@@ -162,7 +173,10 @@ function listRecentMonthOptions(now = new Date(), count = 12): string[] {
   return months
 }
 
-/** Fill missing billingMode from BYOK list when Main enrichment is absent. */
+/**
+ * Fill missing billingMode from BYOK list when Main enrichment is absent.
+ * Never invent or overwrite credentialId (event-backed only).
+ */
 async function attachBillingModes(payload: UsagePayload): Promise<UsagePayload> {
   const recent = payload.router?.recent
   if (!recent?.length) return payload
@@ -197,6 +211,7 @@ async function attachBillingModes(payload: UsagePayload): Promise<UsagePayload> 
             return {
               ...row,
               billingMode: byokEngines.has(engine) ? 'BYOK' : 'DEVELOPMENT'
+              // credentialId unchanged (spread row); never invent from vault
             }
           })
         }
@@ -663,6 +678,7 @@ export function UsagePanel({
                           <th>エンジン</th>
                           <th>タスク</th>
                           <th>課金</th>
+                          <th>Credential</th>
                           <th>est</th>
                           <th>フォールバック</th>
                         </tr>
@@ -679,6 +695,12 @@ export function UsagePanel({
                             </td>
                             <td title={row.model ?? ''}>{row.task_type}</td>
                             <td>{formatBillingMode(row.billingMode)}</td>
+                            <td
+                              className="usage-model-id"
+                              title={String(row.credentialId || '').trim() || undefined}
+                            >
+                              {formatCredentialId(row.credentialId)}
+                            </td>
                             <td>{formatUsd(row.estimated_usd)}</td>
                             <td className="usage-model-id" title={row.fallback_reason ?? ''}>
                               {row.fallback_from

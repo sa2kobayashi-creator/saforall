@@ -6,6 +6,7 @@ export type UsageEventLike = {
   timestamp: string
   status?: string
   billingMode?: string | null
+  credentialId?: string | null
 }
 
 /** BYOK / DEVELOPMENT only for Usage UI. Never expose credentials. */
@@ -14,6 +15,21 @@ export function billingModeForUi(
 ): 'BYOK' | 'DEVELOPMENT' | null {
   if (mode === 'BYOK' || mode === 'DEVELOPMENT') return mode
   return null
+}
+
+/** Pass through non-empty credentialId only (never invent; never secret). */
+export function credentialIdForUi(id: string | null | undefined): string | null {
+  const raw = String(id || '').trim()
+  return raw || null
+}
+
+/** Short label for Credential column. Full id stays in title attribute. */
+export function formatCredentialIdShort(id: string | null | undefined): string {
+  const raw = credentialIdForUi(id)
+  if (!raw) return '—'
+  if (raw.startsWith('dev:')) return raw
+  if (raw.length <= 18) return raw
+  return `${raw.slice(0, 10)}…${raw.slice(-4)}`
 }
 
 export type UsageRecentRow = {
@@ -27,6 +43,7 @@ export type UsageRecentRow = {
   fallback_reason: string | null
   created_at: string
   billingMode: 'BYOK' | 'DEVELOPMENT' | null
+  credentialId: string | null
 }
 
 export function usageEventsToRecentRows(events: UsageEventLike[], limit = 30): UsageRecentRow[] {
@@ -40,21 +57,29 @@ export function usageEventsToRecentRows(events: UsageEventLike[], limit = 30): U
     fallback_from: null,
     fallback_reason: null,
     created_at: event.timestamp,
-    billingMode: billingModeForUi(event.billingMode)
+    billingMode: billingModeForUi(event.billingMode),
+    credentialId: credentialIdForUi(event.credentialId)
   }))
 }
 
-/** Attach billingMode onto route-log recent rows using local usage events. */
+/** Attach billingMode (+ credentialId from matched events) onto route-log recent rows. */
 export function enrichRecentWithBillingMode<T extends { engine: string; created_at: string }>(
   recent: T[],
   events: UsageEventLike[],
   fallbackForEngine?: (engine: string) => 'BYOK' | 'DEVELOPMENT' | null
-): Array<T & { billingMode: 'BYOK' | 'DEVELOPMENT' | null }> {
+): Array<T & { billingMode: 'BYOK' | 'DEVELOPMENT' | null; credentialId: string | null }> {
   return recent.map((row) => {
-    const existing = billingModeForUi(
+    const existingMode = billingModeForUi(
       'billingMode' in row ? String((row as { billingMode?: string | null }).billingMode ?? '') : null
     )
-    if (existing) return { ...row, billingMode: existing }
+    const existingCred = credentialIdForUi(
+      'credentialId' in row
+        ? String((row as { credentialId?: string | null }).credentialId ?? '')
+        : null
+    )
+    if (existingMode) {
+      return { ...row, billingMode: existingMode, credentialId: existingCred }
+    }
 
     const rowTs = Date.parse(normalizeTimestamp(row.created_at))
     let best: UsageEventLike | null = null
@@ -75,10 +100,17 @@ export function enrichRecentWithBillingMode<T extends { engine: string; created_
       }
     }
     const fromEvent = billingModeForUi(best?.billingMode)
-    if (fromEvent) return { ...row, billingMode: fromEvent }
+    if (fromEvent) {
+      return {
+        ...row,
+        billingMode: fromEvent,
+        credentialId: credentialIdForUi(best?.credentialId) ?? existingCred
+      }
+    }
 
     const fromResolver = fallbackForEngine ? billingModeForUi(fallbackForEngine(row.engine)) : null
-    return { ...row, billingMode: fromResolver }
+    // Do not invent credentialId from current resolver / vault state.
+    return { ...row, billingMode: fromResolver, credentialId: existingCred }
   })
 }
 

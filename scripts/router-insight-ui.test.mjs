@@ -59,7 +59,8 @@ test('Usage recent rows expose BYOK / DEVELOPMENT billingMode', async () => {
       estimatedCost: 0.001,
       timestamp: '2026-09-10T12:00:00.000Z',
       status: 'ok',
-      billingMode: 'BYOK'
+      billingMode: 'BYOK',
+      credentialId: 'byok_openai_abc123def456'
     },
     {
       provider: 'claude',
@@ -67,12 +68,15 @@ test('Usage recent rows expose BYOK / DEVELOPMENT billingMode', async () => {
       estimatedCost: 0.002,
       timestamp: '2026-09-10T12:01:00.000Z',
       status: 'ok',
-      billingMode: 'DEVELOPMENT'
+      billingMode: 'DEVELOPMENT',
+      credentialId: 'dev:claude'
     }
   ]
   const rows = usageEventsToRecentRows(events, 12)
   assert.equal(rows[0]?.billingMode, 'BYOK')
+  assert.equal(rows[0]?.credentialId, 'byok_openai_abc123def456')
   assert.equal(rows[1]?.billingMode, 'DEVELOPMENT')
+  assert.equal(rows[1]?.credentialId, 'dev:claude')
   assert.doesNotMatch(JSON.stringify(rows), /sk-|secret|apiKey/i)
 
   const enriched = enrichRecentWithBillingMode(
@@ -80,12 +84,14 @@ test('Usage recent rows expose BYOK / DEVELOPMENT billingMode', async () => {
     events
   )
   assert.equal(enriched[0]?.billingMode, 'BYOK')
+  assert.equal(enriched[0]?.credentialId, 'byok_openai_abc123def456')
 
   const mysqlStyle = enrichRecentWithBillingMode(
     [{ id: 10, engine: 'claude', created_at: '2026-09-10 12:01:10' }],
     events
   )
   assert.equal(mysqlStyle[0]?.billingMode, 'DEVELOPMENT')
+  assert.equal(mysqlStyle[0]?.credentialId, 'dev:claude')
 
   const viaFallback = enrichRecentWithBillingMode(
     [{ id: 11, engine: 'openai', created_at: '2026-09-10 16:46:00' }],
@@ -93,6 +99,7 @@ test('Usage recent rows expose BYOK / DEVELOPMENT billingMode', async () => {
     (engine) => (engine === 'openai' ? 'BYOK' : 'DEVELOPMENT')
   )
   assert.equal(viaFallback[0]?.billingMode, 'BYOK')
+  assert.equal(viaFallback[0]?.credentialId, null)
 })
 
 test('UsagePanel recent history supports month filter and show more', async () => {
@@ -128,8 +135,10 @@ test('local /ai/usage wires router.recent billingMode; UI labels are fixed', asy
   assert.match(api, /enrichRecentWithBillingMode/)
   assert.match(api, /resolveCredential\(id\)\.billingMode/)
   assert.match(ui, /<th>課金<\/th>/)
+  assert.match(ui, /<th>Credential<\/th>/)
   assert.match(ui, /return 'BYOK'/)
   assert.match(ui, /return 'DEVELOPMENT'/)
+  assert.match(ui, /formatCredentialId/)
 })
 
 test('router hint dismiss helpers are month-scoped', async () => {
