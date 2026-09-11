@@ -146,7 +146,7 @@ export { AIError } from ${spec('electron/main/ai/errors.ts')}
             if (args.path === 'virtual:settingsStore') {
               return {
                 contents:
-                  'export function getLocalSetting(){return ""}\nexport async function ensureSettingsLoaded(){}',
+                  "export function getLocalSetting(key, fb=''){if(key==='failover.enabled')return 'true';return typeof fb==='string'?fb:''}\nexport async function ensureSettingsLoaded(){}",
                 loader: 'js'
               }
             }
@@ -692,8 +692,12 @@ test('R/S source: Cursor untouched; credit auto-fallback stays outside router Fa
   assert.match(router, /executeWithFailover/)
   assert.match(router, /fallbacksForAsk/)
   assert.match(router, /fallbacksForAgent/)
-  assert.match(router, /enabled:\s*true/)
-  assert.match(router, /maxFailoverAttempts:\s*1/)
+  assert.match(router, /isRouterFailoverEnabled|parseFailoverEnabled|failover\.enabled/)
+  // Phase 2-C-4: max attempts come from Settings (unset → 1), not a hard-coded literal.
+  assert.match(router, /routerMaxFailoverAttempts|parseFailoverMaxAttempts|failover\.max_attempts/)
+  assert.match(router, /maxFailoverAttempts:\s*routerMaxFailoverAttempts\(/)
+  assert.doesNotMatch(router, /maxFailoverAttempts:\s*1\b/)
+  assert.doesNotMatch(router, /enabled:\s*true/)
   assert.doesNotMatch(router, /credentialOverride/)
   assert.doesNotMatch(router, /provider\.api_key/)
   assert.doesNotMatch(router, /\bapiKey\s*:/)

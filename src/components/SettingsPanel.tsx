@@ -91,6 +91,25 @@ function emptyByokStatus(id: ByokProviderId): ByokPublicStatus {
   }
 }
 
+/** Phase 2-C-3: unset / unknown → OFF. Mirrors parseFailoverEnabled in failover.ts. */
+function parseFailoverEnabledSetting(raw: string | boolean | null | undefined): boolean {
+  if (raw === true) return true
+  const value = String(raw ?? '').trim().toLowerCase()
+  return value === 'true' || value === '1' || value === 'yes' || value === 'on'
+}
+
+/** Phase 2-C-4: unset / invalid → 1; Ask UI max 3. */
+function parseFailoverMaxAttemptsSetting(
+  raw: string | number | boolean | null | undefined
+): number {
+  if (raw === null || raw === undefined || raw === '') return 1
+  const n = typeof raw === 'number' ? raw : typeof raw === 'boolean' ? Number(raw) : Number(String(raw).trim())
+  if (!Number.isFinite(n)) return 1
+  const floored = Math.floor(n)
+  if (floored < 1) return 1
+  return Math.min(floored, 3)
+}
+
 function byokStatusLabel(status: ByokPublicStatus['status']): string {
   if (status === 'connected') return 'Connected'
   if (status === 'failed') return 'Failed'
@@ -171,6 +190,8 @@ export function SettingsPanel({
   const [autoSave, setAutoSave] = useState(true)
   const [autoSaveDelay, setAutoSaveDelay] = useState(1500)
   const [settingsTab, setSettingsTab] = useState<'keys' | 'auto' | 'budget' | 'advanced'>('keys')
+  const [failoverEnabled, setFailoverEnabled] = useState(false)
+  const [failoverMaxAttempts, setFailoverMaxAttempts] = useState(1)
   const [byokRows, setByokRows] = useState<ByokPublicStatus[]>(
     BYOK_PROVIDERS.map((row) => emptyByokStatus(row.id))
   )
@@ -283,6 +304,10 @@ export function SettingsPanel({
         setEnabledCategories(
           parseEnabledCategories(settings['router.enabled_categories'] ?? DEFAULT_ENABLED_CATEGORIES)
         )
+        // Phase 2-C-3: unset → OFF
+        setFailoverEnabled(parseFailoverEnabledSetting(settings['failover.enabled']))
+        // Phase 2-C-4: unset → 1
+        setFailoverMaxAttempts(parseFailoverMaxAttemptsSetting(settings['failover.max_attempts']))
         if (typeof settings['app.locale'] === 'string') {
           setLocale(parseLocale(settings['app.locale']))
         }
@@ -516,6 +541,8 @@ export function SettingsPanel({
       'router.enabled_categories': JSON.stringify(enabledCategories),
       'router.profile': routerProfile,
       'router.auto_policy': JSON.stringify(routerPolicy),
+      'failover.enabled': failoverEnabled ? 'true' : 'false',
+      'failover.max_attempts': String(parseFailoverMaxAttemptsSetting(failoverMaxAttempts)),
       'llm.openai.base_url': openaiBaseUrl.trim(),
       'llm.openai.models': JSON.stringify(openaiModels),
       'llm.openai.model': preferred('openai', openaiModels, DEFAULT_LLM_MODEL),
@@ -752,6 +779,32 @@ export function SettingsPanel({
           </div>
           <p className="settings-hint">
             チャットで「自動」を選んだときの振り分け方針です。標準は「バランス（おすすめ）」＝安価分散の改善版です。
+          </p>
+
+          <label className="router-engine-item">
+            <span>Failover（Provider 障害時に切替）</span>
+            <input
+              type="checkbox"
+              checked={failoverEnabled}
+              onChange={() => setFailoverEnabled((current) => !current)}
+            />
+          </label>
+          <label>
+            最大 Failover 回数（切替回数）
+            <input
+              type="number"
+              min={1}
+              max={3}
+              value={failoverMaxAttempts}
+              disabled={!failoverEnabled}
+              onChange={(event) => {
+                setFailoverMaxAttempts(parseFailoverMaxAttemptsSetting(event.target.value))
+              }}
+            />
+          </label>
+          <p className="settings-hint">
+            未設定時は Failover OFF・回数 1 です。Ask は最大 3 回、Agent は候補が OpenAI/Claude
+            のみのため最大 1 回です。クレジット不足の切替は従来の Credit fallback が担当します。
           </p>
 
           <label>

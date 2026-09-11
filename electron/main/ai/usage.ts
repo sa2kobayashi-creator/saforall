@@ -5,9 +5,12 @@ export {
   billingModeForUi,
   credentialIdForUi,
   formatCredentialIdShort,
+  failoverForUi,
+  formatRouterFailoverLabel,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
-  type UsageRecentRow
+  type UsageRecentRow,
+  type UsageFailoverUi
 } from './usageBillingUi'
 
 export type UsageEventStatus = 'ok' | 'error'

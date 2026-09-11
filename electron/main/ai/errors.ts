@@ -157,7 +157,7 @@ export function throwAgentUnsupported(providerId: string): never {
 
 /**
  * Legacy code-level check. Prefer isFailoverEligibleError(error) from failover.ts.
- * Kept in sync with Phase 2-C-1 eligibility (AUTH / RATE / PROVIDER / NETWORK / TIMEOUT / CREDIT).
+ * Phase 2-C-3: INSUFFICIENT_CREDIT is not a Router Failover candidate (api credit layer).
  */
 export function isFailoverCandidate(code: AIErrorCode): boolean {
   return (
@@ -165,8 +165,7 @@ export function isFailoverCandidate(code: AIErrorCode): boolean {
     code === 'RATE_LIMIT' ||
     code === 'PROVIDER_ERROR' ||
     code === 'NETWORK_ERROR' ||
-    code === 'TIMEOUT' ||
-    code === 'INSUFFICIENT_CREDIT'
+    code === 'TIMEOUT'
   )
 }
 

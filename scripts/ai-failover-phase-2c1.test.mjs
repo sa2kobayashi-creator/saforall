@@ -200,7 +200,7 @@ test('H: non-eligible errors do not failover', async () => {
     })
   }
   const context = createFailoverContext(config)
-  for (const code of ['MODEL_NOT_FOUND', 'AGENT_UNSUPPORTED', 'UNKNOWN']) {
+  for (const code of ['MODEL_NOT_FOUND', 'AGENT_UNSUPPORTED', 'UNKNOWN', 'INSUFFICIENT_CREDIT']) {
     const error = new AIError(code, `err-${code}`, { providerId: 'openai' })
     assert.equal(isFailoverEligibleError(error), false)
     const decision = shouldFailover(error, context, config)

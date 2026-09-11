@@ -1,4 +1,11 @@
 /** Minimal event shape for Usage UI mapping (no secrets). */
+export type UsageFailoverUi = {
+  primaryProvider: string
+  fallbackProvider?: string | null
+  reason?: string | null
+  attempt?: number
+}
+
 export type UsageEventLike = {
   provider: string
   model: string
@@ -7,6 +14,8 @@ export type UsageEventLike = {
   status?: string
   billingMode?: string | null
   credentialId?: string | null
+  /** Router Failover trail only (providers / reason / attempt). Never secrets. */
+  failover?: UsageFailoverUi | null
 }
 
 /** BYOK / DEVELOPMENT only for Usage UI. Never expose credentials. */
@@ -32,6 +41,41 @@ export function formatCredentialIdShort(id: string | null | undefined): string {
   return `${raw.slice(0, 10)}…${raw.slice(-4)}`
 }
 
+/** Sanitize failover meta for UI (providers / reason / attempt only). */
+export function failoverForUi(
+  raw: UsageEventLike['failover'] | null | undefined
+): UsageFailoverUi | null {
+  if (!raw || typeof raw !== 'object') return null
+  const primaryProvider = String(raw.primaryProvider || '').trim()
+  if (!primaryProvider) return null
+  const fallbackRaw = raw.fallbackProvider != null ? String(raw.fallbackProvider).trim() : ''
+  const reasonRaw = raw.reason != null ? String(raw.reason).trim() : ''
+  return {
+    primaryProvider,
+    fallbackProvider: fallbackRaw || null,
+    reason: reasonRaw || null,
+    attempt: typeof raw.attempt === 'number' && Number.isFinite(raw.attempt) ? raw.attempt : undefined
+  }
+}
+
+/**
+ * Compact Router Failover label. Distinct from PHP route-log fallback_from.
+ * Normal primary success (no switch) → empty / dash.
+ */
+export function formatRouterFailoverLabel(
+  failover: UsageFailoverUi | null | undefined,
+  engine?: string
+): string {
+  const meta = failoverForUi(failover)
+  if (!meta) return ''
+  const switched =
+    Boolean(meta.fallbackProvider) || (typeof meta.attempt === 'number' && meta.attempt > 1)
+  if (!switched) return ''
+  const to = meta.fallbackProvider || String(engine || '').trim() || '?'
+  const base = `${meta.primaryProvider}→${to}`
+  return meta.reason ? `${base} (${meta.reason})` : base
+}
+
 export type UsageRecentRow = {
   id: number
   engine: string
@@ -44,6 +88,8 @@ export type UsageRecentRow = {
   created_at: string
   billingMode: 'BYOK' | 'DEVELOPMENT' | null
   credentialId: string | null
+  /** Router Failover (Electron UsageEvent). Not PHP ai_route_log fallback. */
+  routerFailover: UsageFailoverUi | null
 }
 
 export function usageEventsToRecentRows(events: UsageEventLike[], limit = 30): UsageRecentRow[] {
@@ -58,16 +104,23 @@ export function usageEventsToRecentRows(events: UsageEventLike[], limit = 30): U
     fallback_reason: null,
     created_at: event.timestamp,
     billingMode: billingModeForUi(event.billingMode),
-    credentialId: credentialIdForUi(event.credentialId)
+    credentialId: credentialIdForUi(event.credentialId),
+    routerFailover: failoverForUi(event.failover)
   }))
 }
 
-/** Attach billingMode (+ credentialId from matched events) onto route-log recent rows. */
+/** Attach billingMode (+ credentialId / routerFailover from matched events) onto route-log recent rows. */
 export function enrichRecentWithBillingMode<T extends { engine: string; created_at: string }>(
   recent: T[],
   events: UsageEventLike[],
   fallbackForEngine?: (engine: string) => 'BYOK' | 'DEVELOPMENT' | null
-): Array<T & { billingMode: 'BYOK' | 'DEVELOPMENT' | null; credentialId: string | null }> {
+): Array<
+  T & {
+    billingMode: 'BYOK' | 'DEVELOPMENT' | null
+    credentialId: string | null
+    routerFailover: UsageFailoverUi | null
+  }
+> {
   return recent.map((row) => {
     const existingMode = billingModeForUi(
       'billingMode' in row ? String((row as { billingMode?: string | null }).billingMode ?? '') : null
@@ -77,8 +130,20 @@ export function enrichRecentWithBillingMode<T extends { engine: string; created_
         ? String((row as { credentialId?: string | null }).credentialId ?? '')
         : null
     )
+    const existingFailover = failoverForUi(
+      'routerFailover' in row
+        ? ((row as { routerFailover?: UsageFailoverUi | null }).routerFailover ?? null)
+        : 'failover' in row
+          ? ((row as { failover?: UsageFailoverUi | null }).failover ?? null)
+          : null
+    )
     if (existingMode) {
-      return { ...row, billingMode: existingMode, credentialId: existingCred }
+      return {
+        ...row,
+        billingMode: existingMode,
+        credentialId: existingCred,
+        routerFailover: existingFailover
+      }
     }
 
     const rowTs = Date.parse(normalizeTimestamp(row.created_at))
@@ -104,13 +169,19 @@ export function enrichRecentWithBillingMode<T extends { engine: string; created_
       return {
         ...row,
         billingMode: fromEvent,
-        credentialId: credentialIdForUi(best.credentialId) ?? existingCred
+        credentialId: credentialIdForUi(best.credentialId) ?? existingCred,
+        routerFailover: failoverForUi(best.failover) ?? existingFailover
       }
     }
 
     const fromResolver = fallbackForEngine ? billingModeForUi(fallbackForEngine(row.engine)) : null
     // Do not invent credentialId from current resolver / vault state.
-    return { ...row, billingMode: fromResolver, credentialId: existingCred }
+    return {
+      ...row,
+      billingMode: fromResolver,
+      credentialId: existingCred,
+      routerFailover: existingFailover
+    }
   })
 }
 

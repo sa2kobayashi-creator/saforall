@@ -65,6 +65,13 @@ type RouteRecent = {
   billingMode?: 'BYOK' | 'DEVELOPMENT' | null
   /** From Electron usage events only. Never invent; never a secret. */
   credentialId?: string | null
+  /** Router Failover trail (providers / reason). Distinct from PHP fallback_from. */
+  routerFailover?: {
+    primaryProvider: string
+    fallbackProvider?: string | null
+    reason?: string | null
+    attempt?: number
+  } | null
 }
 
 type RouterInsight = {
@@ -156,6 +163,17 @@ function formatCredentialId(id: RouteRecent['credentialId']): string {
   if (raw.startsWith('dev:')) return raw
   if (raw.length <= 18) return raw
   return `${raw.slice(0, 10)}…${raw.slice(-4)}`
+}
+
+/** Router Failover display; empty when no provider switch. Never secrets. */
+function formatRouterFailover(row: RouteRecent): string {
+  const f = row.routerFailover
+  if (!f?.primaryProvider) return ''
+  const switched =
+    Boolean(f.fallbackProvider) || (typeof f.attempt === 'number' && f.attempt > 1)
+  if (!switched) return ''
+  const to = f.fallbackProvider || row.engine
+  return f.reason ? `${f.primaryProvider}→${to} (${f.reason})` : `${f.primaryProvider}→${to}`
 }
 
 const LLM_ENGINES = new Set(['openai', 'gemini', 'claude', 'workers'])
@@ -681,6 +699,7 @@ export function UsagePanel({
                           <th>Credential</th>
                           <th>est</th>
                           <th>フォールバック</th>
+                          <th>Router Failover</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -706,6 +725,12 @@ export function UsagePanel({
                               {row.fallback_from
                                 ? `${row.fallback_from}→${row.engine}`
                                 : '—'}
+                            </td>
+                            <td
+                              className="usage-model-id"
+                              title={row.routerFailover?.reason ?? undefined}
+                            >
+                              {formatRouterFailover(row) || '—'}
                             </td>
                           </tr>
                         ))}

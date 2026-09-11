@@ -189,7 +189,8 @@ export function failoverReasonFromError(error: unknown): FailoverReason | null {
     case 'TIMEOUT':
       return 'timeout'
     case 'INSUFFICIENT_CREDIT':
-      return 'insufficient_credit'
+      // Phase 2-C-3: credit/quota is owned by api.ts autoRuntimeFallbackEngines.
+      return null
     default:
       return null
   }
@@ -285,7 +286,7 @@ export function shouldFailover(
     return { shouldFailover: false, reason: 'not_eligible', nextProvider: null }
   }
 
-  const maxSwitches = Math.max(0, config.maxFailoverAttempts ?? 1)
+  const maxSwitches = normalizeMaxFailoverAttempts(config.maxFailoverAttempts ?? 1)
   if (failoversUsed(context) >= maxSwitches) {
     return { shouldFailover: false, reason: 'max_attempts', nextProvider: null }
   }
@@ -371,6 +372,52 @@ export function fallbacksForAgent(primary: LlmProviderId): LlmProviderId[] {
   return agentOrder.filter((id) => id !== primary)
 }
 
+/** Ask: switches ≤ providerCount - 1. Agent: openai/claude only → max 1. */
+export const ASK_FAILOVER_MAX_ATTEMPTS = LLM_PROVIDER_IDS.length - 1
+export const AGENT_FAILOVER_MAX_ATTEMPTS = 1
+
+/**
+ * Clamp switch count to [1, maxAllowed] (and never above providerCount - 1).
+ * Non-finite or less than 1 → 1 (when ceiling ≥ 1).
+ */
+export function normalizeMaxFailoverAttempts(
+  raw: number | null | undefined,
+  maxAllowed: number = ASK_FAILOVER_MAX_ATTEMPTS
+): number {
+  const ceiling = Math.max(
+    1,
+    Math.min(ASK_FAILOVER_MAX_ATTEMPTS, Math.floor(Number(maxAllowed)) || ASK_FAILOVER_MAX_ATTEMPTS)
+  )
+  if (raw === null || raw === undefined || !Number.isFinite(Number(raw))) return 1
+  const n = Math.floor(Number(raw))
+  if (n < 1) return 1
+  return Math.min(n, ceiling)
+}
+
+/**
+ * Phase 2-C-4: Settings `failover.max_attempts`.
+ * Unset / empty / invalid → 1. Clamped to maxAllowed (Ask≤3, Agent≤1).
+ */
+export function parseFailoverMaxAttempts(
+  raw: string | number | null | undefined,
+  maxAllowed: number = ASK_FAILOVER_MAX_ATTEMPTS
+): number {
+  if (raw === null || raw === undefined) return normalizeMaxFailoverAttempts(1, maxAllowed)
+  if (typeof raw === 'number') return normalizeMaxFailoverAttempts(raw, maxAllowed)
+  const trimmed = String(raw).trim()
+  if (!trimmed) return normalizeMaxFailoverAttempts(1, maxAllowed)
+  return normalizeMaxFailoverAttempts(Number(trimmed), maxAllowed)
+}
+
+/**
+ * Phase 2-C-3: Settings `failover.enabled`.
+ * Unset / empty / unknown → false (OFF). Only explicit true/1/yes/on enables.
+ */
+export function parseFailoverEnabled(raw: string | null | undefined): boolean {
+  const value = String(raw ?? '').trim().toLowerCase()
+  return value === 'true' || value === '1' || value === 'yes' || value === 'on'
+}
+
 export async function executeWithFailover<T>(
   config: FailoverConfig,
   run: (input: {
@@ -383,10 +430,8 @@ export async function executeWithFailover<T>(
   const resolve = activeResolve(config)
   let context = createFailoverContext(config)
   let lastError: unknown = null
-  const hardCap = Math.min(
-    LLM_PROVIDER_IDS.length,
-    1 + Math.max(0, config.maxFailoverAttempts ?? 1)
-  )
+  const maxSwitches = normalizeMaxFailoverAttempts(config.maxFailoverAttempts ?? 1)
+  const hardCap = Math.min(LLM_PROVIDER_IDS.length, 1 + maxSwitches)
 
   for (let guard = 0; guard < hardCap; guard += 1) {
     const resolved = resolve({

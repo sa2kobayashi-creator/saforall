@@ -1,3 +1,4 @@
+import { getLocalSetting } from '../settingsStore'
 import { extraHeadersFor, resolveCredential } from './credentials'
 import { AIError, throwAgentUnsupported } from './errors'
 import {
@@ -6,6 +7,10 @@ import {
   fallbacksForAgent,
   fallbacksForAsk,
   failoverUsageMetaFromContext,
+  parseFailoverEnabled,
+  parseFailoverMaxAttempts,
+  ASK_FAILOVER_MAX_ATTEMPTS,
+  AGENT_FAILOVER_MAX_ATTEMPTS,
   type FailoverCredential,
   type FailoverContext
 } from './failover'
@@ -144,6 +149,17 @@ function toAiError(error: unknown, providerId: string): AIError {
   return new AIError('UNKNOWN', message, { providerId })
 }
 
+/** Phase 2-C-3: Settings `failover.enabled`; unset → OFF. */
+function isRouterFailoverEnabled(): boolean {
+  return parseFailoverEnabled(getLocalSetting('failover.enabled', ''))
+}
+
+/** Phase 2-C-4: Settings `failover.max_attempts`; unset → 1; Ask≤3 / Agent≤1. */
+function routerMaxFailoverAttempts(kind: 'ask' | 'agent'): number {
+  const maxAllowed = kind === 'agent' ? AGENT_FAILOVER_MAX_ATTEMPTS : ASK_FAILOVER_MAX_ATTEMPTS
+  return parseFailoverMaxAttempts(getLocalSetting('failover.max_attempts', ''), maxAllowed)
+}
+
 /**
  * Phase 1 + 2-C-2 Router: provider select → Failover → adapter + per-attempt usage.
  * Adapter generate runs inside executeWithFailover (not wrapping the whole function).
@@ -158,10 +174,10 @@ export async function executeAi(request: AIRequest): Promise<AIResponse> {
 
   const result = await executeWithFailover(
     {
-      enabled: true,
+      enabled: isRouterFailoverEnabled(),
       primaryProvider,
       fallbackProviders: fallbacksForAsk(primaryProvider),
-      maxFailoverAttempts: 1
+      maxFailoverAttempts: routerMaxFailoverAttempts('ask')
     },
     async ({ providerId, credential, attempt, context }) => {
       const adapter = getProvider(providerId)
@@ -253,10 +269,10 @@ export async function executeAiWithTools(
   const primaryProvider = parsed
   const result = await executeWithFailover(
     {
-      enabled: true,
+      enabled: isRouterFailoverEnabled(),
       primaryProvider,
       fallbackProviders: fallbacksForAgent(primaryProvider),
-      maxFailoverAttempts: 1
+      maxFailoverAttempts: routerMaxFailoverAttempts('agent')
     },
     async ({ providerId, credential, attempt, context }) => {
       if (providerId === 'gemini' || providerId === 'workers') {
