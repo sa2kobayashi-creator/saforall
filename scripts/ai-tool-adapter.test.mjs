@@ -126,8 +126,9 @@ test('toolAgent no longer performs Provider HTTP itself', async () => {
 test('Router selects Adapter via ProviderRegistry and Resolver', async () => {
   const router = await read('electron/main/ai/router.ts')
   assert.match(router, /export async function executeAiWithTools/)
-  assert.match(router, /getProvider\(parsed\)/)
-  assert.match(router, /requireCredential\(parsed\)/)
+  assert.match(router, /getProvider\(providerId\)/)
+  assert.match(router, /executeWithFailover/)
+  assert.match(router, /fallbacksForAgent/)
   const withTools = router.slice(router.indexOf('export async function executeAiWithTools'))
   assert.doesNotMatch(withTools, /credentialOverride/)
 })

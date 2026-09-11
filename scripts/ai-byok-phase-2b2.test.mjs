@@ -14,7 +14,9 @@ async function read(rel) {
 test('A: executeAi uses Resolver without credentialOverride', async () => {
   const router = await read('electron/main/ai/router.ts')
   const types = await read('electron/main/ai/types.ts')
-  assert.match(router, /const credential = requireCredential\(providerId\)/)
+  assert.match(router, /configureFailoverResolve/)
+  assert.match(router, /resolveCredential\(/)
+  assert.match(router, /executeWithFailover/)
   assert.doesNotMatch(router, /credentialOverride/)
   assert.doesNotMatch(types, /credentialOverride/)
 })
@@ -88,7 +90,8 @@ test('J: Agent tool loop still goes through executeAiWithTools', async () => {
   const router = await read('electron/main/ai/router.ts')
   assert.match(toolAgent, /executeAiWithTools/)
   assert.match(router, /export async function executeAiWithTools/)
-  assert.match(router, /requireCredential\(parsed\)/)
+  assert.match(router, /executeWithFailover/)
+  assert.match(router, /fallbacksForAgent/)
 })
 
 test('K: Cursor path is unchanged as coding agent', async () => {

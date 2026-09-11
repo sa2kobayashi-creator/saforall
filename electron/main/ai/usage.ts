@@ -12,6 +12,14 @@ export {
 
 export type UsageEventStatus = 'ok' | 'error'
 
+/** Optional Phase 2-C-1+ failover trail (ids / providers only). Mirrors FailoverUsageMeta. */
+export type UsageFailoverMeta = {
+  primaryProvider: string
+  fallbackProvider?: string | null
+  reason?: string | null
+  attempt?: number
+}
+
 export type UsageEvent = {
   requestId: string
   provider: string
@@ -26,6 +34,7 @@ export type UsageEvent = {
   billingMode?: BillingMode | null
   credentialId?: string | null
   userId?: string | null
+  failover?: UsageFailoverMeta | null
 }
 
 type UsageFile = {
@@ -66,6 +75,7 @@ export async function recordUsage(input: {
   billingMode?: BillingMode | null
   credentialId?: string | null
   userId?: string | null
+  failover?: UsageFailoverMeta | null
 }): Promise<UsageEvent> {
   const inputTokens = Math.max(0, Number(input.inputTokens) || 0)
   const outputTokens = Math.max(0, Number(input.outputTokens) || 0)
@@ -83,7 +93,8 @@ export async function recordUsage(input: {
     sessionId: input.sessionId ?? null,
     billingMode: input.billingMode ?? null,
     credentialId: input.credentialId ?? null,
-    userId: input.userId ?? null
+    userId: input.userId ?? null,
+    failover: input.failover ?? null
   }
   memoryEvents.push(event)
   if (memoryEvents.length > MAX_EVENTS) memoryEvents.shift()

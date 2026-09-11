@@ -128,6 +128,13 @@ test('recordUsage / router still write credentialId without secrets', async () =
   const usage = await read('electron/main/ai/usage.ts')
   const router = await read('electron/main/ai/router.ts')
   assert.match(usage, /credentialId\?: string \| null/)
-  assert.match(router, /credentialId:/)
-  assert.doesNotMatch(router, /credential\.apiKey|credential\.secret/)
+  assert.match(router, /credentialId: credential\.id/)
+  assert.doesNotMatch(router, /credential\.apiKey/)
+  // Adapter Credential mapping may reference .secret in Main only; Usage payloads must not.
+  const usageCalls = router.match(/recordUsage\(\{[\s\S]*?\}\)/g) || []
+  assert.ok(usageCalls.length >= 2)
+  for (const call of usageCalls) {
+    assert.doesNotMatch(call, /\bsecret\b/)
+    assert.doesNotMatch(call, /Authorization/i)
+  }
 })

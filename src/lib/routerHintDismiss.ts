@@ -23,7 +23,7 @@ export function loadDismissedRouterHintCodes(month: string): string[] {
 export function dismissRouterHintCode(month: string, code: string): string[] {
   const id = code.trim()
   if (!id) return loadDismissedRouterHintCodes(month)
-  const next = [...new Set([...loadDismissedRouterHintCodes(month), id])]
+  const next = Array.from(new Set([...loadDismissedRouterHintCodes(month), id]))
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ month, codes: next }))
   } catch {

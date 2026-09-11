@@ -1,5 +1,14 @@
-import { extraHeadersFor, requireCredential, resolveCredential } from './credentials'
+import { extraHeadersFor, resolveCredential } from './credentials'
 import { AIError, throwAgentUnsupported } from './errors'
+import {
+  configureFailoverResolve,
+  executeWithFailover,
+  fallbacksForAgent,
+  fallbacksForAsk,
+  failoverUsageMetaFromContext,
+  type FailoverCredential,
+  type FailoverContext
+} from './failover'
 import { getProvider } from './registry'
 import type { AgentChatCompletion, AgentProviderMessage, AgentToolSpec } from './toolTypes'
 import {
@@ -7,12 +16,52 @@ import {
   parseProviderId,
   type AIRequest,
   type AIResponse,
+  type Credential,
   type LlmProviderId,
   type RoutingMode
 } from './types'
-import { recordUsage } from './usage'
+import { recordUsage, type UsageFailoverMeta } from './usage'
 
 const LLM_AUTO_ORDER: LlmProviderId[] = ['openai', 'claude', 'gemini', 'workers']
+
+/** Ensure Failover uses CredentialResolver even when router is imported without ai/index. */
+configureFailoverResolve((input) => {
+  if (!isLlmProviderId(input.providerId)) {
+    return {
+      credential: null,
+      available: false,
+      billingMode: 'DEVELOPMENT',
+      reason: 'unsupported provider'
+    }
+  }
+  const resolved = resolveCredential({
+    providerId: input.providerId,
+    userId: input.userId ?? null
+  })
+  if (!resolved.credential || !isLlmProviderId(resolved.credential.providerId)) {
+    return {
+      credential: null,
+      available: false,
+      billingMode: resolved.billingMode,
+      reason: resolved.reason
+    }
+  }
+  return {
+    credential: {
+      id: resolved.credential.id,
+      providerId: resolved.credential.providerId,
+      billingMode: resolved.credential.billingMode,
+      secret: resolved.credential.secret,
+      ownerType: resolved.credential.ownerType,
+      source: resolved.credential.source,
+      baseUrl: resolved.credential.baseUrl,
+      extra: resolved.credential.extra
+    },
+    available: resolved.available,
+    billingMode: resolved.billingMode,
+    reason: resolved.reason
+  }
+})
 
 function selectProvider(request: AIRequest): LlmProviderId {
   const mode: RoutingMode = request.routingMode ?? (request.provider === 'auto' ? 'auto' : 'manual')
@@ -41,64 +90,137 @@ function sessionIdFromMeta(metadata?: Record<string, unknown>): number | null {
   return typeof value === 'number' ? value : null
 }
 
+function asCredential(credential: FailoverCredential): Credential {
+  return {
+    id: credential.id,
+    providerId: credential.providerId,
+    ownerType:
+      credential.ownerType === 'user' ||
+      credential.ownerType === 'organization' ||
+      credential.ownerType === 'platform'
+        ? credential.ownerType
+        : 'development',
+    billingMode: credential.billingMode,
+    source:
+      credential.source === 'settings' ||
+      credential.source === 'env' ||
+      credential.source === 'byok'
+        ? credential.source
+        : '',
+    secret: credential.secret,
+    baseUrl: credential.baseUrl || '',
+    extra: credential.extra ?? {}
+  }
+}
+
+function userIdFor(credential: FailoverCredential): string | null {
+  return credential.ownerType === 'user' ? 'local-user' : null
+}
+
+function usageMetaForAttempt(
+  context: FailoverContext,
+  attempt: number,
+  status: 'ok' | 'error'
+): UsageFailoverMeta | null {
+  if (attempt <= 1 && status === 'ok' && context.visitedProviders.length <= 1) {
+    return null
+  }
+  const meta = failoverUsageMetaFromContext({
+    ...context,
+    attempt,
+    lastReason: status === 'ok' ? 'success' : context.lastReason
+  })
+  return {
+    primaryProvider: meta.primaryProvider,
+    fallbackProvider: meta.fallbackProvider ?? null,
+    reason: meta.reason,
+    attempt
+  }
+}
+
+function toAiError(error: unknown, providerId: string): AIError {
+  if (error instanceof AIError) return error
+  const message = error instanceof Error ? error.message : String(error)
+  return new AIError('UNKNOWN', message, { providerId })
+}
+
 /**
- * Phase 1 Router: provider + credential + adapter + usage.
- * No billing / plan / credit checks live here.
+ * Phase 1 + 2-C-2 Router: provider select → Failover → adapter + per-attempt usage.
+ * Adapter generate runs inside executeWithFailover (not wrapping the whole function).
  */
 export async function executeAi(request: AIRequest): Promise<AIResponse> {
-  const providerId = selectProvider(request)
-  const credential = requireCredential(providerId)
-  const adapter = getProvider(providerId)
-  const model = request.model || adapter.availableModels()[0] || ''
+  const primaryProvider = selectProvider(request)
   const started = Date.now()
-  try {
-    const response = await adapter.generate(
-      {
-        ...request,
-        provider: providerId,
-        model,
-        extraHeaders: request.extraHeaders ?? extraHeadersFor(credential),
-        baseUrl: request.baseUrl || credential.baseUrl
-      },
-      credential
-    )
-    await recordUsage({
-      provider: providerId,
-      model: response.model,
-      inputTokens: response.usage.inputTokens,
-      outputTokens: response.usage.outputTokens,
-      requestId: response.requestId,
-      status: 'ok',
-      sessionId: sessionIdFromMeta(request.metadata),
-      estimatedCost: undefined,
-      billingMode: credential.billingMode,
-      credentialId: credential.id,
-      userId: credential.ownerType === 'user' ? 'local-user' : null
-    })
-    return {
-      ...response,
-      metadata: {
-        ...response.metadata,
-        routingMode: request.routingMode ?? 'manual',
-        elapsedMs: Date.now() - started,
-        credentialSource: credential.source
+  const sessionId = sessionIdFromMeta(request.metadata)
+  const requestIdHint = request.metadata?.requestId
+    ? String(request.metadata.requestId)
+    : undefined
+
+  const result = await executeWithFailover(
+    {
+      enabled: true,
+      primaryProvider,
+      fallbackProviders: fallbacksForAsk(primaryProvider),
+      maxFailoverAttempts: 1
+    },
+    async ({ providerId, credential, attempt, context }) => {
+      const adapter = getProvider(providerId)
+      const model = request.model || adapter.availableModels()[0] || ''
+      const cred = asCredential(credential)
+      try {
+        const response = await adapter.generate(
+          {
+            ...request,
+            provider: providerId,
+            model,
+            extraHeaders: request.extraHeaders ?? extraHeadersFor(cred),
+            baseUrl: request.baseUrl || cred.baseUrl
+          },
+          cred
+        )
+        await recordUsage({
+          provider: providerId,
+          model: response.model,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          requestId: response.requestId,
+          status: 'ok',
+          sessionId,
+          billingMode: credential.billingMode,
+          credentialId: credential.id,
+          userId: userIdFor(credential),
+          failover: usageMetaForAttempt(context, attempt, 'ok')
+        })
+        return {
+          ...response,
+          metadata: {
+            ...response.metadata,
+            routingMode: request.routingMode ?? 'manual',
+            elapsedMs: Date.now() - started,
+            credentialSource: credential.source,
+            failoverAttempt: attempt,
+            primaryProvider: context.primaryProvider
+          }
+        }
+      } catch (error) {
+        await recordUsage({
+          provider: providerId,
+          model,
+          status: 'error',
+          requestId: requestIdHint,
+          sessionId,
+          billingMode: credential.billingMode,
+          credentialId: credential.id,
+          userId: userIdFor(credential),
+          failover: usageMetaForAttempt(context, attempt, 'error')
+        })
+        throw error
       }
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    await recordUsage({
-      provider: providerId,
-      model,
-      status: 'error',
-      requestId: request.metadata?.requestId ? String(request.metadata.requestId) : undefined,
-      sessionId: sessionIdFromMeta(request.metadata),
-      billingMode: credential.billingMode,
-      credentialId: credential.id,
-      userId: credential.ownerType === 'user' ? 'local-user' : null
-    })
-    if (error instanceof AIError) throw error
-    throw new AIError('UNKNOWN', message, { providerId })
-  }
+  )
+
+  if (result.ok && result.value) return result.value
+  throw toAiError(result.error, primaryProvider)
 }
 
 export type ExecuteAiWithToolsInput = {
@@ -115,10 +237,11 @@ export type ExecuteAiWithToolsInput = {
 }
 
 /**
- * Agent tool_use path. Credential is resolved immediately before the Adapter call.
- * Callers (toolAgent) must not pass secrets.
+ * Agent tool_use path with Phase 2-C-2 Failover (openai/claude fallbacks only).
  */
-export async function executeAiWithTools(input: ExecuteAiWithToolsInput): Promise<AgentChatCompletion> {
+export async function executeAiWithTools(
+  input: ExecuteAiWithToolsInput
+): Promise<AgentChatCompletion> {
   const parsed = parseProviderId(input.provider)
   if (!parsed || !isLlmProviderId(parsed)) {
     throw new AIError('PROVIDER_ERROR', `未知の LLM Provider: ${input.provider}`)
@@ -126,53 +249,70 @@ export async function executeAiWithTools(input: ExecuteAiWithToolsInput): Promis
   if (parsed === 'gemini' || parsed === 'workers') {
     throwAgentUnsupported(parsed)
   }
-  const adapter = getProvider(parsed)
-  const credential = requireCredential(parsed)
-  const model = input.model || adapter.availableModels()[0] || ''
-  try {
-    const result = await adapter.generateWithTools(
-      {
-        provider: parsed,
-        model,
-        messages: [],
-        extraHeaders: input.extraHeaders ?? extraHeadersFor(credential),
-        baseUrl: input.baseUrl || credential.baseUrl
-      },
-      credential,
-      {
-        messages: input.messages,
-        tools: input.tools,
-        toolChoice: input.toolChoice,
-        timeoutMs: input.timeoutMs,
-        signal: input.signal
+
+  const primaryProvider = parsed
+  const result = await executeWithFailover(
+    {
+      enabled: true,
+      primaryProvider,
+      fallbackProviders: fallbacksForAgent(primaryProvider),
+      maxFailoverAttempts: 1
+    },
+    async ({ providerId, credential, attempt, context }) => {
+      if (providerId === 'gemini' || providerId === 'workers') {
+        throwAgentUnsupported(providerId)
       }
-    )
-    await recordUsage({
-      provider: parsed,
-      model: result.model,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      requestId: result.requestId,
-      status: 'ok',
-      sessionId: input.sessionId ?? null,
-      billingMode: credential.billingMode,
-      credentialId: credential.id,
-      userId: credential.ownerType === 'user' ? 'local-user' : null
-    })
-    return result.completion
-  } catch (error) {
-    await recordUsage({
-      provider: parsed,
-      model,
-      status: 'error',
-      sessionId: input.sessionId ?? null,
-      billingMode: credential.billingMode,
-      credentialId: credential.id,
-      userId: credential.ownerType === 'user' ? 'local-user' : null
-    })
-    if (error instanceof AIError) throw error
-    throw new AIError('UNKNOWN', error instanceof Error ? error.message : String(error), {
-      providerId: parsed
-    })
-  }
+      const adapter = getProvider(providerId)
+      const model = input.model || adapter.availableModels()[0] || ''
+      const cred = asCredential(credential)
+      try {
+        const generated = await adapter.generateWithTools(
+          {
+            provider: providerId,
+            model,
+            messages: [],
+            extraHeaders: input.extraHeaders ?? extraHeadersFor(cred),
+            baseUrl: input.baseUrl || cred.baseUrl
+          },
+          cred,
+          {
+            messages: input.messages,
+            tools: input.tools,
+            toolChoice: input.toolChoice,
+            timeoutMs: input.timeoutMs,
+            signal: input.signal
+          }
+        )
+        await recordUsage({
+          provider: providerId,
+          model: generated.model,
+          inputTokens: generated.usage.inputTokens,
+          outputTokens: generated.usage.outputTokens,
+          requestId: generated.requestId,
+          status: 'ok',
+          sessionId: input.sessionId ?? null,
+          billingMode: credential.billingMode,
+          credentialId: credential.id,
+          userId: userIdFor(credential),
+          failover: usageMetaForAttempt(context, attempt, 'ok')
+        })
+        return generated.completion
+      } catch (error) {
+        await recordUsage({
+          provider: providerId,
+          model,
+          status: 'error',
+          sessionId: input.sessionId ?? null,
+          billingMode: credential.billingMode,
+          credentialId: credential.id,
+          userId: userIdFor(credential),
+          failover: usageMetaForAttempt(context, attempt, 'error')
+        })
+        throw error
+      }
+    }
+  )
+
+  if (result.ok && result.value) return result.value
+  throw toAiError(result.error, primaryProvider)
 }

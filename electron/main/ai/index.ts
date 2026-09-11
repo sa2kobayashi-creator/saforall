@@ -12,7 +12,82 @@ export type {
   RoutingMode
 } from './types'
 export { LLM_PROVIDER_IDS, PROVIDER_KIND, PROVIDER_NAMES, isLlmProviderId, parseProviderId } from './types'
-export { AIError, classifyProviderError, isFailoverCandidate, redactSecrets, throwAgentUnsupported } from './errors'
+export {
+  AIError,
+  classifyProviderError,
+  isFailoverCandidate,
+  isFailoverEligibleErrorCode,
+  redactSecrets,
+  throwAgentUnsupported
+} from './errors'
+export {
+  DEFAULT_FAILOVER_ORDER,
+  advanceFailoverContext,
+  configureFailoverResolve,
+  createFailoverContext,
+  errorCodeFromUnknown,
+  executeWithFailover,
+  failoverReasonFromError,
+  failoverUsageMetaFromContext,
+  fallbacksForAgent,
+  fallbacksForAsk,
+  isFailoverEligibleError,
+  resetFailoverResolveForTests,
+  selectFallbackCredential,
+  selectNextFallbackProvider,
+  shouldFailover,
+  type FailoverAttemptRecord,
+  type FailoverConfig,
+  type FailoverContext,
+  type FailoverCredential,
+  type FailoverCredentialResolve,
+  type FailoverDecision,
+  type FailoverReason,
+  type FailoverResult,
+  type FailoverUsageMeta
+} from './failover'
+import { resolveCredential } from './credentials'
+import { configureFailoverResolve } from './failover'
+import { isLlmProviderId } from './types'
+
+/** Production wiring: Failover always goes through CredentialResolver. */
+configureFailoverResolve((input) => {
+  if (!isLlmProviderId(input.providerId)) {
+    return {
+      credential: null,
+      available: false,
+      billingMode: 'DEVELOPMENT',
+      reason: 'unsupported provider'
+    }
+  }
+  const resolved = resolveCredential({
+    providerId: input.providerId,
+    userId: input.userId ?? null
+  })
+  if (!resolved.credential || !isLlmProviderId(resolved.credential.providerId)) {
+    return {
+      credential: null,
+      available: false,
+      billingMode: resolved.billingMode,
+      reason: resolved.reason
+    }
+  }
+  return {
+    credential: {
+      id: resolved.credential.id,
+      providerId: resolved.credential.providerId,
+      billingMode: resolved.credential.billingMode,
+      secret: resolved.credential.secret,
+      ownerType: resolved.credential.ownerType,
+      source: resolved.credential.source,
+      baseUrl: resolved.credential.baseUrl,
+      extra: resolved.credential.extra
+    },
+    available: resolved.available,
+    billingMode: resolved.billingMode,
+    reason: resolved.reason
+  }
+})
 export {
   credentialStatus,
   loadDevelopmentCredential,

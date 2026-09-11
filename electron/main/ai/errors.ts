@@ -155,8 +155,24 @@ export function throwAgentUnsupported(providerId: string): never {
   )
 }
 
+/**
+ * Legacy code-level check. Prefer isFailoverEligibleError(error) from failover.ts.
+ * Kept in sync with Phase 2-C-1 eligibility (AUTH / RATE / PROVIDER / NETWORK / TIMEOUT / CREDIT).
+ */
 export function isFailoverCandidate(code: AIErrorCode): boolean {
-  return code === 'RATE_LIMIT' || code === 'INSUFFICIENT_CREDIT' || code === 'PROVIDER_ERROR'
+  return (
+    code === 'AUTH_ERROR' ||
+    code === 'RATE_LIMIT' ||
+    code === 'PROVIDER_ERROR' ||
+    code === 'NETWORK_ERROR' ||
+    code === 'TIMEOUT' ||
+    code === 'INSUFFICIENT_CREDIT'
+  )
+}
+
+/** Alias used by Phase 2-C-1 naming; delegates to AIError.code classification. */
+export function isFailoverEligibleErrorCode(code: AIErrorCode): boolean {
+  return isFailoverCandidate(code)
 }
 
 function extractHttpStatus(text: string): number | null {

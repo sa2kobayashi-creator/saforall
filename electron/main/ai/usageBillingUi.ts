@@ -100,11 +100,11 @@ export function enrichRecentWithBillingMode<T extends { engine: string; created_
       }
     }
     const fromEvent = billingModeForUi(best?.billingMode)
-    if (fromEvent) {
+    if (fromEvent && best) {
       return {
         ...row,
         billingMode: fromEvent,
-        credentialId: credentialIdForUi(best?.credentialId) ?? existingCred
+        credentialId: credentialIdForUi(best.credentialId) ?? existingCred
       }
     }
 
