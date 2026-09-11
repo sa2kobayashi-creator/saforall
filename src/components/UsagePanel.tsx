@@ -71,6 +71,9 @@ type RouteRecent = {
     fallbackProvider?: string | null
     reason?: string | null
     attempt?: number
+    failoverId?: string | null
+    path?: string[] | null
+    mode?: 'ask' | 'agent' | null
   } | null
 }
 
@@ -78,6 +81,8 @@ type RouterInsight = {
   total: number
   fallbacks: number
   fallback_rate: number
+  /** Electron Router Failover chains (unique failoverId). Not PHP fallbacks. */
+  router_failover_chains?: number
   by_engine: RouteEngineStat[]
   by_task: RouteTaskStat[]
   recent: RouteRecent[]
@@ -169,11 +174,18 @@ function formatCredentialId(id: RouteRecent['credentialId']): string {
 function formatRouterFailover(row: RouteRecent): string {
   const f = row.routerFailover
   if (!f?.primaryProvider) return ''
+  const path = Array.isArray(f.path) ? f.path.filter((p) => String(p || '').trim()) : null
   const switched =
-    Boolean(f.fallbackProvider) || (typeof f.attempt === 'number' && f.attempt > 1)
+    (path && path.length > 1) ||
+    Boolean(f.fallbackProvider) ||
+    (typeof f.attempt === 'number' && f.attempt > 1)
   if (!switched) return ''
-  const to = f.fallbackProvider || row.engine
-  return f.reason ? `${f.primaryProvider}→${to} (${f.reason})` : `${f.primaryProvider}→${to}`
+  const base =
+    path && path.length > 1
+      ? path.join('→')
+      : `${f.primaryProvider}→${f.fallbackProvider || row.engine}`
+  const modeTag = f.mode === 'agent' ? ' [agent]' : ''
+  return f.reason ? `${base} (${f.reason})${modeTag}` : `${base}${modeTag}`
 }
 
 const LLM_ENGINES = new Set(['openai', 'gemini', 'claude', 'workers'])
@@ -575,6 +587,9 @@ export function UsagePanel({
                 <p className="usage-muted">
                   {data.router.total} 件 · フォールバック {data.router.fallbacks} 件（
                   {data.router.fallback_rate}%）
+                  {typeof data.router.router_failover_chains === 'number'
+                    ? ` · Router Failover ${data.router.router_failover_chains} 件`
+                    : ''}
                 </p>
 
                 {visibleRouterHints.length > 0 && (

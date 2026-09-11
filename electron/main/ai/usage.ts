@@ -7,6 +7,7 @@ export {
   formatCredentialIdShort,
   failoverForUi,
   formatRouterFailoverLabel,
+  countFailoverChains,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   type UsageRecentRow,
@@ -21,6 +22,12 @@ export type UsageFailoverMeta = {
   fallbackProvider?: string | null
   reason?: string | null
   attempt?: number
+  /** Phase 2-C-5: shared chain id (providers / ids only). */
+  failoverId?: string | null
+  /** Phase 2-C-5: providers that actually ran, in order. */
+  path?: string[] | null
+  /** Phase 2-C-5: ask vs agent. */
+  mode?: 'ask' | 'agent' | null
 }
 
 export type UsageEvent = {

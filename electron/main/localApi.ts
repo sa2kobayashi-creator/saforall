@@ -169,7 +169,8 @@ export async function localApiRequest<T = unknown>(
       const {
         listPersistedUsageEvents,
         usageEventsToRecentRows,
-        billingModeForUi
+        billingModeForUi,
+        countFailoverChains
       } = await import('./ai/usage')
       const { resolveCredential } = await import('./ai/credentials')
       const { parseProviderId } = await import('./ai/types')
@@ -198,10 +199,12 @@ export async function localApiRequest<T = unknown>(
         cur.estimated_usd += Number(event.estimatedCost) || 0
         byEngineMap.set(event.provider, cur)
       }
+      const routerFailoverChains = countFailoverChains(usageEvents)
       const router = {
         total: usageEvents.length,
         fallbacks: 0,
         fallback_rate: 0,
+        router_failover_chains: routerFailoverChains,
         by_engine: Array.from(byEngineMap.values()).map((row) => ({
           ...row,
           estimated_usd: Math.round(row.estimated_usd * 10000) / 10000

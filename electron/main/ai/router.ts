@@ -6,7 +6,6 @@ import {
   executeWithFailover,
   fallbacksForAgent,
   fallbacksForAsk,
-  failoverUsageMetaFromContext,
   parseFailoverEnabled,
   parseFailoverMaxAttempts,
   ASK_FAILOVER_MAX_ATTEMPTS,
@@ -122,24 +121,33 @@ function userIdFor(credential: FailoverCredential): string | null {
   return credential.ownerType === 'user' ? 'local-user' : null
 }
 
-function usageMetaForAttempt(
-  context: FailoverContext,
-  attempt: number,
+function usageMetaFromAttempt(input: {
+  context: FailoverContext
+  attempt: number
   status: 'ok' | 'error'
-): UsageFailoverMeta | null {
-  if (attempt <= 1 && status === 'ok' && context.visitedProviders.length <= 1) {
+  path: string[]
+  reason: string | null
+  chainActive: boolean
+  mode: 'ask' | 'agent'
+}): UsageFailoverMeta | null {
+  const { context, attempt, status, path, reason, chainActive, mode } = input
+  if (attempt <= 1 && status === 'ok' && path.length <= 1 && !chainActive) {
     return null
   }
-  const meta = failoverUsageMetaFromContext({
-    ...context,
-    attempt,
-    lastReason: status === 'ok' ? 'success' : context.lastReason
-  })
+  const fallbackProvider =
+    path.length > 1 ? path[path.length - 1] : null
+  const includeChainId = chainActive || path.length > 1 || attempt > 1
   return {
-    primaryProvider: meta.primaryProvider,
-    fallbackProvider: meta.fallbackProvider ?? null,
-    reason: meta.reason,
-    attempt
+    primaryProvider: context.primaryProvider,
+    fallbackProvider:
+      fallbackProvider && fallbackProvider !== context.primaryProvider
+        ? fallbackProvider
+        : null,
+    reason: (status === 'ok' ? 'success' : reason) as UsageFailoverMeta['reason'],
+    attempt,
+    failoverId: includeChainId ? context.failoverId : null,
+    path: path.length > 0 ? [...path] : null,
+    mode
   }
 }
 
@@ -162,7 +170,7 @@ function routerMaxFailoverAttempts(kind: 'ask' | 'agent'): number {
 
 /**
  * Phase 1 + 2-C-2 Router: provider select → Failover → adapter + per-attempt usage.
- * Adapter generate runs inside executeWithFailover (not wrapping the whole function).
+ * Phase 2-C-5: Usage recorded via onAttempt after reason is known (failoverId/path).
  */
 export async function executeAi(request: AIRequest): Promise<AIResponse> {
   const primaryProvider = selectProvider(request)
@@ -172,6 +180,8 @@ export async function executeAi(request: AIRequest): Promise<AIResponse> {
     ? String(request.metadata.requestId)
     : undefined
 
+  let lastOkResponse: AIResponse | null = null
+
   const result = await executeWithFailover(
     {
       enabled: isRouterFailoverEnabled(),
@@ -179,63 +189,81 @@ export async function executeAi(request: AIRequest): Promise<AIResponse> {
       fallbackProviders: fallbacksForAsk(primaryProvider),
       maxFailoverAttempts: routerMaxFailoverAttempts('ask')
     },
-    async ({ providerId, credential, attempt, context }) => {
+    async ({ providerId, credential }) => {
       const adapter = getProvider(providerId)
       const model = request.model || adapter.availableModels()[0] || ''
       const cred = asCredential(credential)
-      try {
-        const response = await adapter.generate(
-          {
-            ...request,
-            provider: providerId,
-            model,
-            extraHeaders: request.extraHeaders ?? extraHeadersFor(cred),
-            baseUrl: request.baseUrl || cred.baseUrl
-          },
-          cred
-        )
-        await recordUsage({
+      const response = await adapter.generate(
+        {
+          ...request,
           provider: providerId,
-          model: response.model,
-          inputTokens: response.usage.inputTokens,
-          outputTokens: response.usage.outputTokens,
-          requestId: response.requestId,
-          status: 'ok',
-          sessionId,
-          billingMode: credential.billingMode,
-          credentialId: credential.id,
-          userId: userIdFor(credential),
-          failover: usageMetaForAttempt(context, attempt, 'ok')
-        })
-        return {
-          ...response,
-          metadata: {
-            ...response.metadata,
-            routingMode: request.routingMode ?? 'manual',
-            elapsedMs: Date.now() - started,
-            credentialSource: credential.source,
-            failoverAttempt: attempt,
-            primaryProvider: context.primaryProvider
-          }
-        }
-      } catch (error) {
+          model,
+          extraHeaders: request.extraHeaders ?? extraHeadersFor(cred),
+          baseUrl: request.baseUrl || cred.baseUrl
+        },
+        cred
+      )
+      lastOkResponse = response
+      return response
+    },
+    {
+      mode: 'ask',
+      onAttempt: async ({
+        providerId,
+        credential,
+        attempt,
+        context,
+        status,
+        path,
+        reason,
+        chainActive
+      }) => {
+        const model =
+          status === 'ok' && lastOkResponse
+            ? lastOkResponse.model
+            : request.model || getProvider(providerId).availableModels()[0] || ''
         await recordUsage({
           provider: providerId,
           model,
-          status: 'error',
-          requestId: requestIdHint,
+          inputTokens: status === 'ok' && lastOkResponse ? lastOkResponse.usage.inputTokens : 0,
+          outputTokens: status === 'ok' && lastOkResponse ? lastOkResponse.usage.outputTokens : 0,
+          requestId:
+            status === 'ok' && lastOkResponse
+              ? lastOkResponse.requestId
+              : requestIdHint,
+          status,
           sessionId,
           billingMode: credential.billingMode,
           credentialId: credential.id,
           userId: userIdFor(credential),
-          failover: usageMetaForAttempt(context, attempt, 'error')
+          failover: usageMetaFromAttempt({
+            context,
+            attempt,
+            status,
+            path,
+            reason,
+            chainActive,
+            mode: 'ask'
+          })
         })
-        throw error
       }
     }
   )
 
-  if (result.ok && result.value) return result.value
+  if (result.ok && result.value) {
+    const response = result.value
+    return {
+      ...response,
+      metadata: {
+        ...response.metadata,
+        routingMode: request.routingMode ?? 'manual',
+        elapsedMs: Date.now() - started,
+        failoverAttempt: result.context.attempt,
+        primaryProvider: result.context.primaryProvider,
+        failoverId: result.context.path.length > 1 ? result.context.failoverId : undefined
+      }
+    }
+  }
   throw toAiError(result.error, primaryProvider)
 }
 
@@ -254,6 +282,7 @@ export type ExecuteAiWithToolsInput = {
 
 /**
  * Agent tool_use path with Phase 2-C-2 Failover (openai/claude fallbacks only).
+ * Phase 2-C-5: Usage via onAttempt with failoverId/path/mode=agent.
  */
 export async function executeAiWithTools(
   input: ExecuteAiWithToolsInput
@@ -267,6 +296,14 @@ export async function executeAiWithTools(
   }
 
   const primaryProvider = parsed
+  type ToolsOk = {
+    model: string
+    requestId: string
+    usage: { inputTokens: number; outputTokens: number }
+    completion: AgentChatCompletion
+  }
+  let lastOk: ToolsOk | null = null
+
   const result = await executeWithFailover(
     {
       enabled: isRouterFailoverEnabled(),
@@ -274,57 +311,75 @@ export async function executeAiWithTools(
       fallbackProviders: fallbacksForAgent(primaryProvider),
       maxFailoverAttempts: routerMaxFailoverAttempts('agent')
     },
-    async ({ providerId, credential, attempt, context }) => {
+    async ({ providerId, credential }) => {
       if (providerId === 'gemini' || providerId === 'workers') {
         throwAgentUnsupported(providerId)
       }
       const adapter = getProvider(providerId)
       const model = input.model || adapter.availableModels()[0] || ''
       const cred = asCredential(credential)
-      try {
-        const generated = await adapter.generateWithTools(
-          {
-            provider: providerId,
-            model,
-            messages: [],
-            extraHeaders: input.extraHeaders ?? extraHeadersFor(cred),
-            baseUrl: input.baseUrl || cred.baseUrl
-          },
-          cred,
-          {
-            messages: input.messages,
-            tools: input.tools,
-            toolChoice: input.toolChoice,
-            timeoutMs: input.timeoutMs,
-            signal: input.signal
-          }
-        )
-        await recordUsage({
+      const generated = await adapter.generateWithTools(
+        {
           provider: providerId,
-          model: generated.model,
-          inputTokens: generated.usage.inputTokens,
-          outputTokens: generated.usage.outputTokens,
-          requestId: generated.requestId,
-          status: 'ok',
-          sessionId: input.sessionId ?? null,
-          billingMode: credential.billingMode,
-          credentialId: credential.id,
-          userId: userIdFor(credential),
-          failover: usageMetaForAttempt(context, attempt, 'ok')
-        })
-        return generated.completion
-      } catch (error) {
+          model,
+          messages: [],
+          extraHeaders: input.extraHeaders ?? extraHeadersFor(cred),
+          baseUrl: input.baseUrl || cred.baseUrl
+        },
+        cred,
+        {
+          messages: input.messages,
+          tools: input.tools,
+          toolChoice: input.toolChoice,
+          timeoutMs: input.timeoutMs,
+          signal: input.signal
+        }
+      )
+      lastOk = {
+        model: generated.model,
+        requestId: generated.requestId,
+        usage: generated.usage,
+        completion: generated.completion
+      }
+      return generated.completion
+    },
+    {
+      mode: 'agent',
+      onAttempt: async ({
+        providerId,
+        credential,
+        attempt,
+        context,
+        status,
+        path,
+        reason,
+        chainActive
+      }) => {
+        const model =
+          status === 'ok' && lastOk
+            ? lastOk.model
+            : input.model || getProvider(providerId).availableModels()[0] || ''
         await recordUsage({
           provider: providerId,
           model,
-          status: 'error',
+          inputTokens: status === 'ok' && lastOk ? lastOk.usage.inputTokens : 0,
+          outputTokens: status === 'ok' && lastOk ? lastOk.usage.outputTokens : 0,
+          requestId: status === 'ok' && lastOk ? lastOk.requestId : undefined,
+          status,
           sessionId: input.sessionId ?? null,
           billingMode: credential.billingMode,
           credentialId: credential.id,
           userId: userIdFor(credential),
-          failover: usageMetaForAttempt(context, attempt, 'error')
+          failover: usageMetaFromAttempt({
+            context,
+            attempt,
+            status,
+            path,
+            reason,
+            chainActive,
+            mode: 'agent'
+          })
         })
-        throw error
       }
     }
   )

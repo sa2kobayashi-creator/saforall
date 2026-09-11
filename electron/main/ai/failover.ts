@@ -96,8 +96,12 @@ export type FailoverContext = {
   currentProvider: LlmProviderId
   attempt: number
   visitedProviders: LlmProviderId[]
+  /** Providers that actually ran (credential present). Never secrets. */
+  path: LlmProviderId[]
   attempts: FailoverAttemptRecord[]
   lastReason: FailoverReason | null
+  /** Chain id for this executeWithFailover invocation. */
+  failoverId: string
 }
 
 export type FailoverDecision = {
@@ -116,12 +120,34 @@ export type FailoverResult<T> = {
   billingMode: BillingMode | null
 }
 
-/** Optional UsageEvent extension (backward compatible). */
+/** Optional UsageEvent extension (backward compatible). Phase 2-C-5 adds id/path/mode. */
 export type FailoverUsageMeta = {
   primaryProvider: LlmProviderId
   fallbackProvider?: LlmProviderId | null
   reason?: FailoverReason | null
   attempt?: number
+  failoverId?: string | null
+  path?: LlmProviderId[] | null
+  mode?: 'ask' | 'agent' | null
+}
+
+export type FailoverAttemptHook = (input: {
+  providerId: LlmProviderId
+  credential: FailoverCredential
+  attempt: number
+  context: FailoverContext
+  status: 'ok' | 'error'
+  error?: unknown
+  /** Snapshot path of providers that have actually run (includes this attempt). */
+  path: LlmProviderId[]
+  reason: FailoverReason | null
+  /** True when this attempt belongs to a multi-provider chain (or will). */
+  chainActive: boolean
+}) => void | Promise<void>
+
+export type FailoverRunHooks = {
+  mode?: 'ask' | 'agent'
+  onAttempt?: FailoverAttemptHook
 }
 
 let defaultResolve: FailoverCredentialResolve | null = null
@@ -215,8 +241,45 @@ export function createFailoverContext(config: FailoverConfig): FailoverContext {
     currentProvider: primary,
     attempt: 1,
     visitedProviders: [primary],
+    path: [],
     attempts: [],
-    lastReason: null
+    lastReason: null,
+    failoverId: newFailoverId()
+  }
+}
+
+/** Phase 2-C-5: chain id (never a secret). */
+export function newFailoverId(): string {
+  return `fo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+const FAILOVER_LOG_KEYS = new Set([
+  'failoverId',
+  'primary',
+  'provider',
+  'from',
+  'to',
+  'attempt',
+  'reason',
+  'path',
+  'mode'
+])
+
+/** Structured Failover log — allowlisted fields only (no secrets / raw errors). */
+export function logFailoverEvent(
+  event: 'start' | 'switch' | 'success' | 'exhausted' | 'attempt_error',
+  fields: Record<string, string | number | null | undefined>
+): void {
+  const safe: Record<string, string | number> = {}
+  for (const [key, value] of Object.entries(fields)) {
+    if (!FAILOVER_LOG_KEYS.has(key)) continue
+    if (value === null || value === undefined) continue
+    if (typeof value === 'string' || typeof value === 'number') safe[key] = value
+  }
+  try {
+    console.info(`[AI Failover] ${event}`, safe)
+  } catch {
+    // ignore logging failures
   }
 }
 
@@ -346,10 +409,10 @@ export function advanceFailoverContext(
 }
 
 export function failoverUsageMetaFromContext(context: FailoverContext): FailoverUsageMeta {
+  const path =
+    context.path.length > 0 ? context.path : context.visitedProviders.slice(0, 1)
   const fallbackProvider =
-    context.visitedProviders.length > 1
-      ? context.visitedProviders[context.visitedProviders.length - 1]
-      : null
+    path.length > 1 ? path[path.length - 1] : null
   return {
     primaryProvider: context.primaryProvider,
     fallbackProvider:
@@ -357,7 +420,9 @@ export function failoverUsageMetaFromContext(context: FailoverContext): Failover
         ? fallbackProvider
         : null,
     reason: context.lastReason,
-    attempt: context.attempt
+    attempt: context.attempt,
+    failoverId: context.failoverId,
+    path: [...path]
   }
 }
 
@@ -425,13 +490,21 @@ export async function executeWithFailover<T>(
     credential: FailoverCredential
     attempt: number
     context: FailoverContext
-  }) => Promise<T>
+  }) => Promise<T>,
+  hooks?: FailoverRunHooks
 ): Promise<FailoverResult<T>> {
   const resolve = activeResolve(config)
   let context = createFailoverContext(config)
   let lastError: unknown = null
   const maxSwitches = normalizeMaxFailoverAttempts(config.maxFailoverAttempts ?? 1)
   const hardCap = Math.min(LLM_PROVIDER_IDS.length, 1 + maxSwitches)
+  let chainStarted = false
+
+  logFailoverEvent('start', {
+    failoverId: context.failoverId,
+    primary: context.primaryProvider,
+    mode: hooks?.mode ?? null
+  })
 
   for (let guard = 0; guard < hardCap; guard += 1) {
     const resolved = resolve({
@@ -439,16 +512,24 @@ export async function executeWithFailover<T>(
       userId: config.userId ?? null
     })
     if (!resolved.credential) {
+      // Credential missing: skip execution (not in path), try next.
       lastError = Object.assign(new Error(`${context.currentProvider} の Credential がありません`), {
         code: 'AUTH_ERROR' as const
       })
       const decision = shouldFailover(lastError, context, config)
+      const fromProvider = context.currentProvider
       context = advanceFailoverContext(context, decision, {
         credentialId: null,
         billingMode: resolved.billingMode,
         errorCode: 'AUTH_ERROR'
       })
       if (!decision.shouldFailover || !decision.nextProvider) {
+        logFailoverEvent('exhausted', {
+          failoverId: context.failoverId,
+          attempt: context.attempt,
+          reason: decision.reason,
+          path: context.path.join('→') || null
+        })
         return {
           ok: false,
           error: lastError,
@@ -458,37 +539,109 @@ export async function executeWithFailover<T>(
           billingMode: null
         }
       }
+      chainStarted = true
+      logFailoverEvent('switch', {
+        failoverId: context.failoverId,
+        attempt: context.attempt,
+        from: fromProvider,
+        to: decision.nextProvider,
+        reason: decision.reason
+      })
       continue
     }
 
     const credential = resolved.credential
     const credentialId = credential.id
     const billingMode = credential.billingMode
+    const attemptNumber = context.attempt
+    const providerId = context.currentProvider
+    const pathAfterRun = context.path.includes(providerId)
+      ? [...context.path]
+      : [...context.path, providerId]
+    context = { ...context, path: pathAfterRun }
+
     try {
       const value = await run({
-        providerId: context.currentProvider,
+        providerId,
         credential,
-        attempt: context.attempt,
+        attempt: attemptNumber,
         context
       })
       context = { ...context, lastReason: 'success' }
+      const chainActive = chainStarted || pathAfterRun.length > 1
+      if (hooks?.onAttempt) {
+        await hooks.onAttempt({
+          providerId,
+          credential,
+          attempt: attemptNumber,
+          context,
+          status: 'ok',
+          path: pathAfterRun,
+          reason: 'success',
+          chainActive
+        })
+      }
+      logFailoverEvent('success', {
+        failoverId: context.failoverId,
+        attempt: attemptNumber,
+        provider: providerId,
+        path: pathAfterRun.join('→'),
+        mode: hooks?.mode ?? null
+      })
       return {
         ok: true,
         value,
         context,
-        providerId: context.currentProvider,
+        providerId,
         credentialId,
         billingMode
       }
     } catch (error) {
       lastError = error
       const decision = shouldFailover(error, context, config)
+      const failureReason =
+        failoverReasonFromError(error) ??
+        (decision.reason !== 'disabled' && decision.reason !== 'not_eligible'
+          ? decision.reason
+          : 'not_eligible')
+      // Record Usage AFTER reason is known; BEFORE advancing attempt/provider.
+      const chainActive =
+        chainStarted || pathAfterRun.length > 1 || Boolean(decision.shouldFailover)
+      context = { ...context, lastReason: failureReason }
+      if (hooks?.onAttempt) {
+        await hooks.onAttempt({
+          providerId,
+          credential,
+          attempt: attemptNumber,
+          context,
+          status: 'error',
+          error,
+          path: pathAfterRun,
+          reason: failureReason,
+          chainActive
+        })
+      }
+      logFailoverEvent('attempt_error', {
+        failoverId: context.failoverId,
+        attempt: attemptNumber,
+        provider: providerId,
+        reason: failureReason,
+        path: pathAfterRun.join('→')
+      })
+
+      const fromProvider = providerId
       context = advanceFailoverContext(context, decision, {
         credentialId,
         billingMode,
         errorCode: errorCodeFromUnknown(error)
       })
       if (!decision.shouldFailover || !decision.nextProvider) {
+        logFailoverEvent('exhausted', {
+          failoverId: context.failoverId,
+          attempt: attemptNumber,
+          reason: decision.reason,
+          path: pathAfterRun.join('→')
+        })
         return {
           ok: false,
           error,
@@ -498,9 +651,22 @@ export async function executeWithFailover<T>(
           billingMode
         }
       }
+      chainStarted = true
+      logFailoverEvent('switch', {
+        failoverId: context.failoverId,
+        attempt: context.attempt,
+        from: fromProvider,
+        to: decision.nextProvider,
+        reason: decision.reason
+      })
     }
   }
 
+  logFailoverEvent('exhausted', {
+    failoverId: context.failoverId,
+    attempt: context.attempt,
+    path: context.path.join('→') || null
+  })
   return {
     ok: false,
     error: lastError ?? Object.assign(new Error('Failover exhausted'), { code: 'UNKNOWN' as const }),

@@ -4,6 +4,9 @@ export type UsageFailoverUi = {
   fallbackProvider?: string | null
   reason?: string | null
   attempt?: number
+  failoverId?: string | null
+  path?: string[] | null
+  mode?: 'ask' | 'agent' | null
 }
 
 export type UsageEventLike = {
@@ -41,7 +44,15 @@ export function formatCredentialIdShort(id: string | null | undefined): string {
   return `${raw.slice(0, 10)}…${raw.slice(-4)}`
 }
 
-/** Sanitize failover meta for UI (providers / reason / attempt only). */
+function sanitizePath(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null
+  const path = raw
+    .map((item) => String(item || '').trim())
+    .filter((item) => item.length > 0)
+  return path.length > 0 ? path : null
+}
+
+/** Sanitize failover meta for UI (providers / reason / attempt / id / path only). */
 export function failoverForUi(
   raw: UsageEventLike['failover'] | null | undefined
 ): UsageFailoverUi | null {
@@ -50,17 +61,23 @@ export function failoverForUi(
   if (!primaryProvider) return null
   const fallbackRaw = raw.fallbackProvider != null ? String(raw.fallbackProvider).trim() : ''
   const reasonRaw = raw.reason != null ? String(raw.reason).trim() : ''
+  const failoverIdRaw = raw.failoverId != null ? String(raw.failoverId).trim() : ''
+  const mode =
+    raw.mode === 'ask' || raw.mode === 'agent' ? raw.mode : null
   return {
     primaryProvider,
     fallbackProvider: fallbackRaw || null,
     reason: reasonRaw || null,
-    attempt: typeof raw.attempt === 'number' && Number.isFinite(raw.attempt) ? raw.attempt : undefined
+    attempt: typeof raw.attempt === 'number' && Number.isFinite(raw.attempt) ? raw.attempt : undefined,
+    failoverId: failoverIdRaw || null,
+    path: sanitizePath(raw.path),
+    mode
   }
 }
 
 /**
  * Compact Router Failover label. Distinct from PHP route-log fallback_from.
- * Normal primary success (no switch) → empty / dash.
+ * Prefers full path when present. Old events without path still work.
  */
 export function formatRouterFailoverLabel(
   failover: UsageFailoverUi | null | undefined,
@@ -68,12 +85,32 @@ export function formatRouterFailoverLabel(
 ): string {
   const meta = failoverForUi(failover)
   if (!meta) return ''
+  const path = meta.path && meta.path.length > 1 ? meta.path : null
   const switched =
-    Boolean(meta.fallbackProvider) || (typeof meta.attempt === 'number' && meta.attempt > 1)
+    Boolean(path) ||
+    Boolean(meta.fallbackProvider) ||
+    (typeof meta.attempt === 'number' && meta.attempt > 1)
   if (!switched) return ''
-  const to = meta.fallbackProvider || String(engine || '').trim() || '?'
-  const base = `${meta.primaryProvider}→${to}`
-  return meta.reason ? `${base} (${meta.reason})` : base
+  const base = path
+    ? path.join('→')
+    : `${meta.primaryProvider}→${meta.fallbackProvider || String(engine || '').trim() || '?'}`
+  const modeTag = meta.mode === 'agent' ? ' [agent]' : meta.mode === 'ask' ? '' : ''
+  return meta.reason ? `${base} (${meta.reason})${modeTag}` : `${base}${modeTag}`
+}
+
+/**
+ * Count unique Router Failover chains (by failoverId), not UsageEvent rows.
+ * Events without failoverId are ignored.
+ */
+export function countFailoverChains(
+  events: Array<{ failover?: UsageFailoverUi | null } | null | undefined>
+): number {
+  const ids = new Set<string>()
+  for (const event of events) {
+    const id = String(event?.failover?.failoverId || '').trim()
+    if (id) ids.add(id)
+  }
+  return ids.size
 }
 
 export type UsageRecentRow = {
@@ -93,20 +130,23 @@ export type UsageRecentRow = {
 }
 
 export function usageEventsToRecentRows(events: UsageEventLike[], limit = 30): UsageRecentRow[] {
-  return events.slice(0, limit).map((event, index) => ({
-    id: index + 1,
-    engine: event.provider,
-    task_type: event.status === 'error' ? 'error' : 'llm',
-    mode: 'ask',
-    model: event.model || null,
-    estimated_usd: Math.round((Number(event.estimatedCost) || 0) * 10000) / 10000,
-    fallback_from: null,
-    fallback_reason: null,
-    created_at: event.timestamp,
-    billingMode: billingModeForUi(event.billingMode),
-    credentialId: credentialIdForUi(event.credentialId),
-    routerFailover: failoverForUi(event.failover)
-  }))
+  return events.slice(0, limit).map((event, index) => {
+    const failover = failoverForUi(event.failover)
+    return {
+      id: index + 1,
+      engine: event.provider,
+      task_type: event.status === 'error' ? 'error' : 'llm',
+      mode: failover?.mode === 'agent' ? 'agent' : 'ask',
+      model: event.model || null,
+      estimated_usd: Math.round((Number(event.estimatedCost) || 0) * 10000) / 10000,
+      fallback_from: null,
+      fallback_reason: null,
+      created_at: event.timestamp,
+      billingMode: billingModeForUi(event.billingMode),
+      credentialId: credentialIdForUi(event.credentialId),
+      routerFailover: failover
+    }
+  })
 }
 
 /** Attach billingMode (+ credentialId / routerFailover from matched events) onto route-log recent rows. */
