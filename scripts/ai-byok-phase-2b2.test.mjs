@@ -43,9 +43,11 @@ test('B/C/D: Resolver priority BYOK → settings → env', async () => {
 
 test('E: BYOK usage records billingMode from Resolver credential', async () => {
   const router = await read('electron/main/ai/router.ts')
-  assert.match(router, /billingMode: credential.billingMode/)
-  assert.match(router, /credentialId: credential.id/)
+  // Phase 2-C-5 review: onAttempt receives billingMode/credentialId only (no Credential object).
+  assert.match(router, /billingMode:\s*billingMode/)
+  assert.match(router, /credentialId:\s*credentialId/)
   assert.doesNotMatch(router, /billingMode: 'DEVELOPMENT' as const/)
+  assert.doesNotMatch(router, /onAttempt:[\s\S]*?\bcredential\s*:/)
   const usage = await read('electron/main/ai/usage.ts')
   assert.doesNotMatch(usage, /secret/)
   assert.doesNotMatch(usage, /Authorization/)

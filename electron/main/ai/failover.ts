@@ -133,15 +133,17 @@ export type FailoverUsageMeta = {
 
 export type FailoverAttemptHook = (input: {
   providerId: LlmProviderId
-  credential: FailoverCredential
+  credentialId: string
+  billingMode: BillingMode
   attempt: number
+  /** Context has no secrets (providers / ids / reasons only). */
   context: FailoverContext
   status: 'ok' | 'error'
-  error?: unknown
+  errorCode?: FailoverErrorCode | null
   /** Snapshot path of providers that have actually run (includes this attempt). */
   path: LlmProviderId[]
   reason: FailoverReason | null
-  /** True when this attempt belongs to a multi-provider chain (or will). */
+  /** True when this attempt belongs to (or starts) a real Failover Chain. */
   chainActive: boolean
 }) => void | Promise<void>
 
@@ -572,7 +574,8 @@ export async function executeWithFailover<T>(
       if (hooks?.onAttempt) {
         await hooks.onAttempt({
           providerId,
-          credential,
+          credentialId,
+          billingMode,
           attempt: attemptNumber,
           context,
           status: 'ok',
@@ -599,23 +602,26 @@ export async function executeWithFailover<T>(
     } catch (error) {
       lastError = error
       const decision = shouldFailover(error, context, config)
+      const errorCode = errorCodeFromUnknown(error)
       const failureReason =
         failoverReasonFromError(error) ??
         (decision.reason !== 'disabled' && decision.reason !== 'not_eligible'
           ? decision.reason
           : 'not_eligible')
       // Record Usage AFTER reason is known; BEFORE advancing attempt/provider.
+      // chainActive only when we already switched or will switch now.
       const chainActive =
         chainStarted || pathAfterRun.length > 1 || Boolean(decision.shouldFailover)
       context = { ...context, lastReason: failureReason }
       if (hooks?.onAttempt) {
         await hooks.onAttempt({
           providerId,
-          credential,
+          credentialId,
+          billingMode,
           attempt: attemptNumber,
           context,
           status: 'error',
-          error,
+          errorCode,
           path: pathAfterRun,
           reason: failureReason,
           chainActive
@@ -633,7 +639,7 @@ export async function executeWithFailover<T>(
       context = advanceFailoverContext(context, decision, {
         credentialId,
         billingMode,
-        errorCode: errorCodeFromUnknown(error)
+        errorCode
       })
       if (!decision.shouldFailover || !decision.nextProvider) {
         logFailoverEvent('exhausted', {

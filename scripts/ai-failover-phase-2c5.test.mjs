@@ -511,8 +511,93 @@ test('H: INSUFFICIENT_CREDIT → no Router Failover', async () => {
       messages: [{ role: 'user', content: 'hi' }]
     })
   )
-  assert.equal(h.listUsageEvents().length, 1)
-  assert.equal(h.listUsageEvents()[0].provider, 'openai')
+  const events = h.listUsageEvents()
+  assert.equal(events.length, 1)
+  assert.equal(events[0].provider, 'openai')
+  assert.equal(events[0].failover, null)
+  assert.equal(h.countFailoverChains(events), 0)
+})
+
+test('review-1: success metadata keeps credentialSource', async () => {
+  const h = await prepare()
+  h.registerProvider(mockAdapter('openai'))
+  const res = await h.executeAi({
+    provider: 'openai',
+    routingMode: 'manual',
+    messages: [{ role: 'user', content: 'hi' }]
+  })
+  assert.equal(res.metadata?.credentialSource, 'byok')
+  assert.equal(h.listUsageEvents()[0].failover, null)
+})
+
+test('review-2: onAttempt hook type has no Credential/secret surface', async () => {
+  const failover = await read('electron/main/ai/failover.ts')
+  const hookBlock = failover.slice(
+    failover.indexOf('export type FailoverAttemptHook'),
+    failover.indexOf('export type FailoverRunHooks')
+  )
+  assert.doesNotMatch(hookBlock, /\bcredential\s*:/)
+  assert.doesNotMatch(hookBlock, /\bsecret\b/)
+  assert.doesNotMatch(hookBlock, /\berror\?\s*:/)
+  assert.match(hookBlock, /credentialId/)
+  assert.match(hookBlock, /billingMode/)
+  assert.match(hookBlock, /errorCode/)
+})
+
+test('review-3: single-shot failure has no failoverId; chain has shared id', async () => {
+  const h = await prepare({ maxAttempts: '1' })
+  h.registerProvider(
+    mockAdapter('openai', {
+      generate: async () => {
+        throw new h.AIError('MODEL_NOT_FOUND', 'missing', { providerId: 'openai' })
+      }
+    })
+  )
+  h.registerProvider(mockAdapter('claude'))
+  await assert.rejects(() =>
+    h.executeAi({
+      provider: 'openai',
+      routingMode: 'manual',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+  )
+  const single = h.listUsageEvents()
+  assert.equal(single.length, 1)
+  assert.equal(single[0].failover, null)
+  assert.equal(h.countFailoverChains(single), 0)
+
+  h.resetUsageForTests()
+  h.resetProviderRegistryForTests()
+  h.registerProvider(
+    mockAdapter('openai', {
+      generate: async () => {
+        throw new h.AIError('RATE_LIMIT', 'rl', { httpStatus: 429, providerId: 'openai' })
+      }
+    })
+  )
+  h.registerProvider(
+    mockAdapter('claude', {
+      generate: async () => ({
+        provider: 'claude',
+        model: 'm',
+        content: 'ok',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        requestId: 'r-chain',
+        metadata: {}
+      })
+    })
+  )
+  await h.executeAi({
+    provider: 'openai',
+    routingMode: 'manual',
+    messages: [{ role: 'user', content: 'hi' }]
+  })
+  const chain = h.listUsageEvents()
+  assert.equal(chain.length, 2)
+  assert.ok(chain[0].failover?.failoverId)
+  assert.equal(chain[0].failover.failoverId, chain[1].failover.failoverId)
+  assert.equal(h.countFailoverChains(chain), 1)
 })
 
 test('I: Agent openai→claude only; mode=agent', async () => {

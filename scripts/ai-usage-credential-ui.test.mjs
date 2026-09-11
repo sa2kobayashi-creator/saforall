@@ -128,8 +128,10 @@ test('recordUsage / router still write credentialId without secrets', async () =
   const usage = await read('electron/main/ai/usage.ts')
   const router = await read('electron/main/ai/router.ts')
   assert.match(usage, /credentialId\?: string \| null/)
-  assert.match(router, /credentialId: credential\.id/)
+  // Phase 2-C-5 review: hook passes credentialId string, not Credential object.
+  assert.match(router, /credentialId:\s*credentialId/)
   assert.doesNotMatch(router, /credential\.apiKey/)
+  assert.doesNotMatch(router, /onAttempt:[\s\S]*?\bcredential\s*:/)
   // Adapter Credential mapping may reference .secret in Main only; Usage payloads must not.
   const usageCalls = router.match(/recordUsage\(\{[\s\S]*?\}\)/g) || []
   assert.ok(usageCalls.length >= 2)

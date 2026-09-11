@@ -117,10 +117,6 @@ function asCredential(credential: FailoverCredential): Credential {
   }
 }
 
-function userIdFor(credential: FailoverCredential): string | null {
-  return credential.ownerType === 'user' ? 'local-user' : null
-}
-
 function usageMetaFromAttempt(input: {
   context: FailoverContext
   attempt: number
@@ -130,13 +126,13 @@ function usageMetaFromAttempt(input: {
   chainActive: boolean
   mode: 'ask' | 'agent'
 }): UsageFailoverMeta | null {
-  const { context, attempt, status, path, reason, chainActive, mode } = input
-  if (attempt <= 1 && status === 'ok' && path.length <= 1 && !chainActive) {
+  const { context, attempt, path, reason, chainActive, mode, status } = input
+  // Only emit Failover meta for real chains (switched or about to switch).
+  // Normal success and single-shot failures stay without failoverId/meta.
+  if (!chainActive && path.length <= 1) {
     return null
   }
-  const fallbackProvider =
-    path.length > 1 ? path[path.length - 1] : null
-  const includeChainId = chainActive || path.length > 1 || attempt > 1
+  const fallbackProvider = path.length > 1 ? path[path.length - 1] : null
   return {
     primaryProvider: context.primaryProvider,
     fallbackProvider:
@@ -145,7 +141,7 @@ function usageMetaFromAttempt(input: {
         : null,
     reason: (status === 'ok' ? 'success' : reason) as UsageFailoverMeta['reason'],
     attempt,
-    failoverId: includeChainId ? context.failoverId : null,
+    failoverId: context.failoverId,
     path: path.length > 0 ? [...path] : null,
     mode
   }
@@ -181,6 +177,7 @@ export async function executeAi(request: AIRequest): Promise<AIResponse> {
     : undefined
 
   let lastOkResponse: AIResponse | null = null
+  let lastCredentialSource: string | undefined
 
   const result = await executeWithFailover(
     {
@@ -204,13 +201,15 @@ export async function executeAi(request: AIRequest): Promise<AIResponse> {
         cred
       )
       lastOkResponse = response
+      lastCredentialSource = credential.source
       return response
     },
     {
       mode: 'ask',
       onAttempt: async ({
         providerId,
-        credential,
+        credentialId,
+        billingMode,
         attempt,
         context,
         status,
@@ -233,9 +232,9 @@ export async function executeAi(request: AIRequest): Promise<AIResponse> {
               : requestIdHint,
           status,
           sessionId,
-          billingMode: credential.billingMode,
-          credentialId: credential.id,
-          userId: userIdFor(credential),
+          billingMode: billingMode,
+          credentialId: credentialId,
+          userId: billingMode === 'BYOK' ? 'local-user' : null,
           failover: usageMetaFromAttempt({
             context,
             attempt,
@@ -258,6 +257,7 @@ export async function executeAi(request: AIRequest): Promise<AIResponse> {
         ...response.metadata,
         routingMode: request.routingMode ?? 'manual',
         elapsedMs: Date.now() - started,
+        credentialSource: lastCredentialSource,
         failoverAttempt: result.context.attempt,
         primaryProvider: result.context.primaryProvider,
         failoverId: result.context.path.length > 1 ? result.context.failoverId : undefined
@@ -347,7 +347,8 @@ export async function executeAiWithTools(
       mode: 'agent',
       onAttempt: async ({
         providerId,
-        credential,
+        credentialId,
+        billingMode,
         attempt,
         context,
         status,
@@ -367,9 +368,9 @@ export async function executeAiWithTools(
           requestId: status === 'ok' && lastOk ? lastOk.requestId : undefined,
           status,
           sessionId: input.sessionId ?? null,
-          billingMode: credential.billingMode,
-          credentialId: credential.id,
-          userId: userIdFor(credential),
+          billingMode: billingMode,
+          credentialId: credentialId,
+          userId: billingMode === 'BYOK' ? 'local-user' : null,
           failover: usageMetaFromAttempt({
             context,
             attempt,
