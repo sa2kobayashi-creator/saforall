@@ -713,6 +713,48 @@ export function analyzeFailoverChains(
   }
 }
 
+/**
+ * Phase 9-B: All UsageEvent provider status facts (not Health/Risk).
+ * Population: every event in the input list — with or without failoverId.
+ * Independent of byProvider / finalSuccess* / finalFailed*.
+ */
+export type UsageEventProviderStatus = {
+  provider: string
+  ok: number
+  error: number
+  total: number
+}
+
+/**
+ * Aggregate ok/error/total per provider across all UsageEvents.
+ * Does not call groupUsageEventsByFailoverId or read Chain analysis fields.
+ */
+export function analyzeUsageEventProviderStatus(
+  events: UsageEventLike[] | null | undefined
+): UsageEventProviderStatus[] {
+  const list = Array.isArray(events) ? events : []
+  const map = new Map<string, UsageEventProviderStatus>()
+
+  for (const event of list) {
+    if (!event || typeof event !== 'object') continue
+
+    const provider = String(event.provider ?? '').trim() || '?'
+    const cur = map.get(provider) ?? {
+      provider,
+      ok: 0,
+      error: 0,
+      total: 0
+    }
+    cur.total += 1
+    const status = String(event.status ?? '').trim()
+    if (status === 'ok') cur.ok += 1
+    else if (status === 'error') cur.error += 1
+    map.set(provider, cur)
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.provider.localeCompare(b.provider))
+}
+
 export type UsageRecentRow = {
   id: number
   engine: string

@@ -131,6 +131,7 @@ export {
   analyzeFailoverChains,
   resolveFinalSuccessProvider,
   resolveFinalFailedProvider,
+  analyzeUsageEventProviderStatus,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   resetUsageForTests,
@@ -141,6 +142,7 @@ export {
   type FailoverChainFinalSuccessProviderCount,
   type FailoverChainFinalFailedProviderCount,
   type FailoverChainReasonTransition,
-  type FailoverChainDailyBucket
+  type FailoverChainDailyBucket,
+  type UsageEventProviderStatus
 } from './usage'
 export { estimateCostUsd } from './cost'
