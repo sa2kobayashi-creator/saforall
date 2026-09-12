@@ -485,6 +485,17 @@
   text-align: right;
 }
 
+/* Phase 6-C: Final Success Providers (analysis counts; not hop OKs) */
+.usage-failover-final-success-note {
+  margin: 2px 0 4px;
+  font-size: 11px;
+}
+
+.usage-failover-final-success-table th:nth-child(2),
+.usage-failover-final-success-table td:nth-child(2) {
+  width: 28%;
+}
+
 /* Phase 4-A: Mode / Provider / Reason visibility (display-only bars) */
 .usage-failover-mode-list {
   list-style: none;

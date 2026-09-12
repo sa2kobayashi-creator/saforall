@@ -100,6 +100,11 @@ type FailoverChainSummaryRow = {
   statuses?: string[]
   finalStatus?: string
   finalReason?: string | null
+  /**
+   * Phase 6-B/6-C: Core-generated final success attribution.
+   * Display only — never infer from hops[].
+   */
+  finalSuccessProvider?: string | null
   /** Phase 4-B: hop details from API summary (display only). */
   hops?: FailoverChainHopView[] | null
 }
@@ -135,6 +140,14 @@ type FailoverChainAnalysisView = {
     reason: string
     count: number
   }>
+  /**
+   * Phase 6-B/6-C: chain-level final success counts (not byProvider.oks).
+   * Display only — never recompute in panel.
+   */
+  finalSuccessProviderCounts?: Array<{
+    provider: string
+    count: number
+  }> | null
 }
 
 type RouterInsight = {
@@ -349,6 +362,16 @@ function formatChainFinalReason(value: string | null | undefined): string {
 }
 
 /**
+ * Phase 6-C: display Core finalSuccessProvider as-is (null/empty → —).
+ * Never infer from hops[].
+ */
+function formatChainFinalSuccessProvider(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return '—'
+  return engineDisplayName(raw)
+}
+
+/**
  * Phase 2-C-7: Single Source — display API summaries only (no Chain regrouping).
  * Legacy/external payloads without summaries → empty (do not invent chains from recent).
  */
@@ -499,6 +522,12 @@ export function UsagePanel({
     : 0
   const reasonCountMax = Array.isArray(failoverAnalysis?.byReason)
     ? Math.max(0, ...failoverAnalysis.byReason.map((row) => Number(row.count) || 0))
+    : 0
+  const finalSuccessCountMax = Array.isArray(failoverAnalysis?.finalSuccessProviderCounts)
+    ? Math.max(
+        0,
+        ...failoverAnalysis.finalSuccessProviderCounts.map((row) => Number(row.count) || 0)
+      )
     : 0
   const modeCountMax = failoverAnalysis?.byMode
     ? Math.max(
@@ -1034,6 +1063,53 @@ export function UsagePanel({
                         </>
                       )}
 
+                    {Array.isArray(failoverAnalysis.finalSuccessProviderCounts) &&
+                      failoverAnalysis.finalSuccessProviderCounts.length > 0 && (
+                        <>
+                          <h5 className="usage-failover-analysis-sub">
+                            Final Success Providers
+                          </h5>
+                          <p className="usage-muted usage-failover-final-success-note">
+                            Chain 最終成功の帰属件数 · Hop の OKs とは別
+                          </p>
+                          <table className="usage-table usage-failover-final-success-table">
+                            <thead>
+                              <tr>
+                                <th>Provider</th>
+                                <th>Count</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {failoverAnalysis.finalSuccessProviderCounts.map((row) => (
+                                <tr key={row.provider}>
+                                  <td>
+                                    {ENGINE_LABELS[
+                                      row.provider as keyof typeof ENGINE_LABELS
+                                    ] ?? row.provider}
+                                  </td>
+                                  <td>
+                                    <div className="usage-failover-metric">
+                                      <span>{row.count}</span>
+                                      <div className="usage-bar-track usage-failover-mini-bar">
+                                        <div
+                                          className="usage-bar-fill"
+                                          style={{
+                                            width: `${relativeBarWidth(
+                                              row.count,
+                                              finalSuccessCountMax
+                                            )}%`
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+
                     {Array.isArray(failoverAnalysis.byReason) &&
                       failoverAnalysis.byReason.length > 0 && (
                         <>
@@ -1118,6 +1194,14 @@ export function UsagePanel({
                                   <dt>Final Reason</dt>
                                   <dd className="usage-model-id">
                                     {formatChainFinalReason(chain.finalReason)}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Final Success Provider</dt>
+                                  <dd>
+                                    {formatChainFinalSuccessProvider(
+                                      chain.finalSuccessProvider
+                                    )}
                                   </dd>
                                 </div>
                               </dl>

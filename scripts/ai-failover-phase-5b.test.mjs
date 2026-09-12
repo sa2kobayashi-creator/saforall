@@ -92,11 +92,11 @@ test('5b T12: billingMode not in Hop UI', async () => {
   assert.doesNotMatch(hop, /billingMode/)
 })
 
-test('5b T13: no final-success Provider aggregation', async () => {
+test('5b T13: no final-success Provider hop estimation', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
-  assert.doesNotMatch(panel, /finalSuccess/i)
-  assert.doesNotMatch(panel, /最終成功/)
+  // Phase 6-C may display Core finalSuccess* fields; estimation from hops remains forbidden.
   assert.doesNotMatch(panel, /hops\[hops\.length\s*-\s*1\]/)
+  assert.doesNotMatch(panel, /resolveFinalSuccessProvider/)
 })
 
 test('5b T14: no failedProviderCounts aggregation', async () => {

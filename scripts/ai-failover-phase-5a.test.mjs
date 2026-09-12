@@ -120,11 +120,11 @@ test('5a T11: Chain finalStatus / finalReason from Summary', async () => {
   assert.doesNotMatch(chain, /finalReason\s*=/)
 })
 
-test('5a T12: no final-success Provider aggregation', async () => {
+test('5a T12: no final-success Provider hop estimation in panel', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
-  assert.doesNotMatch(panel, /finalSuccess/i)
-  assert.doesNotMatch(panel, /最終成功/)
-  assert.doesNotMatch(panel, /finalSuccessProvider/i)
+  // Phase 6-C may display Core finalSuccessProvider; panel must not estimate from hops.
+  assert.doesNotMatch(panel, /hops\[hops\.length\s*-\s*1\]/)
+  assert.doesNotMatch(panel, /resolveFinalSuccessProvider/)
 })
 
 test('5a T13: no problem Provider auto-label', async () => {
