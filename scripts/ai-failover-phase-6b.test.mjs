@@ -436,13 +436,16 @@ test('6b T9: existing chain / analysis fields retained', async () => {
   assert.ok(Array.isArray(analysis.finalSuccessProviderCounts))
 })
 
-test('6b T10: secret fields not on new aggregates; panel must not resolve/estimate', async () => {
+test('6b T10: secret fields not on aggregates; panel must not resolve/estimate', async () => {
   const billing = await read('electron/main/ai/usageBillingUi.ts')
   const panel = await read('src/components/UsagePanel.tsx')
   assert.match(billing, /finalSuccessProvider/)
   assert.match(billing, /finalSuccessProviderCounts/)
-  assert.doesNotMatch(billing, /failedProviderCounts/)
-  assert.doesNotMatch(billing, /reasonTransitions/)
+  // Phase 7-B adds finalFailed* / reasonTransitions; ambiguous bare failedProviderCounts stays banned.
+  assert.match(billing, /finalFailedProvider/)
+  assert.match(billing, /finalFailedProviderCounts/)
+  assert.match(billing, /reasonTransitions/)
+  assert.doesNotMatch(billing, /(?<!final)failedProviderCounts/)
   assert.doesNotMatch(billing, /providerHealth|providerRisk/i)
   const countsBlock = billing.slice(
     billing.indexOf('finalSuccessProviderCounts'),
@@ -451,8 +454,9 @@ test('6b T10: secret fields not on new aggregates; panel must not resolve/estima
   assert.doesNotMatch(countsBlock, /credentialId/)
   assert.doesNotMatch(countsBlock, /billingMode/)
   assert.doesNotMatch(countsBlock, /apiKey|Authorization|password|secret/i)
-  // Panel may display Core fields (6-C) but must not call Core resolver or infer from hops.
+  // Panel may display Core fields (6-C+) but must not call Core resolver or infer from hops.
   assert.doesNotMatch(panel, /resolveFinalSuccessProvider/)
+  assert.doesNotMatch(panel, /resolveFinalFailedProvider/)
   assert.doesNotMatch(panel, /hops\[hops\.length\s*-\s*1\]/)
 })
 

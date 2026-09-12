@@ -205,6 +205,12 @@ export type FailoverChainSummary = {
    * Core-generated only — UI must not infer from hops[].
    */
   finalSuccessProvider: string | null
+  /**
+   * Phase 7-B P0: provider that formally owns final failure for this chain.
+   * null when finalStatus !== 'error' or no non-empty error hop exists.
+   * Core-generated only — UI must not infer from hops[].
+   */
+  finalFailedProvider: string | null
 }
 
 /**
@@ -221,6 +227,27 @@ export function resolveFinalSuccessProvider(
     const hop = hops[i]
     if (!hop || typeof hop !== 'object') continue
     if (String(hop.status || '').trim() !== 'ok') continue
+    const provider = String(hop.provider || '').trim()
+    if (!provider) continue
+    return provider
+  }
+  return null
+}
+
+/**
+ * Phase 7-B P0: resolve finalFailedProvider from finalStatus + hops (Core only).
+ * Walk hops from the end; first status===error with non-empty provider wins.
+ */
+export function resolveFinalFailedProvider(
+  finalStatus: string,
+  hops: FailoverChainHop[] | null | undefined
+): string | null {
+  if (String(finalStatus || '').trim() !== 'error') return null
+  if (!Array.isArray(hops) || hops.length === 0) return null
+  for (let i = hops.length - 1; i >= 0; i -= 1) {
+    const hop = hops[i]
+    if (!hop || typeof hop !== 'object') continue
+    if (String(hop.status || '').trim() !== 'error') continue
     const provider = String(hop.provider || '').trim()
     if (!provider) continue
     return provider
@@ -323,7 +350,8 @@ export function groupUsageEventsByFailoverId(
       hops,
       finalStatus,
       finalReason,
-      finalSuccessProvider: resolveFinalSuccessProvider(finalStatus, hops)
+      finalSuccessProvider: resolveFinalSuccessProvider(finalStatus, hops),
+      finalFailedProvider: resolveFinalFailedProvider(finalStatus, hops)
     })
   }
 
@@ -392,6 +420,17 @@ export type FailoverChainFinalSuccessProviderCount = {
   count: number
 }
 
+export type FailoverChainFinalFailedProviderCount = {
+  provider: string
+  count: number
+}
+
+export type FailoverChainReasonTransition = {
+  from: string
+  to: string
+  count: number
+}
+
 /**
  * Phase 3-A: read-time Router Failover Chain analysis.
  * Derived only from FailoverChainSummary[] — no secrets / credentialId / raw errors.
@@ -417,6 +456,16 @@ export type FailoverChainAnalysis = {
    * Not the same as byProvider[].oks (hop-level).
    */
   finalSuccessProviderCounts: FailoverChainFinalSuccessProviderCount[]
+  /**
+   * Phase 7-B P0: chain-level final failure attribution counts.
+   * Not the same as byProvider[].errors (hop-level).
+   */
+  finalFailedProviderCounts: FailoverChainFinalFailedProviderCount[]
+  /**
+   * Phase 7-B P1: adjacent reason transitions from summary.reasons[] only.
+   * Do not regenerate from hops in analysis or UI.
+   */
+  reasonTransitions: FailoverChainReasonTransition[]
 }
 
 function hopCountOf(summary: FailoverChainSummary | null | undefined): number {
@@ -466,6 +515,8 @@ export function analyzeFailoverChains(
   const providerMap = new Map<string, FailoverChainProviderStat>()
   const reasonMap = new Map<string, number>()
   const finalSuccessMap = new Map<string, number>()
+  const finalFailedMap = new Map<string, number>()
+  const transitionMap = new Map<string, { from: string; to: string; count: number }>()
 
   for (const summary of list) {
     if (!summary || typeof summary !== 'object') continue
@@ -492,6 +543,14 @@ export function analyzeFailoverChains(
       finalSuccessMap.set(
         finalSuccessProvider,
         (finalSuccessMap.get(finalSuccessProvider) || 0) + 1
+      )
+    }
+
+    const finalFailedProvider = String(summary.finalFailedProvider || '').trim()
+    if (finalFailedProvider) {
+      finalFailedMap.set(
+        finalFailedProvider,
+        (finalFailedMap.get(finalFailedProvider) || 0) + 1
       )
     }
 
@@ -522,6 +581,19 @@ export function analyzeFailoverChains(
       if (!reason) continue
       reasonMap.set(reason, (reasonMap.get(reason) || 0) + 1)
     }
+
+    // Phase 7-B P1: adjacent transitions from summary.reasons only (no hop regen).
+    if (Array.isArray(summary.reasons) && summary.reasons.length >= 2) {
+      for (let i = 0; i < summary.reasons.length - 1; i += 1) {
+        const from = String(summary.reasons[i] || '').trim()
+        const to = String(summary.reasons[i + 1] || '').trim()
+        if (!from || !to) continue
+        const key = `${from}\0${to}`
+        const cur = transitionMap.get(key)
+        if (cur) cur.count += 1
+        else transitionMap.set(key, { from, to, count: 1 })
+      }
+    }
   }
 
   const successRate = totalChains === 0 ? null : successfulChains / totalChains
@@ -537,6 +609,14 @@ export function analyzeFailoverChains(
   const finalSuccessProviderCounts = Array.from(finalSuccessMap.entries())
     .map(([provider, count]) => ({ provider, count }))
     .sort((a, b) => a.provider.localeCompare(b.provider))
+  const finalFailedProviderCounts = Array.from(finalFailedMap.entries())
+    .map(([provider, count]) => ({ provider, count }))
+    .sort((a, b) => a.provider.localeCompare(b.provider))
+  const reasonTransitions = Array.from(transitionMap.values()).sort((a, b) => {
+    const fromCmp = a.from.localeCompare(b.from)
+    if (fromCmp !== 0) return fromCmp
+    return a.to.localeCompare(b.to)
+  })
 
   return {
     totalChains,
@@ -551,7 +631,9 @@ export function analyzeFailoverChains(
     byMode,
     byProvider,
     byReason,
-    finalSuccessProviderCounts
+    finalSuccessProviderCounts,
+    finalFailedProviderCounts,
+    reasonTransitions
   }
 }
 
