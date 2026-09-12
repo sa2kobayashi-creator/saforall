@@ -492,7 +492,7 @@ test('7b T10: existing success fields retained; new fields present', async () =>
   assert.deepEqual(analysis.finalFailedProviderCounts, [])
 })
 
-test('7b T11: secrets / Health not on Phase 7 aggregates; panel UI unchanged for 7-B', async () => {
+test('7b T11: secrets / Health not on Phase 7 aggregates; panel must not resolve/estimate', async () => {
   const billing = await read('electron/main/ai/usageBillingUi.ts')
   const panel = await read('src/components/UsagePanel.tsx')
   assert.match(billing, /finalFailedProvider/)
@@ -508,10 +508,7 @@ test('7b T11: secrets / Health not on Phase 7 aggregates; panel UI unchanged for
   assert.doesNotMatch(failedBlock, /credentialId/)
   assert.doesNotMatch(failedBlock, /billingMode/)
   assert.doesNotMatch(failedBlock, /apiKey|Authorization|password|secret/i)
-  // Phase 7-B: UI must not yet display / resolve Failed fields
-  assert.doesNotMatch(panel, /finalFailedProvider/)
-  assert.doesNotMatch(panel, /finalFailedProviderCounts/)
-  assert.doesNotMatch(panel, /reasonTransitions/)
+  // Phase 7-C may display Core fields; panel must not call resolver or infer from hops.
   assert.doesNotMatch(panel, /resolveFinalFailedProvider/)
   assert.doesNotMatch(panel, /hops\[hops\.length\s*-\s*1\]/)
 })

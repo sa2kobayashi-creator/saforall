@@ -105,6 +105,11 @@ type FailoverChainSummaryRow = {
    * Display only — never infer from hops[].
    */
   finalSuccessProvider?: string | null
+  /**
+   * Phase 7-B/7-C: Core-generated final failure attribution.
+   * Display only — never infer from hops[].
+   */
+  finalFailedProvider?: string | null
   /** Phase 4-B: hop details from API summary (display only). */
   hops?: FailoverChainHopView[] | null
 }
@@ -146,6 +151,23 @@ type FailoverChainAnalysisView = {
    */
   finalSuccessProviderCounts?: Array<{
     provider: string
+    count: number
+  }> | null
+  /**
+   * Phase 7-B/7-C: chain-level final failure counts (not byProvider.errors).
+   * Display only — never recompute in panel.
+   */
+  finalFailedProviderCounts?: Array<{
+    provider: string
+    count: number
+  }> | null
+  /**
+   * Phase 7-B/7-C: adjacent reason transitions from Core analysis.
+   * Display only — never recompute from reasons[] in panel.
+   */
+  reasonTransitions?: Array<{
+    from: string
+    to: string
     count: number
   }> | null
 }
@@ -372,6 +394,16 @@ function formatChainFinalSuccessProvider(value: string | null | undefined): stri
 }
 
 /**
+ * Phase 7-C: display Core finalFailedProvider as-is (null/empty → —).
+ * Never infer from hops[].
+ */
+function formatChainFinalFailedProvider(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return '—'
+  return engineDisplayName(raw)
+}
+
+/**
  * Phase 2-C-7: Single Source — display API summaries only (no Chain regrouping).
  * Legacy/external payloads without summaries → empty (do not invent chains from recent).
  */
@@ -527,6 +559,18 @@ export function UsagePanel({
     ? Math.max(
         0,
         ...failoverAnalysis.finalSuccessProviderCounts.map((row) => Number(row.count) || 0)
+      )
+    : 0
+  const finalFailedCountMax = Array.isArray(failoverAnalysis?.finalFailedProviderCounts)
+    ? Math.max(
+        0,
+        ...failoverAnalysis.finalFailedProviderCounts.map((row) => Number(row.count) || 0)
+      )
+    : 0
+  const reasonTransitionCountMax = Array.isArray(failoverAnalysis?.reasonTransitions)
+    ? Math.max(
+        0,
+        ...failoverAnalysis.reasonTransitions.map((row) => Number(row.count) || 0)
       )
     : 0
   const modeCountMax = failoverAnalysis?.byMode
@@ -1110,6 +1154,53 @@ export function UsagePanel({
                         </>
                       )}
 
+                    {Array.isArray(failoverAnalysis.finalFailedProviderCounts) &&
+                      failoverAnalysis.finalFailedProviderCounts.length > 0 && (
+                        <>
+                          <h5 className="usage-failover-analysis-sub">
+                            Final Failed Providers
+                          </h5>
+                          <p className="usage-muted usage-failover-final-failed-note">
+                            Chain 最終失敗の帰属件数 · Hop の Errors とは別
+                          </p>
+                          <table className="usage-table usage-failover-final-failed-table">
+                            <thead>
+                              <tr>
+                                <th>Provider</th>
+                                <th>Count</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {failoverAnalysis.finalFailedProviderCounts.map((row) => (
+                                <tr key={row.provider}>
+                                  <td>
+                                    {ENGINE_LABELS[
+                                      row.provider as keyof typeof ENGINE_LABELS
+                                    ] ?? row.provider}
+                                  </td>
+                                  <td>
+                                    <div className="usage-failover-metric">
+                                      <span>{row.count}</span>
+                                      <div className="usage-bar-track usage-failover-mini-bar">
+                                        <div
+                                          className="usage-bar-fill warn"
+                                          style={{
+                                            width: `${relativeBarWidth(
+                                              row.count,
+                                              finalFailedCountMax
+                                            )}%`
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+
                     {Array.isArray(failoverAnalysis.byReason) &&
                       failoverAnalysis.byReason.length > 0 && (
                         <>
@@ -1133,6 +1224,51 @@ export function UsagePanel({
                                           className="usage-bar-fill"
                                           style={{
                                             width: `${relativeBarWidth(row.count, reasonCountMax)}%`
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+
+                    {Array.isArray(failoverAnalysis.reasonTransitions) &&
+                      failoverAnalysis.reasonTransitions.length > 0 && (
+                        <>
+                          <h5 className="usage-failover-analysis-sub">
+                            Reason Transitions
+                          </h5>
+                          <p className="usage-muted usage-failover-reason-transition-note">
+                            Chain reasons の隣接遷移 · Core 集計を直表示
+                          </p>
+                          <table className="usage-table usage-failover-reason-transition-table">
+                            <thead>
+                              <tr>
+                                <th>From</th>
+                                <th>To</th>
+                                <th>Count</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {failoverAnalysis.reasonTransitions.map((row) => (
+                                <tr key={`${row.from}\0${row.to}`}>
+                                  <td className="usage-model-id">{row.from}</td>
+                                  <td className="usage-model-id">{row.to}</td>
+                                  <td>
+                                    <div className="usage-failover-metric">
+                                      <span>{row.count}</span>
+                                      <div className="usage-bar-track usage-failover-mini-bar">
+                                        <div
+                                          className="usage-bar-fill"
+                                          style={{
+                                            width: `${relativeBarWidth(
+                                              row.count,
+                                              reasonTransitionCountMax
+                                            )}%`
                                           }}
                                         />
                                       </div>
@@ -1201,6 +1337,14 @@ export function UsagePanel({
                                   <dd>
                                     {formatChainFinalSuccessProvider(
                                       chain.finalSuccessProvider
+                                    )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Final Failed Provider</dt>
+                                  <dd>
+                                    {formatChainFinalFailedProvider(
+                                      chain.finalFailedProvider
                                     )}
                                   </dd>
                                 </div>

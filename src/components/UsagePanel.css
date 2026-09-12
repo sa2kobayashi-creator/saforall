@@ -496,6 +496,23 @@
   width: 28%;
 }
 
+/* Phase 7-C: Final Failed Providers / Reason Transitions (Core display only) */
+.usage-failover-final-failed-note,
+.usage-failover-reason-transition-note {
+  margin: 2px 0 4px;
+  font-size: 11px;
+}
+
+.usage-failover-final-failed-table th:nth-child(2),
+.usage-failover-final-failed-table td:nth-child(2) {
+  width: 28%;
+}
+
+.usage-failover-reason-transition-table th:nth-child(3),
+.usage-failover-reason-transition-table td:nth-child(3) {
+  width: 22%;
+}
+
 /* Phase 4-A: Mode / Provider / Reason visibility (display-only bars) */
 .usage-failover-mode-list {
   list-style: none;

@@ -99,15 +99,20 @@ test('5b T13: no final-success Provider hop estimation', async () => {
   assert.doesNotMatch(panel, /resolveFinalSuccessProvider/)
 })
 
-test('5b T14: no failedProviderCounts aggregation', async () => {
+test('5b T14: no Final Failed hop/error estimation in panel', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
-  assert.doesNotMatch(panel, /failedProviderCounts/i)
+  // Phase 7-C may display Core finalFailedProviderCounts; estimation remains forbidden.
+  assert.doesNotMatch(panel, /hops\[hops\.length\s*-\s*1\]/)
+  assert.doesNotMatch(panel, /resolveFinalFailedProvider/)
   assert.doesNotMatch(panel, /failedProviders/i)
+  assert.doesNotMatch(panel, /(?<!final)failedProviderCounts/)
 })
 
-test('5b T15: no reasonTransitions aggregation', async () => {
+test('5b T15: no reasonTransitions UI re-aggregation', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
-  assert.doesNotMatch(panel, /reasonTransitions/i)
+  // Phase 7-C may display Core reasonTransitions; panel must not rebuild from reasons[i].
+  assert.doesNotMatch(panel, /reasons\s*\[\s*i\s*\]/)
+  assert.doesNotMatch(panel, /reasons\s*\[\s*i\s*\+\s*1\s*\]/)
 })
 
 test('5b T16: no problem Provider auto-label', async () => {

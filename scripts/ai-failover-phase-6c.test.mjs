@@ -129,7 +129,6 @@ test('6c T12: Core / forbidden surfaces not modified by 6-C intent', async () =>
   const billing = await read('electron/main/ai/usageBillingUi.ts')
   const panel = await read('src/components/UsagePanel.tsx')
   assert.match(billing, /export function resolveFinalSuccessProvider/)
-  assert.doesNotMatch(panel, /failedProviderCounts/)
-  assert.doesNotMatch(panel, /reasonTransitions/)
+  assert.doesNotMatch(panel, /(?<!final)failedProviderCounts/)
   assert.doesNotMatch(panel, /Problem Provider|Provider Health|Provider Risk/i)
 })
