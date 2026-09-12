@@ -285,6 +285,44 @@
   word-break: break-word;
 }
 
+.usage-failover-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.usage-failover-analysis-sub {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.usage-failover-analysis-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.usage-failover-analysis-stats > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.usage-failover-analysis-stats dt {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.usage-failover-analysis-stats dd {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
 .usage-recent-head {
   display: flex;
   align-items: center;

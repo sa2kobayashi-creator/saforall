@@ -465,23 +465,26 @@ test('3a T17: localApi wiring exposes router_failover_analysis', async () => {
   assert.match(usage, /FailoverChainAnalysis/)
   const index = await read('electron/main/ai/index.ts')
   assert.match(index, /analyzeFailoverChains/)
+  // Phase 3-B may display router_failover_analysis; panel must not call analyzeFailoverChains.
   const panel = await read('src/components/UsagePanel.tsx')
   assert.doesNotMatch(panel, /analyzeFailoverChains/)
-  assert.doesNotMatch(panel, /router_failover_analysis/)
 })
 
 test('3a T18 wiring: forbidden surfaces / UI / schema untouched', async () => {
   for (const rel of [
     'electron/main/ai/failover.ts',
     'electron/main/ai/router.ts',
-    'electron/main/api.ts',
-    'src/components/UsagePanel.tsx',
-    'src/components/UsagePanel.css'
+    'electron/main/api.ts'
   ]) {
     const src = await read(rel)
     assert.doesNotMatch(src, /analyzeFailoverChains/)
     assert.doesNotMatch(src, /router_failover_analysis/)
   }
+  // UsagePanel may reference analysis for display (3-B) but must not re-analyze.
+  const panel = await read('src/components/UsagePanel.tsx')
+  assert.doesNotMatch(panel, /analyzeFailoverChains/)
+  const css = await read('src/components/UsagePanel.css')
+  assert.doesNotMatch(css, /analyzeFailoverChains/)
   const suite = await read('scripts/run-all-tests.mjs')
   assert.match(suite, /ai-failover-phase-3a\.test\.mjs/)
 })

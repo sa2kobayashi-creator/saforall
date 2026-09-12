@@ -89,6 +89,39 @@ type FailoverChainSummaryRow = {
   finalReason?: string | null
 }
 
+/** Mirror of Phase 3-A FailoverChainAnalysis (display only; no re-analysis). */
+type FailoverChainAnalysisView = {
+  totalChains: number
+  successfulChains: number
+  exhaustedChains: number
+  successRate: number | null
+  rescuedChains: number
+  rescueRate: number | null
+  hopDistribution: {
+    one: number
+    two: number
+    three: number
+    fourPlus: number
+  }
+  averageHops: number | null
+  maxHops: number
+  byMode: {
+    ask: number
+    agent: number
+    unknown: number
+  }
+  byProvider: Array<{
+    provider: string
+    hops: number
+    errors: number
+    oks: number
+  }>
+  byReason: Array<{
+    reason: string
+    count: number
+  }>
+}
+
 type RouterInsight = {
   total: number
   fallbacks: number
@@ -97,6 +130,8 @@ type RouterInsight = {
   router_failover_chains?: number
   /** Read-time chain summaries grouped by failoverId. */
   router_failover_chain_summaries?: FailoverChainSummaryRow[]
+  /** Phase 3-A read-time analysis from summaries. Display only in panel. */
+  router_failover_analysis?: FailoverChainAnalysisView | null
   by_engine: RouteEngineStat[]
   by_task: RouteTaskStat[]
   recent: RouteRecent[]
@@ -239,6 +274,18 @@ function resolveFailoverChains(router: RouterInsight): FailoverChainSummaryRow[]
   return fromApi.filter((c) => String(c?.failoverId || '').trim())
 }
 
+/** Display-only rate format for Phase 3-A analysis (no recalculation). */
+function formatFailoverRate(rate: number | null | undefined): string {
+  if (rate == null || !Number.isFinite(rate)) return '—'
+  return `${Math.round(rate * 1000) / 10}%`
+}
+
+/** Display-only average hops (null → —). */
+function formatAverageHops(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  return String(Math.round(value * 100) / 100)
+}
+
 const LLM_ENGINES = new Set(['openai', 'gemini', 'claude', 'workers'])
 const RECENT_PAGE_SIZE = 20
 
@@ -339,6 +386,9 @@ export function UsagePanel({
     if (!data?.router) return []
     return resolveFailoverChains(data.router)
   }, [data?.router])
+
+  /** Phase 3-B: display API analysis only (no re-analysis / regroup). */
+  const failoverAnalysis = data?.router?.router_failover_analysis ?? null
 
   const dismissHint = (code: string | undefined) => {
     if (!code) return
@@ -671,6 +721,139 @@ export function UsagePanel({
                       </li>
                     ))}
                   </ul>
+                )}
+
+                {failoverAnalysis != null && (
+                  <div className="usage-failover-analysis">
+                    <h4 className="usage-subhead">Router Failover Analysis</h4>
+                    <p className="usage-muted">
+                      3-A 読取時集計 · PHP フォールバックとは別
+                    </p>
+                    <dl className="usage-failover-analysis-stats">
+                      <div>
+                        <dt>Total Chains</dt>
+                        <dd>{failoverAnalysis.totalChains}</dd>
+                      </div>
+                      <div>
+                        <dt>Successful</dt>
+                        <dd>{failoverAnalysis.successfulChains}</dd>
+                      </div>
+                      <div>
+                        <dt>Exhausted</dt>
+                        <dd>{failoverAnalysis.exhaustedChains}</dd>
+                      </div>
+                      <div>
+                        <dt>Success Rate</dt>
+                        <dd>{formatFailoverRate(failoverAnalysis.successRate)}</dd>
+                      </div>
+                      <div>
+                        <dt>Rescued</dt>
+                        <dd>{failoverAnalysis.rescuedChains}</dd>
+                      </div>
+                      <div>
+                        <dt>Rescue Rate</dt>
+                        <dd>{formatFailoverRate(failoverAnalysis.rescueRate)}</dd>
+                      </div>
+                    </dl>
+
+                    <h5 className="usage-failover-analysis-sub">Hop</h5>
+                    <dl className="usage-failover-analysis-stats">
+                      <div>
+                        <dt>1 Hop</dt>
+                        <dd>{failoverAnalysis.hopDistribution?.one ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>2 Hop</dt>
+                        <dd>{failoverAnalysis.hopDistribution?.two ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>3 Hop</dt>
+                        <dd>{failoverAnalysis.hopDistribution?.three ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>4+ Hop</dt>
+                        <dd>{failoverAnalysis.hopDistribution?.fourPlus ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Average Hops</dt>
+                        <dd>{formatAverageHops(failoverAnalysis.averageHops)}</dd>
+                      </div>
+                      <div>
+                        <dt>Max Hops</dt>
+                        <dd>{failoverAnalysis.maxHops ?? 0}</dd>
+                      </div>
+                    </dl>
+
+                    <h5 className="usage-failover-analysis-sub">Mode</h5>
+                    <dl className="usage-failover-analysis-stats">
+                      <div>
+                        <dt>Ask</dt>
+                        <dd>{failoverAnalysis.byMode?.ask ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Agent</dt>
+                        <dd>{failoverAnalysis.byMode?.agent ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Unknown</dt>
+                        <dd>{failoverAnalysis.byMode?.unknown ?? 0}</dd>
+                      </div>
+                    </dl>
+
+                    {Array.isArray(failoverAnalysis.byProvider) &&
+                      failoverAnalysis.byProvider.length > 0 && (
+                        <>
+                          <h5 className="usage-failover-analysis-sub">Provider</h5>
+                          <table className="usage-table">
+                            <thead>
+                              <tr>
+                                <th>Provider</th>
+                                <th>Hops</th>
+                                <th>Errors</th>
+                                <th>OKs</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {failoverAnalysis.byProvider.map((row) => (
+                                <tr key={row.provider}>
+                                  <td>
+                                    {ENGINE_LABELS[
+                                      row.provider as keyof typeof ENGINE_LABELS
+                                    ] ?? row.provider}
+                                  </td>
+                                  <td>{row.hops}</td>
+                                  <td>{row.errors}</td>
+                                  <td>{row.oks}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+
+                    {Array.isArray(failoverAnalysis.byReason) &&
+                      failoverAnalysis.byReason.length > 0 && (
+                        <>
+                          <h5 className="usage-failover-analysis-sub">Reason</h5>
+                          <table className="usage-table">
+                            <thead>
+                              <tr>
+                                <th>Reason</th>
+                                <th>Count</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {failoverAnalysis.byReason.map((row) => (
+                                <tr key={row.reason}>
+                                  <td className="usage-model-id">{row.reason}</td>
+                                  <td>{row.count}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+                  </div>
                 )}
 
                 {failoverChains.length > 0 && (
