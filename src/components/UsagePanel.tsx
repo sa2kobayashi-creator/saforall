@@ -206,7 +206,7 @@ function engineDisplayName(engine: string): string {
   return ENGINE_LABELS[engine as keyof typeof ENGINE_LABELS] ?? engine
 }
 
-/** Chain path line for Router Failover Chain section. */
+/** Display-only: provider path from API Chain summary (no regrouping). */
 function formatChainProviders(chain: FailoverChainSummaryRow): string {
   const path =
     Array.isArray(chain.path) && chain.path.length > 0
@@ -221,7 +221,7 @@ function formatChainProviders(chain: FailoverChainSummaryRow): string {
     .join(' → ')
 }
 
-/** Chain reason line: rate_limit → network_error → success. */
+/** Display-only: reason path from API Chain summary (no regrouping). */
 function formatChainReasons(chain: FailoverChainSummaryRow): string {
   return (Array.isArray(chain.reasons) ? chain.reasons : [])
     .map((r) => String(r || '').trim())
@@ -230,62 +230,13 @@ function formatChainReasons(chain: FailoverChainSummaryRow): string {
 }
 
 /**
- * Prefer API summaries; otherwise derive from recent rows that share failoverId.
- * Never invent chains from timestamp alone. Never mix PHP fallback_from.
+ * Phase 2-C-7: Single Source — display API summaries only (no Chain regrouping).
+ * Legacy/external payloads without summaries → empty (do not invent chains from recent).
  */
 function resolveFailoverChains(router: RouterInsight): FailoverChainSummaryRow[] {
   const fromApi = router.router_failover_chain_summaries
-  if (Array.isArray(fromApi) && fromApi.length > 0) {
-    return fromApi.filter((c) => String(c?.failoverId || '').trim())
-  }
-
-  const buckets = new Map<string, RouteRecent[]>()
-  for (const row of router.recent || []) {
-    const id = String(row.routerFailover?.failoverId || '').trim()
-    if (!id) continue
-    const list = buckets.get(id)
-    if (list) list.push(row)
-    else buckets.set(id, [row])
-  }
-
-  const chains: FailoverChainSummaryRow[] = []
-  for (const [failoverId, group] of Array.from(buckets.entries())) {
-    const sorted = [...group].sort((a, b) => {
-      const attemptA =
-        typeof a.routerFailover?.attempt === 'number' ? a.routerFailover.attempt : 999
-      const attemptB =
-        typeof b.routerFailover?.attempt === 'number' ? b.routerFailover.attempt : 999
-      if (attemptA !== attemptB) return attemptA - attemptB
-      return String(a.created_at).localeCompare(String(b.created_at))
-    })
-    const last = sorted[sorted.length - 1]
-    const pathRaw = last?.routerFailover?.path
-    const providers = sorted.map((row) => String(row.engine || '').trim()).filter(Boolean)
-    const path =
-      Array.isArray(pathRaw) && pathRaw.length > 0
-        ? pathRaw.map((p) => String(p || '').trim()).filter(Boolean)
-        : providers
-    const reasons = sorted.map((row) => {
-      const reason = String(row.routerFailover?.reason || '').trim()
-      if (reason) return reason
-      return row.task_type === 'error' ? 'error' : 'success'
-    })
-    const mode =
-      last?.routerFailover?.mode === 'agent' || last?.routerFailover?.mode === 'ask'
-        ? last.routerFailover.mode
-        : sorted.find((r) => r.routerFailover?.mode === 'agent' || r.routerFailover?.mode === 'ask')
-            ?.routerFailover?.mode ?? null
-    chains.push({
-      failoverId,
-      mode: mode ?? null,
-      path,
-      providers,
-      reasons,
-      finalStatus: sorted[sorted.length - 1]?.task_type === 'error' ? 'error' : 'ok',
-      finalReason: reasons[reasons.length - 1] || null
-    })
-  }
-  return chains
+  if (!Array.isArray(fromApi)) return []
+  return fromApi.filter((c) => String(c?.failoverId || '').trim())
 }
 
 const LLM_ENGINES = new Set(['openai', 'gemini', 'claude', 'workers'])

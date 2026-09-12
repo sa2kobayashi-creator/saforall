@@ -122,6 +122,7 @@ export {
   formatCredentialIdShort,
   failoverForUi,
   formatRouterFailoverLabel,
+  chainFailoverId,
   countFailoverChains,
   groupUsageEventsByFailoverId,
   formatFailoverChainProviders,

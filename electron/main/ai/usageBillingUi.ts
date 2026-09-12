@@ -99,15 +99,74 @@ export function formatRouterFailoverLabel(
 }
 
 /**
+ * Formal Chain ID extractor (Phase 2-C-7).
+ * Only failoverId — never requestId / sessionId / timestamp / provider / path.
+ * Shared by countFailoverChains and groupUsageEventsByFailoverId.
+ */
+export function chainFailoverId(
+  failover: { failoverId?: string | null } | null | undefined
+): string | null {
+  if (!failover || typeof failover !== 'object') return null
+  const id = String(failover.failoverId || '').trim()
+  return id || null
+}
+
+/**
+ * Allowlisted failover fields for Chain hops.
+ * Unlike failoverForUi, does not require primaryProvider (malformed-safe).
+ * Never reads secrets / raw errors.
+ */
+function chainHopFields(failover: UsageEventLike['failover'] | null | undefined): {
+  primaryProvider: string | null
+  reason: string | null
+  attempt: number | undefined
+  path: string[] | null
+  mode: 'ask' | 'agent' | null
+} {
+  const viaUi = failoverForUi(failover)
+  if (viaUi) {
+    return {
+      primaryProvider: viaUi.primaryProvider,
+      reason: viaUi.reason ?? null,
+      attempt: viaUi.attempt,
+      path: viaUi.path ?? null,
+      mode: viaUi.mode ?? null
+    }
+  }
+  if (!failover || typeof failover !== 'object') {
+    return {
+      primaryProvider: null,
+      reason: null,
+      attempt: undefined,
+      path: null,
+      mode: null
+    }
+  }
+  const reasonRaw = failover.reason != null ? String(failover.reason).trim() : ''
+  const mode =
+    failover.mode === 'ask' || failover.mode === 'agent' ? failover.mode : null
+  return {
+    primaryProvider: null,
+    reason: reasonRaw || null,
+    attempt:
+      typeof failover.attempt === 'number' && Number.isFinite(failover.attempt)
+        ? failover.attempt
+        : undefined,
+    path: sanitizePath(failover.path),
+    mode
+  }
+}
+
+/**
  * Count unique Router Failover chains (by failoverId), not UsageEvent rows.
- * Events without failoverId are ignored.
+ * Same ID rule as groupUsageEventsByFailoverId (Phase 2-C-7).
  */
 export function countFailoverChains(
   events: Array<{ failover?: UsageFailoverUi | null } | null | undefined>
 ): number {
   const ids = new Set<string>()
   for (const event of events) {
-    const id = String(event?.failover?.failoverId || '').trim()
+    const id = chainFailoverId(event?.failover)
     if (id) ids.add(id)
   }
   return ids.size
@@ -153,14 +212,14 @@ function hopReasonLabel(reason: string | null | undefined, status: string): stri
  * Group UsageEvents that share the same failover.failoverId into chains.
  * Events without failoverId are excluded (normal success / single failure).
  * Sort: attempt ascending, then timestamp as tie-break. Does not invent chains.
+ * ID rule matches countFailoverChains (Phase 2-C-7).
  */
 export function groupUsageEventsByFailoverId(
   events: UsageEventLike[]
 ): FailoverChainSummary[] {
   const buckets = new Map<string, UsageEventLike[]>()
   for (const event of events) {
-    const meta = failoverForUi(event.failover)
-    const id = String(meta?.failoverId || '').trim()
+    const id = chainFailoverId(event.failover)
     if (!id) continue
     const list = buckets.get(id)
     if (list) list.push(event)
@@ -170,13 +229,15 @@ export function groupUsageEventsByFailoverId(
   const chains: FailoverChainSummary[] = []
   for (const [failoverId, group] of Array.from(buckets.entries())) {
     const sorted = [...group].sort((a, b) => {
+      const fieldsA = chainHopFields(a.failover)
+      const fieldsB = chainHopFields(b.failover)
       const attemptA =
-        typeof a.failover?.attempt === 'number' && Number.isFinite(a.failover.attempt)
-          ? a.failover.attempt
+        typeof fieldsA.attempt === 'number' && Number.isFinite(fieldsA.attempt)
+          ? fieldsA.attempt
           : Number.POSITIVE_INFINITY
       const attemptB =
-        typeof b.failover?.attempt === 'number' && Number.isFinite(b.failover.attempt)
-          ? b.failover.attempt
+        typeof fieldsB.attempt === 'number' && Number.isFinite(fieldsB.attempt)
+          ? fieldsB.attempt
           : Number.POSITIVE_INFINITY
       if (attemptA !== attemptB) return attemptA - attemptB
       const tsA = Date.parse(normalizeTimestamp(a.timestamp))
@@ -187,18 +248,20 @@ export function groupUsageEventsByFailoverId(
     })
 
     const hops: FailoverChainHop[] = sorted.map((event, index) => {
-      const meta = failoverForUi(event.failover)
+      const fields = chainHopFields(event.failover)
       const status = String(event.status || '').trim() || 'ok'
       const attempt =
-        typeof meta?.attempt === 'number' && Number.isFinite(meta.attempt)
-          ? meta.attempt
+        typeof fields.attempt === 'number' && Number.isFinite(fields.attempt)
+          ? fields.attempt
           : index + 1
       return {
-        provider: String(event.provider || '').trim() || String(meta?.primaryProvider || '').trim(),
+        provider:
+          String(event.provider || '').trim() ||
+          String(fields.primaryProvider || '').trim(),
         status,
         attempt,
-        reason: meta?.reason ?? null,
-        mode: meta?.mode ?? null,
+        reason: fields.reason,
+        mode: fields.mode,
         timestamp: String(event.timestamp || ''),
         credentialId: credentialIdForUi(event.credentialId),
         billingMode: billingModeForUi(event.billingMode)
@@ -206,8 +269,9 @@ export function groupUsageEventsByFailoverId(
     })
 
     const last = sorted[sorted.length - 1]
-    const lastMeta = failoverForUi(last?.failover)
-    const pathFromLast = lastMeta?.path && lastMeta.path.length > 0 ? lastMeta.path : null
+    const lastFields = chainHopFields(last?.failover)
+    const pathFromLast =
+      lastFields.path && lastFields.path.length > 0 ? lastFields.path : null
     const providers = hops.map((hop) => hop.provider).filter((p) => p.length > 0)
     const path = pathFromLast && pathFromLast.length > 0 ? pathFromLast : providers
     const reasons = hops.map((hop) => hopReasonLabel(hop.reason, hop.status))
