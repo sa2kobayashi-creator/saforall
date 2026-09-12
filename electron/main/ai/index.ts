@@ -129,12 +129,14 @@ export {
   formatFailoverChainReasons,
   formatFailoverChainLabel,
   analyzeFailoverChains,
+  resolveFinalSuccessProvider,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   resetUsageForTests,
   type UsageEvent,
   type UsageRecentRow,
   type FailoverChainSummary,
-  type FailoverChainAnalysis
+  type FailoverChainAnalysis,
+  type FailoverChainFinalSuccessProviderCount
 } from './usage'
 export { estimateCostUsd } from './cost'

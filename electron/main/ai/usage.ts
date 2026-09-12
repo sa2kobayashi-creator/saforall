@@ -14,13 +14,15 @@ export {
   formatFailoverChainReasons,
   formatFailoverChainLabel,
   analyzeFailoverChains,
+  resolveFinalSuccessProvider,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   type UsageRecentRow,
   type UsageFailoverUi,
   type FailoverChainHop,
   type FailoverChainSummary,
-  type FailoverChainAnalysis
+  type FailoverChainAnalysis,
+  type FailoverChainFinalSuccessProviderCount
 } from './usageBillingUi'
 
 export type UsageEventStatus = 'ok' | 'error'

@@ -199,6 +199,33 @@ export type FailoverChainSummary = {
   hops: FailoverChainHop[]
   finalStatus: string
   finalReason: string | null
+  /**
+   * Phase 6-B P0: provider that formally owns final success for this chain.
+   * null when finalStatus !== 'ok' or no non-empty ok hop exists.
+   * Core-generated only — UI must not infer from hops[].
+   */
+  finalSuccessProvider: string | null
+}
+
+/**
+ * Phase 6-B P0: resolve finalSuccessProvider from finalStatus + hops (Core only).
+ * Walk hops from the end; first status===ok with non-empty provider wins.
+ */
+export function resolveFinalSuccessProvider(
+  finalStatus: string,
+  hops: FailoverChainHop[] | null | undefined
+): string | null {
+  if (String(finalStatus || '').trim() !== 'ok') return null
+  if (!Array.isArray(hops) || hops.length === 0) return null
+  for (let i = hops.length - 1; i >= 0; i -= 1) {
+    const hop = hops[i]
+    if (!hop || typeof hop !== 'object') continue
+    if (String(hop.status || '').trim() !== 'ok') continue
+    const provider = String(hop.provider || '').trim()
+    if (!provider) continue
+    return provider
+  }
+  return null
 }
 
 function hopReasonLabel(reason: string | null | undefined, status: string): string {
@@ -284,6 +311,8 @@ export function groupUsageEventsByFailoverId(
       }
     }
 
+    const finalStatus = statuses[statuses.length - 1] || 'ok'
+    const finalReason = reasons[reasons.length - 1] || null
     chains.push({
       failoverId,
       mode,
@@ -292,8 +321,9 @@ export function groupUsageEventsByFailoverId(
       reasons,
       statuses,
       hops,
-      finalStatus: statuses[statuses.length - 1] || 'ok',
-      finalReason: reasons[reasons.length - 1] || null
+      finalStatus,
+      finalReason,
+      finalSuccessProvider: resolveFinalSuccessProvider(finalStatus, hops)
     })
   }
 
@@ -357,6 +387,11 @@ export type FailoverChainReasonStat = {
   count: number
 }
 
+export type FailoverChainFinalSuccessProviderCount = {
+  provider: string
+  count: number
+}
+
 /**
  * Phase 3-A: read-time Router Failover Chain analysis.
  * Derived only from FailoverChainSummary[] — no secrets / credentialId / raw errors.
@@ -377,6 +412,11 @@ export type FailoverChainAnalysis = {
   byMode: FailoverChainModeBreakdown
   byProvider: FailoverChainProviderStat[]
   byReason: FailoverChainReasonStat[]
+  /**
+   * Phase 6-B P0: chain-level final success attribution counts.
+   * Not the same as byProvider[].oks (hop-level).
+   */
+  finalSuccessProviderCounts: FailoverChainFinalSuccessProviderCount[]
 }
 
 function hopCountOf(summary: FailoverChainSummary | null | undefined): number {
@@ -425,6 +465,7 @@ export function analyzeFailoverChains(
   }
   const providerMap = new Map<string, FailoverChainProviderStat>()
   const reasonMap = new Map<string, number>()
+  const finalSuccessMap = new Map<string, number>()
 
   for (const summary of list) {
     if (!summary || typeof summary !== 'object') continue
@@ -445,6 +486,14 @@ export function analyzeFailoverChains(
     if (summary.mode === 'ask') byMode.ask += 1
     else if (summary.mode === 'agent') byMode.agent += 1
     else byMode.unknown += 1
+
+    const finalSuccessProvider = String(summary.finalSuccessProvider || '').trim()
+    if (finalSuccessProvider) {
+      finalSuccessMap.set(
+        finalSuccessProvider,
+        (finalSuccessMap.get(finalSuccessProvider) || 0) + 1
+      )
+    }
 
     const hopRows = Array.isArray(summary.hops)
       ? summary.hops
@@ -485,6 +534,9 @@ export function analyzeFailoverChains(
   const byReason = Array.from(reasonMap.entries())
     .map(([reason, count]) => ({ reason, count }))
     .sort((a, b) => a.reason.localeCompare(b.reason))
+  const finalSuccessProviderCounts = Array.from(finalSuccessMap.entries())
+    .map(([provider, count]) => ({ provider, count }))
+    .sort((a, b) => a.provider.localeCompare(b.provider))
 
   return {
     totalChains,
@@ -498,7 +550,8 @@ export function analyzeFailoverChains(
     maxHops,
     byMode,
     byProvider,
-    byReason
+    byReason,
+    finalSuccessProviderCounts
   }
 }
 
