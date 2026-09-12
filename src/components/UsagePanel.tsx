@@ -286,6 +286,25 @@ function formatAverageHops(value: number | null | undefined): string {
   return String(Math.round(value * 100) / 100)
 }
 
+/**
+ * Phase 4-A display-only: errors/hops for one Provider row.
+ * Not Chain/API re-analysis. hops===0 → —.
+ */
+function formatProviderErrorRate(errors: number, hops: number): string {
+  const h = Number(hops) || 0
+  if (h <= 0) return '—'
+  const e = Number(errors) || 0
+  return `${Math.round((e / h) * 1000) / 10}%`
+}
+
+/** Phase 4-A display-only bar width from a row value vs max (0–100). */
+function relativeBarWidth(value: number, max: number): number {
+  const v = Number(value) || 0
+  const m = Number(max) || 0
+  if (m <= 0 || v <= 0) return 0
+  return Math.min(100, Math.round((v / m) * 1000) / 10)
+}
+
 const LLM_ENGINES = new Set(['openai', 'gemini', 'claude', 'workers'])
 const RECENT_PAGE_SIZE = 20
 
@@ -389,6 +408,21 @@ export function UsagePanel({
 
   /** Phase 3-B: display API analysis only (no re-analysis / regroup). */
   const failoverAnalysis = data?.router?.router_failover_analysis ?? null
+
+  // Phase 4-A display-only maxima for relative bars (not Chain re-aggregation).
+  const providerHopMax = Array.isArray(failoverAnalysis?.byProvider)
+    ? Math.max(0, ...failoverAnalysis.byProvider.map((row) => Number(row.hops) || 0))
+    : 0
+  const reasonCountMax = Array.isArray(failoverAnalysis?.byReason)
+    ? Math.max(0, ...failoverAnalysis.byReason.map((row) => Number(row.count) || 0))
+    : 0
+  const modeCountMax = failoverAnalysis?.byMode
+    ? Math.max(
+        Number(failoverAnalysis.byMode.ask) || 0,
+        Number(failoverAnalysis.byMode.agent) || 0,
+        Number(failoverAnalysis.byMode.unknown) || 0
+      )
+    : 0
 
   const dismissHint = (code: string | undefined) => {
     if (!code) return
@@ -785,32 +819,72 @@ export function UsagePanel({
                     </dl>
 
                     <h5 className="usage-failover-analysis-sub">Mode</h5>
-                    <dl className="usage-failover-analysis-stats">
-                      <div>
-                        <dt>Ask</dt>
-                        <dd>{failoverAnalysis.byMode?.ask ?? 0}</dd>
-                      </div>
-                      <div>
-                        <dt>Agent</dt>
-                        <dd>{failoverAnalysis.byMode?.agent ?? 0}</dd>
-                      </div>
-                      <div>
-                        <dt>Unknown</dt>
-                        <dd>{failoverAnalysis.byMode?.unknown ?? 0}</dd>
-                      </div>
-                    </dl>
+                    <ul className="usage-failover-mode-list">
+                      <li className="usage-failover-mode-item">
+                        <div className="usage-failover-mode-head">
+                          <span>Ask</span>
+                          <strong>{failoverAnalysis.byMode?.ask ?? 0}</strong>
+                        </div>
+                        <div className="usage-bar-track usage-failover-mini-bar">
+                          <div
+                            className="usage-bar-fill"
+                            style={{
+                              width: `${relativeBarWidth(
+                                failoverAnalysis.byMode?.ask ?? 0,
+                                modeCountMax
+                              )}%`
+                            }}
+                          />
+                        </div>
+                      </li>
+                      <li className="usage-failover-mode-item">
+                        <div className="usage-failover-mode-head">
+                          <span>Agent</span>
+                          <strong>{failoverAnalysis.byMode?.agent ?? 0}</strong>
+                        </div>
+                        <div className="usage-bar-track usage-failover-mini-bar">
+                          <div
+                            className="usage-bar-fill"
+                            style={{
+                              width: `${relativeBarWidth(
+                                failoverAnalysis.byMode?.agent ?? 0,
+                                modeCountMax
+                              )}%`
+                            }}
+                          />
+                        </div>
+                      </li>
+                      <li className="usage-failover-mode-item">
+                        <div className="usage-failover-mode-head">
+                          <span>Unknown</span>
+                          <strong>{failoverAnalysis.byMode?.unknown ?? 0}</strong>
+                        </div>
+                        <div className="usage-bar-track usage-failover-mini-bar">
+                          <div
+                            className="usage-bar-fill"
+                            style={{
+                              width: `${relativeBarWidth(
+                                failoverAnalysis.byMode?.unknown ?? 0,
+                                modeCountMax
+                              )}%`
+                            }}
+                          />
+                        </div>
+                      </li>
+                    </ul>
 
                     {Array.isArray(failoverAnalysis.byProvider) &&
                       failoverAnalysis.byProvider.length > 0 && (
                         <>
                           <h5 className="usage-failover-analysis-sub">Provider</h5>
-                          <table className="usage-table">
+                          <table className="usage-table usage-failover-provider-table">
                             <thead>
                               <tr>
                                 <th>Provider</th>
                                 <th>Hops</th>
                                 <th>Errors</th>
                                 <th>OKs</th>
+                                <th>Error Rate</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -821,9 +895,48 @@ export function UsagePanel({
                                       row.provider as keyof typeof ENGINE_LABELS
                                     ] ?? row.provider}
                                   </td>
-                                  <td>{row.hops}</td>
-                                  <td>{row.errors}</td>
-                                  <td>{row.oks}</td>
+                                  <td>
+                                    <div className="usage-failover-metric">
+                                      <span>{row.hops}</span>
+                                      <div className="usage-bar-track usage-failover-mini-bar">
+                                        <div
+                                          className="usage-bar-fill"
+                                          style={{
+                                            width: `${relativeBarWidth(row.hops, providerHopMax)}%`
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="usage-failover-metric">
+                                      <span>{row.errors}</span>
+                                      <div className="usage-bar-track usage-failover-mini-bar">
+                                        <div
+                                          className="usage-bar-fill warn"
+                                          style={{
+                                            width: `${relativeBarWidth(row.errors, providerHopMax)}%`
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="usage-failover-metric">
+                                      <span>{row.oks}</span>
+                                      <div className="usage-bar-track usage-failover-mini-bar">
+                                        <div
+                                          className="usage-bar-fill"
+                                          style={{
+                                            width: `${relativeBarWidth(row.oks, providerHopMax)}%`
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    {formatProviderErrorRate(row.errors, row.hops)}
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
@@ -835,7 +948,7 @@ export function UsagePanel({
                       failoverAnalysis.byReason.length > 0 && (
                         <>
                           <h5 className="usage-failover-analysis-sub">Reason</h5>
-                          <table className="usage-table">
+                          <table className="usage-table usage-failover-reason-table">
                             <thead>
                               <tr>
                                 <th>Reason</th>
@@ -846,7 +959,19 @@ export function UsagePanel({
                               {failoverAnalysis.byReason.map((row) => (
                                 <tr key={row.reason}>
                                   <td className="usage-model-id">{row.reason}</td>
-                                  <td>{row.count}</td>
+                                  <td>
+                                    <div className="usage-failover-metric">
+                                      <span>{row.count}</span>
+                                      <div className="usage-bar-track usage-failover-mini-bar">
+                                        <div
+                                          className="usage-bar-fill"
+                                          style={{
+                                            width: `${relativeBarWidth(row.count, reasonCountMax)}%`
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>

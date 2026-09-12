@@ -323,6 +323,57 @@
   color: var(--text);
 }
 
+/* Phase 4-A: Mode / Provider / Reason visibility (display-only bars) */
+.usage-failover-mode-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.usage-failover-mode-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.usage-failover-mode-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.usage-failover-mode-head span {
+  color: var(--text-muted);
+}
+
+.usage-failover-mode-head strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.usage-failover-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 2.5rem;
+}
+
+.usage-failover-mini-bar {
+  height: 4px;
+  min-width: 36px;
+}
+
+.usage-failover-provider-table th:nth-child(n + 2),
+.usage-failover-provider-table td:nth-child(n + 2),
+.usage-failover-reason-table th:nth-child(2),
+.usage-failover-reason-table td:nth-child(2) {
+  width: 18%;
+}
+
 .usage-recent-head {
   display: flex;
   align-items: center;
