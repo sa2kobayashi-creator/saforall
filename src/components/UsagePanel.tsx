@@ -279,6 +279,14 @@ function formatChainReasons(chain: FailoverChainSummaryRow): string {
     .join(' → ')
 }
 
+/** Phase 5-B: Summary statuses[] as-is (do not rebuild from hops). */
+function formatChainStatuses(chain: FailoverChainSummaryRow): string {
+  return (Array.isArray(chain.statuses) ? chain.statuses : [])
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .join(' → ')
+}
+
 /** Phase 4-B: safe hop list from summary (no regroup / re-analysis). */
 function resolveChainHops(
   chain: FailoverChainSummaryRow
@@ -298,6 +306,12 @@ function formatHopAttempt(value: number | null | undefined): string {
   return '—'
 }
 
+/** Display-only attempt label (#N); value still from hop.attempt. */
+function formatHopAttemptLabel(value: number | null | undefined): string {
+  const raw = formatHopAttempt(value)
+  return raw === '—' ? '—' : `#${raw}`
+}
+
 /** Display-only hop mode (null stays —; do not remap to unknown). */
 function formatHopMode(mode: FailoverChainHopView['mode']): string {
   if (mode === 'ask' || mode === 'agent') return mode
@@ -311,7 +325,12 @@ function formatHopTimestamp(value: string | null | undefined): string {
   const ms = Date.parse(raw)
   if (!Number.isFinite(ms)) return raw
   try {
-    return new Date(ms).toLocaleString()
+    return new Date(ms).toLocaleTimeString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    })
   } catch {
     return raw
   }
@@ -1063,6 +1082,7 @@ export function UsagePanel({
                       {failoverChains.map((chain) => {
                         const providers = formatChainProviders(chain)
                         const reasons = formatChainReasons(chain)
+                        const statusPath = formatChainStatuses(chain)
                         const modeTag =
                           chain.mode === 'agent' ? 'agent' : chain.mode === 'ask' ? 'ask' : null
                         const hops = resolveChainHops(chain)
@@ -1081,18 +1101,27 @@ export function UsagePanel({
                             {reasons ? (
                               <div className="usage-failover-chain-reasons">{reasons}</div>
                             ) : null}
-                            <dl className="usage-failover-chain-final">
-                              <div>
-                                <dt>Final Status</dt>
-                                <dd>{formatChainFinalStatus(chain.finalStatus)}</dd>
+                            {statusPath ? (
+                              <div className="usage-failover-chain-statuses">
+                                <span className="usage-muted">Status path</span>{' '}
+                                {statusPath}
                               </div>
-                              <div>
-                                <dt>Final Reason</dt>
-                                <dd className="usage-model-id">
-                                  {formatChainFinalReason(chain.finalReason)}
-                                </dd>
-                              </div>
-                            </dl>
+                            ) : null}
+                            <div className="usage-failover-chain-final-wrap">
+                              <div className="usage-failover-analysis-sub">Final result</div>
+                              <dl className="usage-failover-chain-final">
+                                <div>
+                                  <dt>Final Status</dt>
+                                  <dd>{formatChainFinalStatus(chain.finalStatus)}</dd>
+                                </div>
+                                <div>
+                                  <dt>Final Reason</dt>
+                                  <dd className="usage-model-id">
+                                    {formatChainFinalReason(chain.finalReason)}
+                                  </dd>
+                                </div>
+                              </dl>
+                            </div>
                             <details className="usage-failover-chain-toggle">
                               <summary>Hop details</summary>
                               {hops.length === 0 ? (
@@ -1100,50 +1129,49 @@ export function UsagePanel({
                                   —
                                 </p>
                               ) : (
-                                <ol className="usage-failover-hop-list">
-                                  {hops.map((hop, hopIndex) => (
-                                    <li
-                                      key={`${chain.failoverId}:${hopIndex}:${formatHopAttempt(hop?.attempt)}`}
-                                      className="usage-failover-hop"
-                                    >
-                                      <div className="usage-failover-hop-index">
-                                        #{hopIndex + 1}
-                                      </div>
-                                      <dl className="usage-failover-hop-fields">
-                                        <div>
-                                          <dt>Provider</dt>
-                                          <dd>
+                                <div className="usage-failover-hop-list">
+                                  <table className="usage-failover-hop-timeline">
+                                    <thead>
+                                      <tr>
+                                        <th scope="col">Time</th>
+                                        <th scope="col">Provider</th>
+                                        <th scope="col">Status</th>
+                                        <th scope="col">Attempt</th>
+                                        <th scope="col">Reason</th>
+                                        <th scope="col">Mode</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {hops.map((hop, hopIndex) => (
+                                        <tr
+                                          key={`${chain.failoverId}:${hopIndex}:${formatHopAttempt(hop?.attempt)}`}
+                                          className="usage-failover-hop-row"
+                                        >
+                                          <td className="usage-failover-hop-time">
+                                            {formatHopTimestamp(hop?.timestamp)}
+                                          </td>
+                                          <td className="usage-failover-hop-provider">
                                             {hop?.provider
                                               ? engineDisplayName(String(hop.provider))
                                               : '—'}
-                                          </dd>
-                                        </div>
-                                        <div>
-                                          <dt>Status</dt>
-                                          <dd>{formatHopText(hop?.status)}</dd>
-                                        </div>
-                                        <div>
-                                          <dt>Attempt</dt>
-                                          <dd>{formatHopAttempt(hop?.attempt)}</dd>
-                                        </div>
-                                        <div>
-                                          <dt>Reason</dt>
-                                          <dd className="usage-model-id">
+                                          </td>
+                                          <td className="usage-failover-hop-status">
+                                            {formatHopText(hop?.status)}
+                                          </td>
+                                          <td className="usage-failover-hop-attempt">
+                                            {formatHopAttemptLabel(hop?.attempt)}
+                                          </td>
+                                          <td className="usage-failover-hop-reason usage-model-id">
                                             {formatHopText(hop?.reason)}
-                                          </dd>
-                                        </div>
-                                        <div>
-                                          <dt>Mode</dt>
-                                          <dd>{formatHopMode(hop?.mode ?? null)}</dd>
-                                        </div>
-                                        <div>
-                                          <dt>Time</dt>
-                                          <dd>{formatHopTimestamp(hop?.timestamp)}</dd>
-                                        </div>
-                                      </dl>
-                                    </li>
-                                  ))}
-                                </ol>
+                                          </td>
+                                          <td className="usage-failover-hop-mode">
+                                            {formatHopMode(hop?.mode ?? null)}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
                               )}
                             </details>
                           </li>

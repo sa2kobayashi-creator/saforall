@@ -285,6 +285,21 @@
   word-break: break-word;
 }
 
+.usage-failover-chain-statuses {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.usage-failover-chain-final-wrap {
+  margin-top: 6px;
+}
+
+.usage-failover-chain-final-wrap .usage-failover-analysis-sub {
+  margin-top: 0;
+}
+
 /* Phase 4-B: Chain hop details (display-only expand) */
 .usage-failover-chain-toggle {
   margin-top: 6px;
@@ -354,6 +369,36 @@
 .usage-failover-hop-empty {
   margin: 6px 0 0;
   font-size: 11px;
+}
+
+/* Phase 5-B: Hop timeline (1 hop = 1 row; display only) */
+.usage-failover-hop-timeline {
+  width: 100%;
+  margin: 6px 0 0;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.usage-failover-hop-timeline th,
+.usage-failover-hop-timeline td {
+  padding: 3px 4px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  word-break: break-word;
+}
+
+.usage-failover-hop-timeline th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.usage-failover-hop-row td {
+  color: var(--text);
+}
+
+.usage-failover-hop-status {
+  font-weight: 600;
 }
 
 .usage-failover-analysis {
