@@ -128,11 +128,13 @@ export {
   formatFailoverChainProviders,
   formatFailoverChainReasons,
   formatFailoverChainLabel,
+  analyzeFailoverChains,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   resetUsageForTests,
   type UsageEvent,
   type UsageRecentRow,
-  type FailoverChainSummary
+  type FailoverChainSummary,
+  type FailoverChainAnalysis
 } from './usage'
 export { estimateCostUsd } from './cost'

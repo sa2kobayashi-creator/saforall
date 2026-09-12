@@ -331,6 +331,177 @@ export function formatFailoverChainLabel(chain: FailoverChainSummary): string {
   return reasons ? `${modeTag} ${providers} | ${reasons}` : `${modeTag} ${providers}`
 }
 
+/** Hop-count buckets for Phase 3-A analysis (read-time, non-secret). */
+export type FailoverChainHopDistribution = {
+  one: number
+  two: number
+  three: number
+  fourPlus: number
+}
+
+export type FailoverChainModeBreakdown = {
+  ask: number
+  agent: number
+  unknown: number
+}
+
+export type FailoverChainProviderStat = {
+  provider: string
+  hops: number
+  errors: number
+  oks: number
+}
+
+export type FailoverChainReasonStat = {
+  reason: string
+  count: number
+}
+
+/**
+ * Phase 3-A: read-time Router Failover Chain analysis.
+ * Derived only from FailoverChainSummary[] — no secrets / credentialId / raw errors.
+ */
+export type FailoverChainAnalysis = {
+  totalChains: number
+  successfulChains: number
+  exhaustedChains: number
+  /** successfulChains / totalChains; null when totalChains === 0 */
+  successRate: number | null
+  rescuedChains: number
+  /** rescuedChains / totalChains; null when totalChains === 0 */
+  rescueRate: number | null
+  hopDistribution: FailoverChainHopDistribution
+  /** null when totalChains === 0 */
+  averageHops: number | null
+  maxHops: number
+  byMode: FailoverChainModeBreakdown
+  byProvider: FailoverChainProviderStat[]
+  byReason: FailoverChainReasonStat[]
+}
+
+function hopCountOf(summary: FailoverChainSummary | null | undefined): number {
+  const hops = summary?.hops
+  if (!Array.isArray(hops)) return 0
+  return hops.length
+}
+
+function isSuccessfulChain(summary: FailoverChainSummary): boolean {
+  return String(summary.finalStatus || '').trim() === 'ok'
+}
+
+function isExhaustedChain(summary: FailoverChainSummary): boolean {
+  return String(summary.finalStatus || '').trim() === 'error'
+}
+
+function isRescuedChain(summary: FailoverChainSummary): boolean {
+  return hopCountOf(summary) >= 2 && isSuccessfulChain(summary)
+}
+
+/**
+ * Pure Phase 3-A analysis over FailoverChainSummary[].
+ * Does not regroup UsageEvents. No I/O, secrets, or credentials.
+ */
+export function analyzeFailoverChains(
+  summaries: FailoverChainSummary[] | null | undefined
+): FailoverChainAnalysis {
+  const list = Array.isArray(summaries) ? summaries : []
+  const totalChains = list.length
+
+  let successfulChains = 0
+  let exhaustedChains = 0
+  let rescuedChains = 0
+  let hopSum = 0
+  let maxHops = 0
+  const hopDistribution: FailoverChainHopDistribution = {
+    one: 0,
+    two: 0,
+    three: 0,
+    fourPlus: 0
+  }
+  const byMode: FailoverChainModeBreakdown = {
+    ask: 0,
+    agent: 0,
+    unknown: 0
+  }
+  const providerMap = new Map<string, FailoverChainProviderStat>()
+  const reasonMap = new Map<string, number>()
+
+  for (const summary of list) {
+    if (!summary || typeof summary !== 'object') continue
+
+    if (isSuccessfulChain(summary)) successfulChains += 1
+    else if (isExhaustedChain(summary)) exhaustedChains += 1
+
+    if (isRescuedChain(summary)) rescuedChains += 1
+
+    const hops = hopCountOf(summary)
+    hopSum += hops
+    if (hops > maxHops) maxHops = hops
+    if (hops === 1) hopDistribution.one += 1
+    else if (hops === 2) hopDistribution.two += 1
+    else if (hops === 3) hopDistribution.three += 1
+    else if (hops >= 4) hopDistribution.fourPlus += 1
+
+    if (summary.mode === 'ask') byMode.ask += 1
+    else if (summary.mode === 'agent') byMode.agent += 1
+    else byMode.unknown += 1
+
+    const hopRows = Array.isArray(summary.hops)
+      ? summary.hops
+      : (new Array() as FailoverChainHop[])
+    for (const hop of hopRows) {
+      if (!hop || typeof hop !== 'object') continue
+      const provider = String(hop.provider || '').trim() || '?'
+      const cur = providerMap.get(provider) ?? {
+        provider,
+        hops: 0,
+        errors: 0,
+        oks: 0
+      }
+      cur.hops += 1
+      const status = String(hop.status || '').trim()
+      if (status === 'ok') cur.oks += 1
+      else if (status === 'error') cur.errors += 1
+      providerMap.set(provider, cur)
+    }
+
+    const reasonRows = Array.isArray(summary.reasons)
+      ? summary.reasons
+      : hopRows.map((hop) => String(hop?.reason || '').trim()).filter(Boolean)
+    for (const raw of reasonRows) {
+      const reason = String(raw || '').trim()
+      if (!reason) continue
+      reasonMap.set(reason, (reasonMap.get(reason) || 0) + 1)
+    }
+  }
+
+  const successRate = totalChains === 0 ? null : successfulChains / totalChains
+  const rescueRate = totalChains === 0 ? null : rescuedChains / totalChains
+  const averageHops = totalChains === 0 ? null : hopSum / totalChains
+
+  const byProvider = Array.from(providerMap.values()).sort((a, b) =>
+    a.provider.localeCompare(b.provider)
+  )
+  const byReason = Array.from(reasonMap.entries())
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => a.reason.localeCompare(b.reason))
+
+  return {
+    totalChains,
+    successfulChains,
+    exhaustedChains,
+    successRate,
+    rescuedChains,
+    rescueRate,
+    hopDistribution,
+    averageHops,
+    maxHops,
+    byMode,
+    byProvider,
+    byReason
+  }
+}
+
 export type UsageRecentRow = {
   id: number
   engine: string

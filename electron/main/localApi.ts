@@ -171,7 +171,8 @@ export async function localApiRequest<T = unknown>(
         usageEventsToRecentRows,
         billingModeForUi,
         countFailoverChains,
-        groupUsageEventsByFailoverId
+        groupUsageEventsByFailoverId,
+        analyzeFailoverChains
       } = await import('./ai/usage')
       const { resolveCredential } = await import('./ai/credentials')
       const { parseProviderId } = await import('./ai/types')
@@ -203,12 +204,15 @@ export async function localApiRequest<T = unknown>(
       const routerFailoverChains = countFailoverChains(usageEvents)
       // Derived at read time from existing UsageEvents (failoverId). Not a new schema.
       const routerFailoverChainSummaries = groupUsageEventsByFailoverId(usageEvents)
+      // Phase 3-A: read-time analysis from summaries only (Single Source).
+      const routerFailoverAnalysis = analyzeFailoverChains(routerFailoverChainSummaries)
       const router = {
         total: usageEvents.length,
         fallbacks: 0,
         fallback_rate: 0,
         router_failover_chains: routerFailoverChains,
         router_failover_chain_summaries: routerFailoverChainSummaries,
+        router_failover_analysis: routerFailoverAnalysis,
         by_engine: Array.from(byEngineMap.values()).map((row) => ({
           ...row,
           estimated_usd: Math.round(row.estimated_usd * 10000) / 10000
