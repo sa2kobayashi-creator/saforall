@@ -431,6 +431,14 @@ export type FailoverChainReasonTransition = {
   count: number
 }
 
+/** Phase 8-B P1: same-month daily chain facts (not Health/Risk). */
+export type FailoverChainDailyBucket = {
+  date: string
+  chainCount: number
+  successfulCount: number
+  exhaustedCount: number
+}
+
 /**
  * Phase 3-A: read-time Router Failover Chain analysis.
  * Derived only from FailoverChainSummary[] — no secrets / credentialId / raw errors.
@@ -466,6 +474,11 @@ export type FailoverChainAnalysis = {
    * Do not regenerate from hops in analysis or UI.
    */
   reasonTransitions: FailoverChainReasonTransition[]
+  /**
+   * Phase 8-B P1: per-day chain facts from hop timestamps (YYYY-MM-DD).
+   * Invalid timestamps excluded — no Health/Risk labeling.
+   */
+  dailyBuckets: FailoverChainDailyBucket[]
 }
 
 function hopCountOf(summary: FailoverChainSummary | null | undefined): number {
@@ -484,6 +497,46 @@ function isExhaustedChain(summary: FailoverChainSummary): boolean {
 
 function isRescuedChain(summary: FailoverChainSummary): boolean {
   return hopCountOf(summary) >= 2 && isSuccessfulChain(summary)
+}
+
+/**
+ * Phase 8-B: extract YYYY-MM-DD from a hop timestamp.
+ * Invalid / empty / non-parseable → null (no guessing).
+ */
+function parseChainBucketDate(raw: unknown): string | null {
+  const s = String(raw ?? '').trim()
+  if (!s) return null
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(s)
+  if (!match) return null
+  if (!Number.isFinite(Date.parse(s))) return null
+  const [y, mo, d] = match[1].split('-').map((part) => Number(part))
+  if (![y, mo, d].every((n) => Number.isFinite(n))) return null
+  const utc = Date.UTC(y, mo - 1, d)
+  const check = new Date(utc)
+  if (
+    check.getUTCFullYear() !== y ||
+    check.getUTCMonth() + 1 !== mo ||
+    check.getUTCDate() !== d
+  ) {
+    return null
+  }
+  return match[1]
+}
+
+/**
+ * Phase 8-B: bucket date for a chain — last hop with a valid timestamp
+ * (resolution day). No inference when none are valid.
+ */
+function chainDailyBucketDate(summary: FailoverChainSummary): string | null {
+  if (!Array.isArray(summary.hops) || summary.hops.length === 0) return null
+  const hops = summary.hops
+  for (let i = hops.length - 1; i >= 0; i -= 1) {
+    const hop = hops[i]
+    if (!hop || typeof hop !== 'object') continue
+    const date = parseChainBucketDate(hop.timestamp)
+    if (date) return date
+  }
+  return null
 }
 
 /**
@@ -517,6 +570,10 @@ export function analyzeFailoverChains(
   const finalSuccessMap = new Map<string, number>()
   const finalFailedMap = new Map<string, number>()
   const transitionMap = new Map<string, { from: string; to: string; count: number }>()
+  const dailyMap = new Map<
+    string,
+    { date: string; chainCount: number; successfulCount: number; exhaustedCount: number }
+  >()
 
   for (const summary of list) {
     if (!summary || typeof summary !== 'object') continue
@@ -594,6 +651,21 @@ export function analyzeFailoverChains(
         else transitionMap.set(key, { from, to, count: 1 })
       }
     }
+
+    // Phase 8-B P1: daily facts from hop timestamps (invalid → excluded).
+    const bucketDate = chainDailyBucketDate(summary)
+    if (bucketDate) {
+      const bucket = dailyMap.get(bucketDate) ?? {
+        date: bucketDate,
+        chainCount: 0,
+        successfulCount: 0,
+        exhaustedCount: 0
+      }
+      bucket.chainCount += 1
+      if (isSuccessfulChain(summary)) bucket.successfulCount += 1
+      else if (isExhaustedChain(summary)) bucket.exhaustedCount += 1
+      dailyMap.set(bucketDate, bucket)
+    }
   }
 
   const successRate = totalChains === 0 ? null : successfulChains / totalChains
@@ -617,6 +689,9 @@ export function analyzeFailoverChains(
     if (fromCmp !== 0) return fromCmp
     return a.to.localeCompare(b.to)
   })
+  const dailyBuckets = Array.from(dailyMap.values()).sort((a, b) =>
+    a.date.localeCompare(b.date)
+  )
 
   return {
     totalChains,
@@ -633,7 +708,8 @@ export function analyzeFailoverChains(
     byReason,
     finalSuccessProviderCounts,
     finalFailedProviderCounts,
-    reasonTransitions
+    reasonTransitions,
+    dailyBuckets
   }
 }
 

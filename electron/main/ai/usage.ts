@@ -25,7 +25,8 @@ export {
   type FailoverChainAnalysis,
   type FailoverChainFinalSuccessProviderCount,
   type FailoverChainFinalFailedProviderCount,
-  type FailoverChainReasonTransition
+  type FailoverChainReasonTransition,
+  type FailoverChainDailyBucket
 } from './usageBillingUi'
 
 export type UsageEventStatus = 'ok' | 'error'

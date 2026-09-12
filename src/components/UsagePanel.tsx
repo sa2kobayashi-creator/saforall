@@ -170,6 +170,15 @@ type FailoverChainAnalysisView = {
     to: string
     count: number
   }> | null
+  /**
+   * Phase 8-B: Core daily chain facts (display only; not Health/Risk).
+   */
+  dailyBuckets?: Array<{
+    date: string
+    chainCount: number
+    successfulCount: number
+    exhaustedCount: number
+  }> | null
 }
 
 type RouterInsight = {
@@ -442,6 +451,21 @@ function relativeBarWidth(value: number, max: number): number {
   const m = Number(max) || 0
   if (m <= 0 || v <= 0) return 0
   return Math.min(100, Math.round((v / m) * 1000) / 10)
+}
+
+/**
+ * Phase 8-B: display-only order for Final Failed facts (count desc).
+ * Does not recompute counts — sorts Core rows only.
+ */
+function sortFinalFailedCountsForDisplay(
+  rows: Array<{ provider: string; count: number }> | null | undefined
+): Array<{ provider: string; count: number }> {
+  if (!Array.isArray(rows)) return []
+  return [...rows].sort((a, b) => {
+    const countCmp = (Number(b.count) || 0) - (Number(a.count) || 0)
+    if (countCmp !== 0) return countCmp
+    return String(a.provider || '').localeCompare(String(b.provider || ''))
+  })
 }
 
 const LLM_ENGINES = new Set(['openai', 'gemini', 'claude', 'workers'])
@@ -952,6 +976,103 @@ export function UsagePanel({
                         </div>
                       </dl>
                     </div>
+                    <p className="usage-muted usage-failover-exhausted-note">
+                      Exhausted = Chain 最終枯渇（Hop Errors の合計ではない）
+                    </p>
+
+                    {Array.isArray(failoverAnalysis.finalFailedProviderCounts) &&
+                      failoverAnalysis.finalFailedProviderCounts.length > 0 && (
+                        <>
+                          <h5 className="usage-failover-analysis-sub">
+                            Final Failed Providers
+                          </h5>
+                          <p className="usage-muted usage-failover-final-failed-note">
+                            Final Failed が多い Provider · Chain 最終失敗の帰属 · Hop の Errors とは別
+                          </p>
+                          <table className="usage-table usage-failover-final-failed-table">
+                            <thead>
+                              <tr>
+                                <th>Provider</th>
+                                <th>Count</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sortFinalFailedCountsForDisplay(
+                                failoverAnalysis.finalFailedProviderCounts
+                              ).map((row) => (
+                                <tr key={row.provider}>
+                                  <td>
+                                    {ENGINE_LABELS[
+                                      row.provider as keyof typeof ENGINE_LABELS
+                                    ] ?? row.provider}
+                                  </td>
+                                  <td>
+                                    <div className="usage-failover-metric">
+                                      <span>{row.count}</span>
+                                      <div className="usage-bar-track usage-failover-mini-bar">
+                                        <div
+                                          className="usage-bar-fill warn"
+                                          style={{
+                                            width: `${relativeBarWidth(
+                                              row.count,
+                                              finalFailedCountMax
+                                            )}%`
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+
+                    {Array.isArray(failoverAnalysis.reasonTransitions) &&
+                      failoverAnalysis.reasonTransitions.length > 0 && (
+                        <>
+                          <h5 className="usage-failover-analysis-sub">
+                            Reason Transitions
+                          </h5>
+                          <p className="usage-muted usage-failover-reason-transition-note">
+                            Chain reasons の隣接遷移 · Core 集計を直表示 · 原因断定ではない
+                          </p>
+                          <table className="usage-table usage-failover-reason-transition-table">
+                            <thead>
+                              <tr>
+                                <th>From</th>
+                                <th>To</th>
+                                <th>Count</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {failoverAnalysis.reasonTransitions.map((row) => (
+                                <tr key={`${row.from}\0${row.to}`}>
+                                  <td className="usage-model-id">{row.from}</td>
+                                  <td className="usage-model-id">{row.to}</td>
+                                  <td>
+                                    <div className="usage-failover-metric">
+                                      <span>{row.count}</span>
+                                      <div className="usage-bar-track usage-failover-mini-bar">
+                                        <div
+                                          className="usage-bar-fill"
+                                          style={{
+                                            width: `${relativeBarWidth(
+                                              row.count,
+                                              reasonTransitionCountMax
+                                            )}%`
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
 
                     <h5 className="usage-failover-analysis-sub">Hop</h5>
                     <dl className="usage-failover-analysis-stats">
@@ -1040,6 +1161,10 @@ export function UsagePanel({
                       failoverAnalysis.byProvider.length > 0 && (
                         <>
                           <h5 className="usage-failover-analysis-sub">Provider</h5>
+                          <p className="usage-muted usage-failover-provider-note">
+                            Hop 単位の OKs / Errors · Final Success / Final Failed
+                            とは別
+                          </p>
                           <table className="usage-table usage-failover-provider-table">
                             <thead>
                               <tr>
@@ -1154,53 +1279,6 @@ export function UsagePanel({
                         </>
                       )}
 
-                    {Array.isArray(failoverAnalysis.finalFailedProviderCounts) &&
-                      failoverAnalysis.finalFailedProviderCounts.length > 0 && (
-                        <>
-                          <h5 className="usage-failover-analysis-sub">
-                            Final Failed Providers
-                          </h5>
-                          <p className="usage-muted usage-failover-final-failed-note">
-                            Chain 最終失敗の帰属件数 · Hop の Errors とは別
-                          </p>
-                          <table className="usage-table usage-failover-final-failed-table">
-                            <thead>
-                              <tr>
-                                <th>Provider</th>
-                                <th>Count</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {failoverAnalysis.finalFailedProviderCounts.map((row) => (
-                                <tr key={row.provider}>
-                                  <td>
-                                    {ENGINE_LABELS[
-                                      row.provider as keyof typeof ENGINE_LABELS
-                                    ] ?? row.provider}
-                                  </td>
-                                  <td>
-                                    <div className="usage-failover-metric">
-                                      <span>{row.count}</span>
-                                      <div className="usage-bar-track usage-failover-mini-bar">
-                                        <div
-                                          className="usage-bar-fill warn"
-                                          style={{
-                                            width: `${relativeBarWidth(
-                                              row.count,
-                                              finalFailedCountMax
-                                            )}%`
-                                          }}
-                                        />
-                                      </div>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </>
-                      )}
-
                     {Array.isArray(failoverAnalysis.byReason) &&
                       failoverAnalysis.byReason.length > 0 && (
                         <>
@@ -1236,44 +1314,30 @@ export function UsagePanel({
                         </>
                       )}
 
-                    {Array.isArray(failoverAnalysis.reasonTransitions) &&
-                      failoverAnalysis.reasonTransitions.length > 0 && (
+                    {Array.isArray(failoverAnalysis.dailyBuckets) &&
+                      failoverAnalysis.dailyBuckets.length > 0 && (
                         <>
-                          <h5 className="usage-failover-analysis-sub">
-                            Reason Transitions
-                          </h5>
-                          <p className="usage-muted usage-failover-reason-transition-note">
-                            Chain reasons の隣接遷移 · Core 集計を直表示
+                          <h5 className="usage-failover-analysis-sub">Daily Analysis</h5>
+                          <p className="usage-muted usage-failover-daily-note">
+                            同月内の日次 Chain 件数 · Core 集計を直表示 · Health/Risk
+                            判定ではない
                           </p>
-                          <table className="usage-table usage-failover-reason-transition-table">
+                          <table className="usage-table usage-failover-daily-table">
                             <thead>
                               <tr>
-                                <th>From</th>
-                                <th>To</th>
-                                <th>Count</th>
+                                <th>Date</th>
+                                <th>Chains</th>
+                                <th>Successful</th>
+                                <th>Exhausted</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {failoverAnalysis.reasonTransitions.map((row) => (
-                                <tr key={`${row.from}\0${row.to}`}>
-                                  <td className="usage-model-id">{row.from}</td>
-                                  <td className="usage-model-id">{row.to}</td>
-                                  <td>
-                                    <div className="usage-failover-metric">
-                                      <span>{row.count}</span>
-                                      <div className="usage-bar-track usage-failover-mini-bar">
-                                        <div
-                                          className="usage-bar-fill"
-                                          style={{
-                                            width: `${relativeBarWidth(
-                                              row.count,
-                                              reasonTransitionCountMax
-                                            )}%`
-                                          }}
-                                        />
-                                      </div>
-                                    </div>
-                                  </td>
+                              {failoverAnalysis.dailyBuckets.map((row) => (
+                                <tr key={row.date}>
+                                  <td className="usage-model-id">{row.date}</td>
+                                  <td>{row.chainCount}</td>
+                                  <td>{row.successfulCount}</td>
+                                  <td>{row.exhaustedCount}</td>
                                 </tr>
                               ))}
                             </tbody>

@@ -513,6 +513,24 @@
   width: 22%;
 }
 
+/* Phase 8-B: Exhausted / Provider / Daily fact notes */
+.usage-failover-exhausted-note,
+.usage-failover-provider-note,
+.usage-failover-daily-note {
+  margin: 2px 0 8px;
+  font-size: 11px;
+}
+
+.usage-failover-daily-table th:nth-child(2),
+.usage-failover-daily-table td:nth-child(2),
+.usage-failover-daily-table th:nth-child(3),
+.usage-failover-daily-table td:nth-child(3),
+.usage-failover-daily-table th:nth-child(4),
+.usage-failover-daily-table td:nth-child(4) {
+  width: 18%;
+  text-align: right;
+}
+
 /* Phase 4-A: Mode / Provider / Reason visibility (display-only bars) */
 .usage-failover-mode-list {
   list-style: none;

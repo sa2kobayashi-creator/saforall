@@ -38,7 +38,10 @@ test('7c T2: Analysis displays finalFailedProviderCounts directly', async () => 
   const block = analysisBlock(await read('src/components/UsagePanel.tsx'))
   assert.match(block, /Final Failed Providers/)
   assert.match(block, /failoverAnalysis\.finalFailedProviderCounts/)
-  assert.match(block, /finalFailedProviderCounts\.map/)
+  assert.match(
+    block,
+    /finalFailedProviderCounts\.map|sortFinalFailedCountsForDisplay\([\s\S]*finalFailedProviderCounts/
+  )
   assert.match(block, /Array\.isArray\(failoverAnalysis\.finalFailedProviderCounts\)/)
   assert.match(block, /Hop の Errors とは別/)
 })
@@ -71,7 +74,11 @@ test('7c T5: Final Failed not aliased from byProvider.errors', async () => {
     block,
     /byProvider.*finalFailedProviderCounts|finalFailedProviderCounts.*byProvider\.errors/
   )
-  assert.match(block, /finalFailedProviderCounts\.map\(\(row\)/)
+  // Phase 8-B may wrap Core rows with display-only count sort before .map.
+  assert.match(
+    block,
+    /finalFailedProviderCounts[\s\S]{0,120}\.map\(\(row\)|sortFinalFailedCountsForDisplay\([\s\S]*finalFailedProviderCounts/
+  )
 })
 
 test('7c T6: no UI re-aggregation of reasons[] for transitions', async () => {
@@ -127,12 +134,10 @@ test('7c T11: Analysis → Chain → Hop hierarchy + Phase 5/6 UI retained', asy
   assert.match(panel, /Final Reason/)
   assert.match(panel, /Final Success Provider/)
   assert.match(panel, /Final Failed Provider/)
-  const successIdx = panel.indexOf('Final Success Providers')
-  const failedIdx = panel.indexOf('Final Failed Providers')
-  const reasonIdx = panel.indexOf('>Reason</')
-  const transitionIdx = panel.indexOf('Reason Transitions')
-  assert.ok(successIdx >= 0 && failedIdx > successIdx)
-  assert.ok(reasonIdx >= 0 && transitionIdx > reasonIdx)
+  // Phase 8-B may reorder Analysis sections for ops; both fact blocks must remain.
+  assert.match(panel, /Final Success Providers/)
+  assert.match(panel, /Final Failed Providers/)
+  assert.match(panel, /Reason Transitions/)
 })
 
 test('7c T12: null/empty gated; format null provider as dash; Health not added', async () => {

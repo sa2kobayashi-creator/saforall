@@ -140,6 +140,7 @@ export {
   type FailoverChainAnalysis,
   type FailoverChainFinalSuccessProviderCount,
   type FailoverChainFinalFailedProviderCount,
-  type FailoverChainReasonTransition
+  type FailoverChainReasonTransition,
+  type FailoverChainDailyBucket
 } from './usage'
 export { estimateCostUsd } from './cost'
