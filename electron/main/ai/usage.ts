@@ -17,6 +17,7 @@ export {
   resolveFinalSuccessProvider,
   resolveFinalFailedProvider,
   analyzeUsageEventProviderStatus,
+  analyzeUsageEventProviderDailyStatus,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   type UsageRecentRow,
@@ -28,7 +29,9 @@ export {
   type FailoverChainFinalFailedProviderCount,
   type FailoverChainReasonTransition,
   type FailoverChainDailyBucket,
-  type UsageEventProviderStatus
+  type UsageEventProviderStatus,
+  type UsageEventProviderDailyStatus,
+  type UsageEventProviderDailyAnalysis
 } from './usageBillingUi'
 
 export type UsageEventStatus = 'ok' | 'error'

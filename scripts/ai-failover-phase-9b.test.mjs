@@ -194,7 +194,7 @@ test('9b T10: independent of byProvider.oks/errors', async () => {
   const h = await loadHelpers()
   const billing = await read('electron/main/ai/usageBillingUi.ts')
   const fnStart = billing.indexOf('export function analyzeUsageEventProviderStatus')
-  const fnEnd = billing.indexOf('export type UsageRecentRow', fnStart)
+  const fnEnd = billing.indexOf('export type UsageEventProviderDailyStatus', fnStart)
   assert.ok(fnStart >= 0 && fnEnd > fnStart)
   const fnBody = billing.slice(fnStart, fnEnd)
   assert.doesNotMatch(fnBody, /groupUsageEventsByFailoverId/)
@@ -239,7 +239,7 @@ test('9b T11: independent of finalSuccess / finalFailed', async () => {
   const h = await loadHelpers()
   const billing = await read('electron/main/ai/usageBillingUi.ts')
   const fnStart = billing.indexOf('export function analyzeUsageEventProviderStatus')
-  const fnEnd = billing.indexOf('export type UsageRecentRow', fnStart)
+  const fnEnd = billing.indexOf('export type UsageEventProviderDailyStatus', fnStart)
   const fnBody = billing.slice(fnStart, fnEnd)
   assert.doesNotMatch(fnBody, /finalSuccess/)
   assert.doesNotMatch(fnBody, /finalFailed/)
@@ -375,10 +375,10 @@ test('9b T15: export from usage.ts / index.ts', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
   assert.doesNotMatch(panel, /analyzeUsageEventProviderStatus/)
 
-  // No Health/Risk/Problem in Core addition
+  // No Health/Risk/Problem in Phase 9-B Core addition (status aggregate only).
   const billing = await read('electron/main/ai/usageBillingUi.ts')
   const fnStart = billing.indexOf('export function analyzeUsageEventProviderStatus')
-  const fnEnd = billing.indexOf('export type UsageRecentRow', fnStart)
+  const fnEnd = billing.indexOf('export type UsageEventProviderDailyStatus', fnStart)
   const fnBody = billing.slice(fnStart, fnEnd)
   assert.doesNotMatch(fnBody, /health|risk|problemProvider|degraded|unhealthy|alert/i)
 })

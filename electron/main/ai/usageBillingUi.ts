@@ -500,10 +500,11 @@ function isRescuedChain(summary: FailoverChainSummary): boolean {
 }
 
 /**
- * Phase 8-B: extract YYYY-MM-DD from a hop timestamp.
- * Invalid / empty / non-parseable → null (no guessing).
+ * Extract UTC calendar YYYY-MM-DD from an ISO-like timestamp.
+ * Invalid / empty / non-parseable / non-calendar → null (no guessing, no local TZ).
+ * Shared by Chain dailyBuckets (Phase 8-B) and All UsageEvent daily (Phase 10-B).
  */
-function parseChainBucketDate(raw: unknown): string | null {
+function parseUtcCalendarDate(raw: unknown): string | null {
   const s = String(raw ?? '').trim()
   if (!s) return null
   const match = /^(\d{4}-\d{2}-\d{2})/.exec(s)
@@ -521,6 +522,11 @@ function parseChainBucketDate(raw: unknown): string | null {
     return null
   }
   return match[1]
+}
+
+/** Alias used by Chain dailyBuckets (Phase 8-B). */
+function parseChainBucketDate(raw: unknown): string | null {
+  return parseUtcCalendarDate(raw)
 }
 
 /**
@@ -753,6 +759,97 @@ export function analyzeUsageEventProviderStatus(
   }
 
   return Array.from(map.values()).sort((a, b) => a.provider.localeCompare(b.provider))
+}
+
+/**
+ * Phase 10-B: All UsageEvent provider × UTC-day status facts (no evaluative labels).
+ * Population: every event in the input list — with or without failoverId.
+ * Independent of Failover dailyBuckets / month-total provider status aggregation.
+ */
+export type UsageEventProviderDailyStatus = {
+  date: string
+  provider: string
+  ok: number
+  error: number
+  total: number
+}
+
+/**
+ * Phase 10-B: daily rows + retention range of the analyzed UsageEvent list.
+ * Range is Core-computed (UI must not rescan timestamps).
+ */
+export type UsageEventProviderDailyAnalysis = {
+  rows: UsageEventProviderDailyStatus[]
+  eventCount: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+}
+
+/**
+ * Aggregate ok/error/total per (UTC date × provider) across all UsageEvents.
+ * Standalone over raw events; no chain grouping or Chain analysis fields.
+ */
+export function analyzeUsageEventProviderDailyStatus(
+  events: UsageEventLike[] | null | undefined
+): UsageEventProviderDailyAnalysis {
+  const list = Array.isArray(events) ? events : []
+  const map = new Map<string, UsageEventProviderDailyStatus>()
+  let eventCount = 0
+  let oldestTimestamp: string | null = null
+  let newestTimestamp: string | null = null
+  let oldestMs = Number.POSITIVE_INFINITY
+  let newestMs = Number.NEGATIVE_INFINITY
+
+  for (const event of list) {
+    if (!event || typeof event !== 'object') continue
+    eventCount += 1
+
+    const rawTs = String(event.timestamp ?? '').trim()
+    if (rawTs) {
+      const ms = Date.parse(normalizeTimestamp(rawTs))
+      if (Number.isFinite(ms)) {
+        if (ms < oldestMs) {
+          oldestMs = ms
+          oldestTimestamp = rawTs
+        }
+        if (ms > newestMs) {
+          newestMs = ms
+          newestTimestamp = rawTs
+        }
+      }
+    }
+
+    const date = parseUtcCalendarDate(event.timestamp)
+    if (!date) continue
+
+    const provider = String(event.provider ?? '').trim() || '?'
+    const key = `${date}\0${provider}`
+    const cur = map.get(key) ?? {
+      date,
+      provider,
+      ok: 0,
+      error: 0,
+      total: 0
+    }
+    cur.total += 1
+    const status = String(event.status ?? '').trim()
+    if (status === 'ok') cur.ok += 1
+    else if (status === 'error') cur.error += 1
+    map.set(key, cur)
+  }
+
+  const rows = Array.from(map.values()).sort((a, b) => {
+    const dateCmp = a.date.localeCompare(b.date)
+    if (dateCmp !== 0) return dateCmp
+    return a.provider.localeCompare(b.provider)
+  })
+
+  return {
+    rows,
+    eventCount,
+    oldestTimestamp,
+    newestTimestamp
+  }
 }
 
 export type UsageRecentRow = {

@@ -192,6 +192,25 @@ type UsageEventProviderStatusRow = {
   total: number
 }
 
+/**
+ * Phase 10-B: All UsageEvent provider × day status (display only).
+ * Sibling of usage_event_provider_status — not Failover dailyBuckets / Health.
+ */
+type UsageEventProviderDailyStatusRow = {
+  date: string
+  provider: string
+  ok: number
+  error: number
+  total: number
+}
+
+type UsageEventProviderDailyAnalysisView = {
+  rows: UsageEventProviderDailyStatusRow[]
+  eventCount: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+}
+
 type RouterInsight = {
   total: number
   fallbacks: number
@@ -207,6 +226,11 @@ type RouterInsight = {
    * Sibling of router_failover_analysis — never nest or recompute in panel.
    */
   usage_event_provider_status?: UsageEventProviderStatusRow[] | null
+  /**
+   * Phase 10-B: All UsageEvent provider × UTC-day status from Core.
+   * Sibling of usage_event_provider_status / router_failover_analysis.
+   */
+  usage_event_provider_daily?: UsageEventProviderDailyAnalysisView | null
   by_engine: RouteEngineStat[]
   by_task: RouteTaskStat[]
   recent: RouteRecent[]
@@ -597,6 +621,16 @@ export function UsagePanel({
   const usageEventProviderTotalMax = usageEventProviderStatus
     ? Math.max(0, ...usageEventProviderStatus.map((row) => Number(row.total) || 0))
     : 0
+
+  /** Phase 10-B: Core All UsageEvent daily status — display only. */
+  const usageEventProviderDaily =
+    data?.router?.usage_event_provider_daily &&
+    typeof data.router.usage_event_provider_daily === 'object'
+      ? data.router.usage_event_provider_daily
+      : null
+  const usageEventProviderDailyRows = Array.isArray(usageEventProviderDaily?.rows)
+    ? usageEventProviderDaily.rows
+    : null
 
   // Phase 4-A display-only maxima for relative bars (not Chain re-aggregation).
   const providerHopMax = Array.isArray(failoverAnalysis?.byProvider)
@@ -1457,6 +1491,64 @@ export function UsagePanel({
                                   </div>
                                 </div>
                               </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                {usageEventProviderDailyRows != null &&
+                  usageEventProviderDailyRows.length > 0 && (
+                    <div className="usage-event-provider-daily">
+                      <h4 className="usage-subhead">
+                        All UsageEvent Provider Daily Analysis
+                      </h4>
+                      <p className="usage-muted usage-event-provider-daily-note">
+                        All UsageEvent を対象とした日次集計です · Failover Chain
+                        Analysis とは別の母集団です
+                      </p>
+                      <p className="usage-muted usage-event-provider-daily-note">
+                        現在保持されている UsageEvent（最大 500）の範囲内です ·
+                        完全な過去履歴を示すものではありません
+                      </p>
+                      <p className="usage-muted usage-event-provider-daily-note">
+                        UTC カレンダー日 · 月次合計（Provider Status）および Chain
+                        Daily とは別集計 · 自動判定ラベルではありません
+                      </p>
+                      {usageEventProviderDaily != null && (
+                        <p className="usage-muted usage-event-provider-daily-range">
+                          範囲 · events {usageEventProviderDaily.eventCount}
+                          {usageEventProviderDaily.oldestTimestamp
+                            ? ` · oldest ${usageEventProviderDaily.oldestTimestamp}`
+                            : ''}
+                          {usageEventProviderDaily.newestTimestamp
+                            ? ` · newest ${usageEventProviderDaily.newestTimestamp}`
+                            : ''}
+                        </p>
+                      )}
+                      <table className="usage-table usage-event-provider-daily-table">
+                        <thead>
+                          <tr>
+                            <th>Date</th>
+                            <th>Provider</th>
+                            <th>OK</th>
+                            <th>Error</th>
+                            <th>Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {usageEventProviderDailyRows.map((row) => (
+                            <tr key={`${row.date}\0${row.provider}`}>
+                              <td className="usage-model-id">{row.date}</td>
+                              <td>
+                                {ENGINE_LABELS[
+                                  row.provider as keyof typeof ENGINE_LABELS
+                                ] ?? row.provider}
+                              </td>
+                              <td>{row.ok}</td>
+                              <td>{row.error}</td>
+                              <td>{row.total}</td>
                             </tr>
                           ))}
                         </tbody>

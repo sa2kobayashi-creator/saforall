@@ -426,6 +426,26 @@
   text-align: right;
 }
 
+/* Phase 10-B: All UsageEvent Provider Daily Analysis */
+.usage-event-provider-daily {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-event-provider-daily-note,
+.usage-event-provider-daily-range {
+  margin: 0;
+}
+
+.usage-event-provider-daily-table th:nth-child(n + 3),
+.usage-event-provider-daily-table td:nth-child(n + 3) {
+  text-align: right;
+}
+
 .usage-failover-analysis-sub {
   margin: 4px 0 0;
   font-size: 11px;

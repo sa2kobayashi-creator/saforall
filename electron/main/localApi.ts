@@ -173,7 +173,8 @@ export async function localApiRequest<T = unknown>(
         countFailoverChains,
         groupUsageEventsByFailoverId,
         analyzeFailoverChains,
-        analyzeUsageEventProviderStatus
+        analyzeUsageEventProviderStatus,
+        analyzeUsageEventProviderDailyStatus
       } = await import('./ai/usage')
       const { resolveCredential } = await import('./ai/credentials')
       const { parseProviderId } = await import('./ai/types')
@@ -209,6 +210,8 @@ export async function localApiRequest<T = unknown>(
       const routerFailoverAnalysis = analyzeFailoverChains(routerFailoverChainSummaries)
       // Phase 9-B: all UsageEvent provider status (separate population from Chain analysis).
       const usageEventProviderStatus = analyzeUsageEventProviderStatus(usageEvents)
+      // Phase 10-B: all UsageEvent provider × UTC-day status (sibling of status / failover).
+      const usageEventProviderDaily = analyzeUsageEventProviderDailyStatus(usageEvents)
       const router = {
         total: usageEvents.length,
         fallbacks: 0,
@@ -217,6 +220,7 @@ export async function localApiRequest<T = unknown>(
         router_failover_chain_summaries: routerFailoverChainSummaries,
         router_failover_analysis: routerFailoverAnalysis,
         usage_event_provider_status: usageEventProviderStatus,
+        usage_event_provider_daily: usageEventProviderDaily,
         by_engine: Array.from(byEngineMap.values()).map((row) => ({
           ...row,
           estimated_usd: Math.round(row.estimated_usd * 10000) / 10000
