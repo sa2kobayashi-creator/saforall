@@ -247,6 +247,44 @@
   color: var(--text-muted);
 }
 
+.usage-failover-chains {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.usage-failover-chain {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.usage-failover-chain-mode {
+  display: inline-block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.usage-failover-chain-path {
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.usage-failover-chain-reasons {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
 .usage-recent-head {
   display: flex;
   align-items: center;

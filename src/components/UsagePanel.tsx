@@ -77,12 +77,26 @@ type RouteRecent = {
   } | null
 }
 
+/** Derived Router Failover chain (failoverId group). Not PHP fallback. */
+type FailoverChainSummaryRow = {
+  failoverId: string
+  mode?: 'ask' | 'agent' | null
+  path: string[]
+  providers: string[]
+  reasons: string[]
+  statuses?: string[]
+  finalStatus?: string
+  finalReason?: string | null
+}
+
 type RouterInsight = {
   total: number
   fallbacks: number
   fallback_rate: number
   /** Electron Router Failover chains (unique failoverId). Not PHP fallbacks. */
   router_failover_chains?: number
+  /** Read-time chain summaries grouped by failoverId. */
+  router_failover_chain_summaries?: FailoverChainSummaryRow[]
   by_engine: RouteEngineStat[]
   by_task: RouteTaskStat[]
   recent: RouteRecent[]
@@ -184,8 +198,94 @@ function formatRouterFailover(row: RouteRecent): string {
     path && path.length > 1
       ? path.join('→')
       : `${f.primaryProvider}→${f.fallbackProvider || row.engine}`
-  const modeTag = f.mode === 'agent' ? ' [agent]' : ''
+  const modeTag = f.mode === 'agent' ? ' [agent]' : f.mode === 'ask' ? ' [ask]' : ''
   return f.reason ? `${base} (${f.reason})${modeTag}` : `${base}${modeTag}`
+}
+
+function engineDisplayName(engine: string): string {
+  return ENGINE_LABELS[engine as keyof typeof ENGINE_LABELS] ?? engine
+}
+
+/** Chain path line for Router Failover Chain section. */
+function formatChainProviders(chain: FailoverChainSummaryRow): string {
+  const path =
+    Array.isArray(chain.path) && chain.path.length > 0
+      ? chain.path
+      : Array.isArray(chain.providers)
+        ? chain.providers
+        : []
+  return path
+    .map((p) => String(p || '').trim())
+    .filter(Boolean)
+    .map(engineDisplayName)
+    .join(' → ')
+}
+
+/** Chain reason line: rate_limit → network_error → success. */
+function formatChainReasons(chain: FailoverChainSummaryRow): string {
+  return (Array.isArray(chain.reasons) ? chain.reasons : [])
+    .map((r) => String(r || '').trim())
+    .filter(Boolean)
+    .join(' → ')
+}
+
+/**
+ * Prefer API summaries; otherwise derive from recent rows that share failoverId.
+ * Never invent chains from timestamp alone. Never mix PHP fallback_from.
+ */
+function resolveFailoverChains(router: RouterInsight): FailoverChainSummaryRow[] {
+  const fromApi = router.router_failover_chain_summaries
+  if (Array.isArray(fromApi) && fromApi.length > 0) {
+    return fromApi.filter((c) => String(c?.failoverId || '').trim())
+  }
+
+  const buckets = new Map<string, RouteRecent[]>()
+  for (const row of router.recent || []) {
+    const id = String(row.routerFailover?.failoverId || '').trim()
+    if (!id) continue
+    const list = buckets.get(id)
+    if (list) list.push(row)
+    else buckets.set(id, [row])
+  }
+
+  const chains: FailoverChainSummaryRow[] = []
+  for (const [failoverId, group] of Array.from(buckets.entries())) {
+    const sorted = [...group].sort((a, b) => {
+      const attemptA =
+        typeof a.routerFailover?.attempt === 'number' ? a.routerFailover.attempt : 999
+      const attemptB =
+        typeof b.routerFailover?.attempt === 'number' ? b.routerFailover.attempt : 999
+      if (attemptA !== attemptB) return attemptA - attemptB
+      return String(a.created_at).localeCompare(String(b.created_at))
+    })
+    const last = sorted[sorted.length - 1]
+    const pathRaw = last?.routerFailover?.path
+    const providers = sorted.map((row) => String(row.engine || '').trim()).filter(Boolean)
+    const path =
+      Array.isArray(pathRaw) && pathRaw.length > 0
+        ? pathRaw.map((p) => String(p || '').trim()).filter(Boolean)
+        : providers
+    const reasons = sorted.map((row) => {
+      const reason = String(row.routerFailover?.reason || '').trim()
+      if (reason) return reason
+      return row.task_type === 'error' ? 'error' : 'success'
+    })
+    const mode =
+      last?.routerFailover?.mode === 'agent' || last?.routerFailover?.mode === 'ask'
+        ? last.routerFailover.mode
+        : sorted.find((r) => r.routerFailover?.mode === 'agent' || r.routerFailover?.mode === 'ask')
+            ?.routerFailover?.mode ?? null
+    chains.push({
+      failoverId,
+      mode: mode ?? null,
+      path,
+      providers,
+      reasons,
+      finalStatus: sorted[sorted.length - 1]?.task_type === 'error' ? 'error' : 'ok',
+      finalReason: reasons[reasons.length - 1] || null
+    })
+  }
+  return chains
 }
 
 const LLM_ENGINES = new Set(['openai', 'gemini', 'claude', 'workers'])
@@ -283,6 +383,11 @@ export function UsagePanel({
     if (!data?.router?.hints) return []
     return filterVisibleRouterHints(data.router.hints, dismissedHintCodes)
   }, [data?.router?.hints, dismissedHintCodes])
+
+  const failoverChains = useMemo(() => {
+    if (!data?.router) return []
+    return resolveFailoverChains(data.router)
+  }, [data?.router])
 
   const dismissHint = (code: string | undefined) => {
     if (!code) return
@@ -615,6 +720,41 @@ export function UsagePanel({
                       </li>
                     ))}
                   </ul>
+                )}
+
+                {failoverChains.length > 0 && (
+                  <>
+                    <h4 className="usage-subhead">Router Failover Chain</h4>
+                    <p className="usage-muted">
+                      failoverId 単位 · {failoverChains.length} 件（PHP
+                      フォールバックとは別）
+                    </p>
+                    <ul className="usage-failover-chains">
+                      {failoverChains.map((chain) => {
+                        const providers = formatChainProviders(chain)
+                        const reasons = formatChainReasons(chain)
+                        const modeTag =
+                          chain.mode === 'agent' ? 'agent' : chain.mode === 'ask' ? 'ask' : null
+                        return (
+                          <li
+                            key={chain.failoverId}
+                            className="usage-failover-chain"
+                            title={chain.failoverId}
+                          >
+                            {modeTag ? (
+                              <span className="usage-failover-chain-mode">[{modeTag}]</span>
+                            ) : null}
+                            <div className="usage-failover-chain-path">
+                              {providers || '—'}
+                            </div>
+                            {reasons ? (
+                              <div className="usage-failover-chain-reasons">{reasons}</div>
+                            ) : null}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </>
                 )}
 
                 {data.router.by_engine.length > 0 && (

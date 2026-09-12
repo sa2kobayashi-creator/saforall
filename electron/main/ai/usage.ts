@@ -8,10 +8,16 @@ export {
   failoverForUi,
   formatRouterFailoverLabel,
   countFailoverChains,
+  groupUsageEventsByFailoverId,
+  formatFailoverChainProviders,
+  formatFailoverChainReasons,
+  formatFailoverChainLabel,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   type UsageRecentRow,
-  type UsageFailoverUi
+  type UsageFailoverUi,
+  type FailoverChainHop,
+  type FailoverChainSummary
 } from './usageBillingUi'
 
 export type UsageEventStatus = 'ok' | 'error'

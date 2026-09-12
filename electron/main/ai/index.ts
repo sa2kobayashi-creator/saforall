@@ -123,10 +123,15 @@ export {
   failoverForUi,
   formatRouterFailoverLabel,
   countFailoverChains,
+  groupUsageEventsByFailoverId,
+  formatFailoverChainProviders,
+  formatFailoverChainReasons,
+  formatFailoverChainLabel,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   resetUsageForTests,
   type UsageEvent,
-  type UsageRecentRow
+  type UsageRecentRow,
+  type FailoverChainSummary
 } from './usage'
 export { estimateCostUsd } from './cost'

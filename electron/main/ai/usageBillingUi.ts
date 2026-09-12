@@ -113,6 +113,160 @@ export function countFailoverChains(
   return ids.size
 }
 
+/** One hop in a Router Failover chain (non-secret fields only). */
+export type FailoverChainHop = {
+  provider: string
+  status: string
+  attempt: number
+  reason: string | null
+  mode: 'ask' | 'agent' | null
+  timestamp: string
+  credentialId: string | null
+  billingMode: 'BYOK' | 'DEVELOPMENT' | null
+}
+
+/**
+ * Reconstructed Router Failover chain from UsageEvents sharing one failoverId.
+ * Not persisted — derived at read time. Never includes secrets / raw errors.
+ */
+export type FailoverChainSummary = {
+  failoverId: string
+  mode: 'ask' | 'agent' | null
+  /** Final event path when present; else ordered hop providers. */
+  path: string[]
+  providers: string[]
+  reasons: string[]
+  statuses: string[]
+  hops: FailoverChainHop[]
+  finalStatus: string
+  finalReason: string | null
+}
+
+function hopReasonLabel(reason: string | null | undefined, status: string): string {
+  const cleaned = String(reason || '').trim()
+  if (cleaned) return cleaned
+  if (status === 'ok') return 'success'
+  return status || 'error'
+}
+
+/**
+ * Group UsageEvents that share the same failover.failoverId into chains.
+ * Events without failoverId are excluded (normal success / single failure).
+ * Sort: attempt ascending, then timestamp as tie-break. Does not invent chains.
+ */
+export function groupUsageEventsByFailoverId(
+  events: UsageEventLike[]
+): FailoverChainSummary[] {
+  const buckets = new Map<string, UsageEventLike[]>()
+  for (const event of events) {
+    const meta = failoverForUi(event.failover)
+    const id = String(meta?.failoverId || '').trim()
+    if (!id) continue
+    const list = buckets.get(id)
+    if (list) list.push(event)
+    else buckets.set(id, [event])
+  }
+
+  const chains: FailoverChainSummary[] = []
+  for (const [failoverId, group] of Array.from(buckets.entries())) {
+    const sorted = [...group].sort((a, b) => {
+      const attemptA =
+        typeof a.failover?.attempt === 'number' && Number.isFinite(a.failover.attempt)
+          ? a.failover.attempt
+          : Number.POSITIVE_INFINITY
+      const attemptB =
+        typeof b.failover?.attempt === 'number' && Number.isFinite(b.failover.attempt)
+          ? b.failover.attempt
+          : Number.POSITIVE_INFINITY
+      if (attemptA !== attemptB) return attemptA - attemptB
+      const tsA = Date.parse(normalizeTimestamp(a.timestamp))
+      const tsB = Date.parse(normalizeTimestamp(b.timestamp))
+      const safeA = Number.isFinite(tsA) ? tsA : 0
+      const safeB = Number.isFinite(tsB) ? tsB : 0
+      return safeA - safeB
+    })
+
+    const hops: FailoverChainHop[] = sorted.map((event, index) => {
+      const meta = failoverForUi(event.failover)
+      const status = String(event.status || '').trim() || 'ok'
+      const attempt =
+        typeof meta?.attempt === 'number' && Number.isFinite(meta.attempt)
+          ? meta.attempt
+          : index + 1
+      return {
+        provider: String(event.provider || '').trim() || String(meta?.primaryProvider || '').trim(),
+        status,
+        attempt,
+        reason: meta?.reason ?? null,
+        mode: meta?.mode ?? null,
+        timestamp: String(event.timestamp || ''),
+        credentialId: credentialIdForUi(event.credentialId),
+        billingMode: billingModeForUi(event.billingMode)
+      }
+    })
+
+    const last = sorted[sorted.length - 1]
+    const lastMeta = failoverForUi(last?.failover)
+    const pathFromLast = lastMeta?.path && lastMeta.path.length > 0 ? lastMeta.path : null
+    const providers = hops.map((hop) => hop.provider).filter((p) => p.length > 0)
+    const path = pathFromLast && pathFromLast.length > 0 ? pathFromLast : providers
+    const reasons = hops.map((hop) => hopReasonLabel(hop.reason, hop.status))
+    const statuses = hops.map((hop) => hop.status)
+    let mode: 'ask' | 'agent' | null = null
+    for (let i = hops.length - 1; i >= 0; i -= 1) {
+      if (hops[i].mode === 'ask' || hops[i].mode === 'agent') {
+        mode = hops[i].mode
+        break
+      }
+    }
+
+    chains.push({
+      failoverId,
+      mode,
+      path,
+      providers,
+      reasons,
+      statuses,
+      hops,
+      finalStatus: statuses[statuses.length - 1] || 'ok',
+      finalReason: reasons[reasons.length - 1] || null
+    })
+  }
+
+  // Stable order: earliest hop timestamp first.
+  chains.sort((a, b) => {
+    const tsA = Date.parse(normalizeTimestamp(a.hops[0]?.timestamp || ''))
+    const tsB = Date.parse(normalizeTimestamp(b.hops[0]?.timestamp || ''))
+    const safeA = Number.isFinite(tsA) ? tsA : 0
+    const safeB = Number.isFinite(tsB) ? tsB : 0
+    return safeA - safeB
+  })
+  return chains
+}
+
+/** Provider path for chain UI: "openai → claude → gemini". */
+export function formatFailoverChainProviders(chain: FailoverChainSummary): string {
+  const path = chain.path.length > 0 ? chain.path : chain.providers
+  return path.filter((p) => String(p || '').trim()).join(' → ')
+}
+
+/** Reason path for chain UI: "rate_limit → network_error → success". */
+export function formatFailoverChainReasons(chain: FailoverChainSummary): string {
+  return chain.reasons.filter((r) => String(r || '').trim()).join(' → ')
+}
+
+/**
+ * Compact multi-line-friendly chain label (mode + providers + reasons).
+ * Never includes secrets.
+ */
+export function formatFailoverChainLabel(chain: FailoverChainSummary): string {
+  const modeTag = chain.mode === 'agent' ? '[agent]' : '[ask]'
+  const providers = formatFailoverChainProviders(chain)
+  const reasons = formatFailoverChainReasons(chain)
+  if (!providers) return modeTag
+  return reasons ? `${modeTag} ${providers} | ${reasons}` : `${modeTag} ${providers}`
+}
+
 export type UsageRecentRow = {
   id: number
   engine: string
