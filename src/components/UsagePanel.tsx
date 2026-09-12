@@ -77,6 +77,19 @@ type RouteRecent = {
   } | null
 }
 
+/**
+ * Phase 4-B: display whitelist for chain hops (no credentialId / billingMode).
+ * Runtime payloads may include extra fields — UI must not render them.
+ */
+type FailoverChainHopView = {
+  provider: string
+  status: string
+  attempt: number
+  reason: string | null
+  mode: 'ask' | 'agent' | null
+  timestamp: string
+}
+
 /** Derived Router Failover chain (failoverId group). Not PHP fallback. */
 type FailoverChainSummaryRow = {
   failoverId: string
@@ -87,6 +100,8 @@ type FailoverChainSummaryRow = {
   statuses?: string[]
   finalStatus?: string
   finalReason?: string | null
+  /** Phase 4-B: hop details from API summary (display only). */
+  hops?: FailoverChainHopView[] | null
 }
 
 /** Mirror of Phase 3-A FailoverChainAnalysis (display only; no re-analysis). */
@@ -262,6 +277,44 @@ function formatChainReasons(chain: FailoverChainSummaryRow): string {
     .map((r) => String(r || '').trim())
     .filter(Boolean)
     .join(' → ')
+}
+
+/** Phase 4-B: safe hop list from summary (no regroup / re-analysis). */
+function resolveChainHops(
+  chain: FailoverChainSummaryRow
+): FailoverChainHopView[] {
+  return Array.isArray(chain.hops) ? chain.hops : []
+}
+
+/** Display-only hop field → em dash when empty. */
+function formatHopText(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim()
+  return raw || '—'
+}
+
+/** Display-only hop attempt (recorded value; never recalculate). */
+function formatHopAttempt(value: number | null | undefined): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return '—'
+}
+
+/** Display-only hop mode (null stays —; do not remap to unknown). */
+function formatHopMode(mode: FailoverChainHopView['mode']): string {
+  if (mode === 'ask' || mode === 'agent') return mode
+  return '—'
+}
+
+/** Display-only hop timestamp (format only; never rebuild chains). */
+function formatHopTimestamp(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return '—'
+  const ms = Date.parse(raw)
+  if (!Number.isFinite(ms)) return raw
+  try {
+    return new Date(ms).toLocaleString()
+  } catch {
+    return raw
+  }
 }
 
 /**
@@ -994,6 +1047,7 @@ export function UsagePanel({
                         const reasons = formatChainReasons(chain)
                         const modeTag =
                           chain.mode === 'agent' ? 'agent' : chain.mode === 'ask' ? 'ask' : null
+                        const hops = resolveChainHops(chain)
                         return (
                           <li
                             key={chain.failoverId}
@@ -1009,6 +1063,59 @@ export function UsagePanel({
                             {reasons ? (
                               <div className="usage-failover-chain-reasons">{reasons}</div>
                             ) : null}
+                            <details className="usage-failover-chain-toggle">
+                              <summary>Hop details</summary>
+                              {hops.length === 0 ? (
+                                <p className="usage-muted usage-failover-hop-empty">
+                                  —
+                                </p>
+                              ) : (
+                                <ol className="usage-failover-hop-list">
+                                  {hops.map((hop, hopIndex) => (
+                                    <li
+                                      key={`${chain.failoverId}:${hopIndex}:${formatHopAttempt(hop?.attempt)}`}
+                                      className="usage-failover-hop"
+                                    >
+                                      <div className="usage-failover-hop-index">
+                                        #{hopIndex + 1}
+                                      </div>
+                                      <dl className="usage-failover-hop-fields">
+                                        <div>
+                                          <dt>Provider</dt>
+                                          <dd>
+                                            {hop?.provider
+                                              ? engineDisplayName(String(hop.provider))
+                                              : '—'}
+                                          </dd>
+                                        </div>
+                                        <div>
+                                          <dt>Status</dt>
+                                          <dd>{formatHopText(hop?.status)}</dd>
+                                        </div>
+                                        <div>
+                                          <dt>Attempt</dt>
+                                          <dd>{formatHopAttempt(hop?.attempt)}</dd>
+                                        </div>
+                                        <div>
+                                          <dt>Reason</dt>
+                                          <dd className="usage-model-id">
+                                            {formatHopText(hop?.reason)}
+                                          </dd>
+                                        </div>
+                                        <div>
+                                          <dt>Mode</dt>
+                                          <dd>{formatHopMode(hop?.mode ?? null)}</dd>
+                                        </div>
+                                        <div>
+                                          <dt>Time</dt>
+                                          <dd>{formatHopTimestamp(hop?.timestamp)}</dd>
+                                        </div>
+                                      </dl>
+                                    </li>
+                                  ))}
+                                </ol>
+                              )}
+                            </details>
                           </li>
                         )
                       })}

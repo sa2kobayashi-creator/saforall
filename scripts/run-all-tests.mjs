@@ -76,7 +76,8 @@ const tests = [
   'scripts/ai-failover-phase-2c7.test.mjs',
   'scripts/ai-failover-phase-3a.test.mjs',
   'scripts/ai-failover-phase-3b.test.mjs',
-  'scripts/ai-failover-phase-4a.test.mjs'
+  'scripts/ai-failover-phase-4a.test.mjs',
+  'scripts/ai-failover-phase-4b.test.mjs'
 ]
 
 const result = spawnSync(process.execPath, ['--test', ...tests], {
