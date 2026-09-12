@@ -317,6 +317,18 @@ function formatHopTimestamp(value: string | null | undefined): string {
   }
 }
 
+/** Phase 5-A: Summary finalStatus as-is (no hop re-judgment). */
+function formatChainFinalStatus(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim()
+  return raw || '—'
+}
+
+/** Phase 5-A: Summary finalReason as-is (null/empty → —). */
+function formatChainFinalReason(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim()
+  return raw || '—'
+}
+
 /**
  * Phase 2-C-7: Single Source — display API summaries only (no Chain regrouping).
  * Legacy/external payloads without summaries → empty (do not invent chains from recent).
@@ -816,32 +828,38 @@ export function UsagePanel({
                     <p className="usage-muted">
                       3-A 読取時集計 · PHP フォールバックとは別
                     </p>
-                    <dl className="usage-failover-analysis-stats">
-                      <div>
-                        <dt>Total Chains</dt>
-                        <dd>{failoverAnalysis.totalChains}</dd>
-                      </div>
-                      <div>
-                        <dt>Successful</dt>
-                        <dd>{failoverAnalysis.successfulChains}</dd>
-                      </div>
-                      <div>
-                        <dt>Exhausted</dt>
-                        <dd>{failoverAnalysis.exhaustedChains}</dd>
-                      </div>
-                      <div>
-                        <dt>Success Rate</dt>
-                        <dd>{formatFailoverRate(failoverAnalysis.successRate)}</dd>
-                      </div>
-                      <div>
-                        <dt>Rescued</dt>
-                        <dd>{failoverAnalysis.rescuedChains}</dd>
-                      </div>
-                      <div>
-                        <dt>Rescue Rate</dt>
-                        <dd>{formatFailoverRate(failoverAnalysis.rescueRate)}</dd>
-                      </div>
-                    </dl>
+
+                    <h5 className="usage-failover-analysis-sub">Overview</h5>
+                    <div className="usage-failover-overview">
+                      <dl className="usage-failover-analysis-stats usage-failover-overview-primary">
+                        <div>
+                          <dt>Total Chains</dt>
+                          <dd>{failoverAnalysis.totalChains}</dd>
+                        </div>
+                        <div>
+                          <dt>Successful</dt>
+                          <dd>{failoverAnalysis.successfulChains}</dd>
+                        </div>
+                        <div>
+                          <dt>Exhausted</dt>
+                          <dd>{failoverAnalysis.exhaustedChains}</dd>
+                        </div>
+                        <div>
+                          <dt>Success Rate</dt>
+                          <dd>{formatFailoverRate(failoverAnalysis.successRate)}</dd>
+                        </div>
+                      </dl>
+                      <dl className="usage-failover-analysis-stats usage-failover-overview-rescue">
+                        <div>
+                          <dt>Rescued</dt>
+                          <dd>{failoverAnalysis.rescuedChains}</dd>
+                        </div>
+                        <div>
+                          <dt>Rescue Rate</dt>
+                          <dd>{formatFailoverRate(failoverAnalysis.rescueRate)}</dd>
+                        </div>
+                      </dl>
+                    </div>
 
                     <h5 className="usage-failover-analysis-sub">Hop</h5>
                     <dl className="usage-failover-analysis-stats">
@@ -1063,6 +1081,18 @@ export function UsagePanel({
                             {reasons ? (
                               <div className="usage-failover-chain-reasons">{reasons}</div>
                             ) : null}
+                            <dl className="usage-failover-chain-final">
+                              <div>
+                                <dt>Final Status</dt>
+                                <dd>{formatChainFinalStatus(chain.finalStatus)}</dd>
+                              </div>
+                              <div>
+                                <dt>Final Reason</dt>
+                                <dd className="usage-model-id">
+                                  {formatChainFinalReason(chain.finalReason)}
+                                </dd>
+                              </div>
+                            </dl>
                             <details className="usage-failover-chain-toggle">
                               <summary>Hop details</summary>
                               {hops.length === 0 ? (

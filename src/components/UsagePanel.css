@@ -394,6 +394,52 @@
   color: var(--text);
 }
 
+/* Phase 5-A: Overview operational emphasis (existing analysis values only) */
+.usage-failover-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.usage-failover-overview-primary,
+.usage-failover-overview-rescue {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.usage-failover-overview-primary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.usage-failover-chain-final {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 10px;
+  margin: 6px 0 0;
+}
+
+.usage-failover-chain-final > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.usage-failover-chain-final dt {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.usage-failover-chain-final dd {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+  text-align: right;
+}
+
 /* Phase 4-A: Mode / Provider / Reason visibility (display-only bars) */
 .usage-failover-mode-list {
   list-style: none;
