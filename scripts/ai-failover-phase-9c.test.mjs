@@ -11,17 +11,18 @@ async function read(rel) {
   return readFile(join(root, rel), 'utf8')
 }
 
+/** Phase 9-C section: after Failover Analysis, before Chain. */
 function allUsageBlock(panel) {
-  const start = panel.indexOf('All UsageEvent Provider Status')
-  const end = panel.indexOf('Router Failover Analysis')
-  assert.ok(start >= 0 && end > start, 'All UsageEvent section must precede Failover Analysis')
+  const start = panel.indexOf('{usageEventProviderStatus != null')
+  const end = panel.indexOf('Router Failover Chain')
+  assert.ok(start >= 0 && end > start, 'All UsageEvent section must precede Chain')
   return panel.slice(start, end)
 }
 
 function analysisBlock(panel) {
-  const start = panel.indexOf('Router Failover Analysis')
-  const end = panel.indexOf('Router Failover Chain')
-  assert.ok(start >= 0 && end > start)
+  const start = panel.indexOf('<div className="usage-failover-analysis">')
+  const end = panel.indexOf('{usageEventProviderStatus != null')
+  assert.ok(start >= 0 && end > start, 'Failover Analysis must precede All UsageEvent')
   return panel.slice(start, end)
 }
 
@@ -34,16 +35,19 @@ test('9c T1: panel reads usage_event_provider_status from API', async () => {
   assert.match(panel, /row\.ok/)
   assert.match(panel, /row\.error/)
   assert.match(panel, /row\.total/)
+  assert.match(panel, /row\.provider/)
 })
 
-test('9c T2: section is outside Failover Analysis (sibling, not nested)', async () => {
+test('9c T2: section is sibling after Failover Analysis (not nested)', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
-  const allStart = panel.indexOf('All UsageEvent Provider Status')
   const analysisStart = panel.indexOf('Router Failover Analysis')
-  const analysisDiv = panel.indexOf('usage-failover-analysis')
-  const allDiv = panel.indexOf('usage-event-provider-status')
-  assert.ok(allStart >= 0 && analysisStart > allStart)
-  assert.ok(allDiv >= 0 && analysisDiv > allDiv)
+  const allStart = panel.indexOf('All UsageEvent Provider Status')
+  const chainStart = panel.indexOf('Router Failover Chain')
+  assert.ok(analysisStart >= 0 && allStart > analysisStart && chainStart > allStart)
+
+  const analysisDivClose = panel.indexOf('usage-failover-analysis')
+  const allDiv = panel.indexOf('className="usage-event-provider-status"')
+  assert.ok(analysisDivClose >= 0 && allDiv > analysisDivClose)
 
   const analysis = analysisBlock(panel)
   assert.doesNotMatch(analysis, /All UsageEvent Provider Status/)
@@ -53,37 +57,43 @@ test('9c T2: section is outside Failover Analysis (sibling, not nested)', async 
 
 test('9c T3: notes separate Failover Analysis / Hop / Final*', async () => {
   const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
-  assert.match(block, /Failover Analysis とは別母集団/)
-  assert.match(block, /Hop \/ Final Success \/ Final\s*Failed とは別/)
+  assert.match(block, /全 UsageEvent/)
   assert.match(block, /failoverId/)
+  assert.match(block, /Router Failover Analysis/)
+  assert.match(block, /Failover\s*Chain/)
+  assert.match(block, /別母集団/)
+  assert.match(block, /Hop \/ Final Success \/ Final Failed/)
+  assert.match(block, /別集計/)
 })
 
-test('9c T4: notes — not Health/Risk; MAX_EVENTS=500 retained population', async () => {
+test('9c T4: notes — MAX_EVENTS=500 retained population; not complete history', async () => {
   const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
-  assert.match(block, /Health \/ Risk/)
-  assert.match(block, /自動判定や断定ラベルではない/)
-  assert.match(block, /事実集計/)
   assert.match(block, /最大 500/)
-  assert.match(block, /完全な過去データではない/)
-  assert.doesNotMatch(block, /Problem Provider|Bad Provider|Unhealthy Provider/i)
-  assert.doesNotMatch(block, /問題Provider|問題 Provider/)
-  assert.doesNotMatch(block, /providerHealth|providerRisk|problemProvider/i)
+  assert.match(block, /完全な過去データではありません/)
+  assert.match(block, /現在保持されている UsageEvent/)
 })
 
-test('9c T5: no Core re-aggregation / byProvider derivation in panel', async () => {
+test('9c T5: display block does not re-aggregate', async () => {
+  const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
+  assert.doesNotMatch(block, /\.reduce\s*\(/)
+  assert.doesNotMatch(block, /new Map\s*\(/)
+  assert.doesNotMatch(block, /groupUsageEventsByFailoverId/)
+  assert.doesNotMatch(block, /analyzeFailoverChains/)
+  assert.doesNotMatch(block, /analyzeUsageEventProviderStatus/)
+  assert.doesNotMatch(block, /hops\[\s*hops\.length\s*-\s*1\s*\]/)
+  assert.doesNotMatch(block, /hops\[last\]/)
+  assert.doesNotMatch(block, /byProvider\.errors/)
+  assert.doesNotMatch(block, /finalSuccessProviderCounts/)
+  assert.doesNotMatch(block, /finalFailedProviderCounts/)
+  assert.doesNotMatch(block, /row\.error\s*\/\s*row\.total/)
+
   const panel = await read('src/components/UsagePanel.tsx')
   assert.doesNotMatch(panel, /analyzeUsageEventProviderStatus/)
   assert.doesNotMatch(panel, /analyzeFailoverChains\s*\(/)
   assert.doesNotMatch(panel, /groupUsageEventsByFailoverId/)
-  const block = allUsageBlock(panel)
-  assert.doesNotMatch(block, /byProvider/)
-  assert.doesNotMatch(block, /finalSuccessProviderCounts/)
-  assert.doesNotMatch(block, /finalFailedProviderCounts/)
-  assert.doesNotMatch(block, /row\.error\s*\/\s*row\.total/)
-  assert.doesNotMatch(block, /ok\s*\+\s*error/)
 })
 
-test('9c T6: table columns are provider / OK / Error / Total only', async () => {
+test('9c T6: table columns are Provider / OK / Error / Total only', async () => {
   const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
   assert.match(block, />Provider</)
   assert.match(block, />OK</)
@@ -95,7 +105,20 @@ test('9c T6: table columns are provider / OK / Error / Total only', async () => 
   assert.doesNotMatch(block, />Risk</)
 })
 
-test('9c T7: secrets not on All UsageEvent display path', async () => {
+test('9c T7: Health / Risk / Problem Provider forbidden in new section', async () => {
+  const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
+  assert.match(block, /Health \/ Risk/)
+  assert.match(block, /自動判定や断定ラベルではない/)
+  assert.match(block, /事実表示/)
+  assert.doesNotMatch(block, /Problem Provider|Bad Provider|Unhealthy Provider/i)
+  assert.doesNotMatch(block, /問題Provider|問題 Provider/)
+  assert.doesNotMatch(block, /\bdanger\b/i)
+  assert.doesNotMatch(block, /unhealthy/i)
+  assert.doesNotMatch(block, /providerHealth|providerRisk|problemProvider/i)
+  assert.doesNotMatch(block, /閾値|障害Provider|危険|不健康/)
+})
+
+test('9c T8: secrets not on All UsageEvent display path', async () => {
   const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
   assert.doesNotMatch(block, /credentialId/)
   assert.doesNotMatch(block, /billingMode/)
@@ -103,9 +126,10 @@ test('9c T7: secrets not on All UsageEvent display path', async () => {
   assert.doesNotMatch(block, /Authorization/)
   assert.doesNotMatch(block, /password/i)
   assert.doesNotMatch(block, /raw error/i)
+  assert.doesNotMatch(block, /\bsecret\b/i)
 })
 
-test('9c T8: CSS class for separate section; Failover Analysis styles untouched by rename', async () => {
+test('9c T9: CSS + hierarchy; existing Failover Analysis preserved', async () => {
   const css = await read('src/components/UsagePanel.css')
   const panel = await read('src/components/UsagePanel.tsx')
   assert.match(css, /\.usage-event-provider-status\b/)
@@ -113,23 +137,18 @@ test('9c T8: CSS class for separate section; Failover Analysis styles untouched 
   assert.match(css, /\.usage-event-provider-status-note\b/)
   assert.match(panel, /usage-event-provider-status/)
   assert.match(css, /\.usage-failover-analysis\b/)
-})
-
-test('9c T9: PHP Fallback / Failover Analysis hierarchy preserved', async () => {
-  const panel = await read('src/components/UsagePanel.tsx')
   assert.match(panel, /フォールバック/)
-  assert.match(panel, /All UsageEvent Provider Status/)
   assert.match(panel, /Router Failover Analysis/)
+  assert.match(panel, /Final Failed Providers/)
+  assert.match(panel, /Reason Transitions/)
+  assert.match(panel, /Daily Analysis/)
   assert.match(panel, /Router Failover Chain/)
-  const allIdx = panel.indexOf('All UsageEvent Provider Status')
-  const analysisIdx = panel.indexOf('Router Failover Analysis')
-  const chainIdx = panel.indexOf('Router Failover Chain')
-  assert.ok(allIdx < analysisIdx && analysisIdx < chainIdx)
 })
 
-test('9c T10: registered in run-all; Core/localApi not re-meaning', async () => {
+test('9c T10: registered in run-all; Core/API files not changed by 9-C intent', async () => {
   const runAll = await read('scripts/run-all-tests.mjs')
   assert.match(runAll, /ai-failover-phase-9c\.test\.mjs/)
+  // Phase 9-B wiring must remain; 9-C must not re-implement Core in UI.
   const local = await read('electron/main/localApi.ts')
   assert.match(local, /usage_event_provider_status:\s*usageEventProviderStatus/)
   assert.match(local, /analyzeUsageEventProviderStatus\s*\(\s*usageEvents\s*\)/)
