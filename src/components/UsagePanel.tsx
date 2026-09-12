@@ -181,6 +181,17 @@ type FailoverChainAnalysisView = {
   }> | null
 }
 
+/**
+ * Phase 9-B/9-C: All UsageEvent provider status (display only).
+ * Separate population from Failover Analysis — not Health/Risk.
+ */
+type UsageEventProviderStatusRow = {
+  provider: string
+  ok: number
+  error: number
+  total: number
+}
+
 type RouterInsight = {
   total: number
   fallbacks: number
@@ -191,6 +202,11 @@ type RouterInsight = {
   router_failover_chain_summaries?: FailoverChainSummaryRow[]
   /** Phase 3-A read-time analysis from summaries. Display only in panel. */
   router_failover_analysis?: FailoverChainAnalysisView | null
+  /**
+   * Phase 9-B/9-C: All UsageEvent provider status from Core.
+   * Sibling of router_failover_analysis — never nest or recompute in panel.
+   */
+  usage_event_provider_status?: UsageEventProviderStatusRow[] | null
   by_engine: RouteEngineStat[]
   by_task: RouteTaskStat[]
   recent: RouteRecent[]
@@ -572,6 +588,16 @@ export function UsagePanel({
   /** Phase 3-B: display API analysis only (no re-analysis / regroup). */
   const failoverAnalysis = data?.router?.router_failover_analysis ?? null
 
+  /** Phase 9-C: Core All UsageEvent status — display only (not Failover Analysis). */
+  const usageEventProviderStatus = Array.isArray(
+    data?.router?.usage_event_provider_status
+  )
+    ? data.router.usage_event_provider_status
+    : null
+  const usageEventProviderTotalMax = usageEventProviderStatus
+    ? Math.max(0, ...usageEventProviderStatus.map((row) => Number(row.total) || 0))
+    : 0
+
   // Phase 4-A display-only maxima for relative bars (not Chain re-aggregation).
   const providerHopMax = Array.isArray(failoverAnalysis?.byProvider)
     ? Math.max(0, ...failoverAnalysis.byProvider.map((row) => Number(row.hops) || 0))
@@ -937,6 +963,96 @@ export function UsagePanel({
                     ))}
                   </ul>
                 )}
+
+                {usageEventProviderStatus != null &&
+                  usageEventProviderStatus.length > 0 && (
+                    <div className="usage-event-provider-status">
+                      <h4 className="usage-subhead">All UsageEvent Provider Status</h4>
+                      <p className="usage-muted usage-event-provider-status-note">
+                        Failover Analysis とは別母集団 · failoverId
+                        の有無を問わない全 UsageEvent · Hop / Final Success / Final
+                        Failed とは別
+                      </p>
+                      <p className="usage-muted usage-event-provider-status-note">
+                        Health / Risk
+                        の自動判定や断定ラベルではない · 単なる OK / Error / Total
+                        の事実集計
+                      </p>
+                      <p className="usage-muted usage-event-provider-status-note">
+                        現在保持されている UsageEvent（最大 500）を母集団 ·
+                        完全な過去データではない
+                      </p>
+                      <table className="usage-table usage-event-provider-status-table">
+                        <thead>
+                          <tr>
+                            <th>Provider</th>
+                            <th>OK</th>
+                            <th>Error</th>
+                            <th>Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {usageEventProviderStatus.map((row) => (
+                            <tr key={row.provider}>
+                              <td>
+                                {ENGINE_LABELS[
+                                  row.provider as keyof typeof ENGINE_LABELS
+                                ] ?? row.provider}
+                              </td>
+                              <td>
+                                <div className="usage-failover-metric">
+                                  <span>{row.ok}</span>
+                                  <div className="usage-bar-track usage-failover-mini-bar">
+                                    <div
+                                      className="usage-bar-fill"
+                                      style={{
+                                        width: `${relativeBarWidth(
+                                          row.ok,
+                                          usageEventProviderTotalMax
+                                        )}%`
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </td>
+                              <td>
+                                <div className="usage-failover-metric">
+                                  <span>{row.error}</span>
+                                  <div className="usage-bar-track usage-failover-mini-bar">
+                                    <div
+                                      className="usage-bar-fill warn"
+                                      style={{
+                                        width: `${relativeBarWidth(
+                                          row.error,
+                                          usageEventProviderTotalMax
+                                        )}%`
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </td>
+                              <td>
+                                <div className="usage-failover-metric">
+                                  <span>{row.total}</span>
+                                  <div className="usage-bar-track usage-failover-mini-bar">
+                                    <div
+                                      className="usage-bar-fill"
+                                      style={{
+                                        width: `${relativeBarWidth(
+                                          row.total,
+                                          usageEventProviderTotalMax
+                                        )}%`
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
 
                 {failoverAnalysis != null && (
                   <div className="usage-failover-analysis">

@@ -407,6 +407,25 @@
   gap: 8px;
 }
 
+/* Phase 9-C: All UsageEvent Provider Status (separate from Failover Analysis) */
+.usage-event-provider-status {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-event-provider-status-note {
+  margin: 0;
+}
+
+.usage-event-provider-status-table th:nth-child(n + 2),
+.usage-event-provider-status-table td:nth-child(n + 2) {
+  text-align: right;
+}
+
 .usage-failover-analysis-sub {
   margin: 4px 0 0;
   font-size: 11px;

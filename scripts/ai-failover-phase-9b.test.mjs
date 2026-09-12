@@ -371,12 +371,9 @@ test('9b T15: export from usage.ts / index.ts', async () => {
   const runAll = await read('scripts/run-all-tests.mjs')
   assert.match(runAll, /ai-failover-phase-9b\.test\.mjs/)
 
-  // Phase 9-B: UI untouched
+  // Phase 9-B: panel must not call Core; Phase 9-C may display the API field.
   const panel = await read('src/components/UsagePanel.tsx')
-  const css = await read('src/components/UsagePanel.css')
   assert.doesNotMatch(panel, /analyzeUsageEventProviderStatus/)
-  assert.doesNotMatch(panel, /usage_event_provider_status/)
-  assert.doesNotMatch(css, /usage_event_provider_status|UsageEventProviderStatus/)
 
   // No Health/Risk/Problem in Core addition
   const billing = await read('electron/main/ai/usageBillingUi.ts')
