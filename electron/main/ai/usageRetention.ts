@@ -38,6 +38,10 @@ export type UsageEventProviderDailyRetained = {
   oldestDate: string | null
   newestDate: string | null
   dayCount: number
+  /** Phase 12-E C: not Raw UsageEvent population. */
+  population: 'daily_aggregate'
+  /** Phase 12-E C: persistent Daily Aggregate file. */
+  source: 'usage-daily.json'
 }
 
 function normalizeTimestamp(value: string): string {
@@ -232,6 +236,8 @@ export function summarizeDailyAggregateRetained(
     rows,
     oldestDate: dates.length > 0 ? dates[0] : null,
     newestDate: dates.length > 0 ? dates[dates.length - 1] : null,
-    dayCount: dates.length
+    dayCount: dates.length,
+    population: 'daily_aggregate',
+    source: 'usage-daily.json'
   }
 }

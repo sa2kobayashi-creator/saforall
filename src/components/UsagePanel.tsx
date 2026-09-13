@@ -331,6 +331,8 @@ type UsageEventProviderDailyRetainedView = {
   oldestDate: string | null
   newestDate: string | null
   dayCount: number
+  population?: 'daily_aggregate'
+  source?: 'usage-daily.json'
 }
 
 /**
@@ -373,6 +375,7 @@ type UsageEventRollingWindowView = {
 }
 
 type UsageEventProviderRollingView = {
+  population?: 'raw'
   '1h': UsageEventRollingWindowView
   '24h': UsageEventRollingWindowView
 }
@@ -2152,19 +2155,37 @@ export function UsagePanel({
                         とは別の事実レイヤです
                       </p>
                       <p className="usage-muted usage-event-provider-daily-retained-note">
-                        All UsageEvent 母集団 · Failover Chain / Hop / Final* とは別 ·
-                        Raw 削除後も日次事実は残ります · 自動判定ラベルではありません
+                        Daily Aggregate レイヤ · Failover Chain / Hop / Final* とは別 ·
+                        Raw 削除後も日次事実は残ります · 評価ラベルではありません
                       </p>
                       {usageEventProviderDailyRetained != null && (
-                        <p className="usage-muted usage-event-provider-daily-retained-range">
-                          範囲 · days {usageEventProviderDailyRetained.dayCount}
-                          {usageEventProviderDailyRetained.oldestDate
-                            ? ` · oldest ${usageEventProviderDailyRetained.oldestDate}`
-                            : ''}
-                          {usageEventProviderDailyRetained.newestDate
-                            ? ` · newest ${usageEventProviderDailyRetained.newestDate}`
-                            : ''}
-                        </p>
+                        <>
+                          <dl className="usage-event-completeness-stats">
+                            <div>
+                              <dt>Population</dt>
+                              <dd>
+                                {usageEventProviderDailyRetained.population ??
+                                  'daily_aggregate'}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Source</dt>
+                              <dd className="usage-model-id">
+                                {usageEventProviderDailyRetained.source ??
+                                  'usage-daily.json'}
+                              </dd>
+                            </div>
+                          </dl>
+                          <p className="usage-muted usage-event-provider-daily-retained-range">
+                            範囲 · days {usageEventProviderDailyRetained.dayCount}
+                            {usageEventProviderDailyRetained.oldestDate
+                              ? ` · oldest ${usageEventProviderDailyRetained.oldestDate}`
+                              : ''}
+                            {usageEventProviderDailyRetained.newestDate
+                              ? ` · newest ${usageEventProviderDailyRetained.newestDate}`
+                              : ''}
+                          </p>
+                        </>
                       )}
                       <table className="usage-table usage-event-provider-daily-retained-table">
                         <thead>
@@ -2265,6 +2286,12 @@ export function UsagePanel({
                       · 実発生全イベント数を保証しません · Daily / Hourly / Completeness
                       とは別集計です · 自動判定ラベルではありません
                     </p>
+                    <dl className="usage-event-completeness-stats">
+                      <div>
+                        <dt>Population</dt>
+                        <dd>{usageEventProviderRolling.population ?? 'raw'}</dd>
+                      </div>
+                    </dl>
                     {(
                       [
                         ['1h', 'Rolling 1h'] as const,

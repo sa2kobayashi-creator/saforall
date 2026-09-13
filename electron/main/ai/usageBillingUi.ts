@@ -1197,6 +1197,7 @@ export type UsageEventRollingWindow = {
 }
 
 export type UsageEventProviderRolling = {
+  population: 'raw'
   '1h': UsageEventRollingWindow
   '24h': UsageEventRollingWindow
 }
@@ -1279,6 +1280,7 @@ export function analyzeUsageEventProviderRolling(
   nowMs: number
 ): UsageEventProviderRolling {
   return {
+    population: 'raw',
     '1h': analyzeUsageEventRolling(events, ROLLING_WINDOW_1H_MS, nowMs),
     '24h': analyzeUsageEventRolling(events, ROLLING_WINDOW_24H_MS, nowMs)
   }
