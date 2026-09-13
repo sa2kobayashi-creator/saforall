@@ -41,7 +41,7 @@ test('9c T1: panel reads usage_event_provider_status from API', async () => {
 test('9c T2: section is sibling after Failover Analysis (not nested)', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
   const analysisStart = panel.indexOf('Router Failover Analysis')
-  const allStart = panel.indexOf('All UsageEvent Provider Status')
+  const allStart = panel.indexOf('UsageEvent Provider Status — Monthly Population')
   const chainStart = panel.indexOf('Router Failover Chain')
   assert.ok(analysisStart >= 0 && allStart > analysisStart && chainStart > allStart)
 
@@ -50,28 +50,28 @@ test('9c T2: section is sibling after Failover Analysis (not nested)', async () 
   assert.ok(analysisDivClose >= 0 && allDiv > analysisDivClose)
 
   const analysis = analysisBlock(panel)
-  assert.doesNotMatch(analysis, /All UsageEvent Provider Status/)
+  assert.doesNotMatch(analysis, /UsageEvent Provider Status — Monthly Population/)
   assert.doesNotMatch(analysis, /usageEventProviderStatus/)
   assert.doesNotMatch(analysis, /usage_event_provider_status/)
 })
 
 test('9c T3: notes separate Failover Analysis / Hop / Final*', async () => {
   const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
-  assert.match(block, /全 UsageEvent/)
+  assert.match(block, /指定月（routerMonth）に属する UsageEvent/)
   assert.match(block, /failoverId/)
   assert.match(block, /Router Failover Analysis/)
   assert.match(block, /Failover\s*Chain/)
-  assert.match(block, /別母集団/)
+  assert.match(block, /別集計/)
   assert.match(block, /Hop \/ Final Success \/ Final Failed/)
   assert.match(block, /別集計/)
 })
 
-test('9c T4: notes — Raw retention population; not complete history', async () => {
+test('9c T4: notes — month population; not Raw allEvents', async () => {
   const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
-  assert.match(block, /最大 10,000/)
-  assert.match(block, /7\s*日/)
-  assert.match(block, /完全な過去データではありません/)
-  assert.match(block, /現在保持されている UsageEvent/)
+  assert.match(block, /Population: Month/)
+  assert.match(block, /Monthly Population/)
+  assert.doesNotMatch(block, /All UsageEvent Provider Status/)
+  assert.doesNotMatch(block, /直近 7 日かつ最大 10,000 件/)
 })
 
 test('9c T5: display block does not re-aggregate', async () => {
@@ -117,6 +117,7 @@ test('9c T7: Health / Risk / Problem Provider forbidden in new section', async (
   assert.doesNotMatch(block, /unhealthy/i)
   assert.doesNotMatch(block, /providerHealth|providerRisk|problemProvider/i)
   assert.doesNotMatch(block, /閾値|障害Provider|危険|不健康/)
+  assert.doesNotMatch(block, /\bcomplete\s*=\s*true\b/i)
 })
 
 test('9c T8: secrets not on All UsageEvent display path', async () => {

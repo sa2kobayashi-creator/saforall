@@ -182,14 +182,20 @@ type FailoverChainAnalysisView = {
 }
 
 /**
- * Phase 9-B/9-C: All UsageEvent provider status (display only).
- * Separate population from Failover Analysis — not Health/Risk.
+ * Phase 9-B/9-C / 12-D A-2: UsageEvent provider status (display only).
+ * Month population — not Health/Risk / not Raw allEvents.
  */
 type UsageEventProviderStatusRow = {
   provider: string
   ok: number
   error: number
   total: number
+}
+
+type UsageEventProviderStatusAnalysisView = {
+  rows: UsageEventProviderStatusRow[]
+  population?: 'month'
+  month?: string
 }
 
 /**
@@ -259,6 +265,8 @@ type UsageEventProviderDailyAnalysisView = {
   eventCount: number
   oldestTimestamp: string | null
   newestTimestamp: string | null
+  population?: 'month'
+  month?: string
 }
 
 /**
@@ -275,6 +283,8 @@ type UsageEventProviderHourlyStatusRow = {
 
 type UsageEventProviderHourlyAnalysisView = {
   rows: UsageEventProviderHourlyStatusRow[]
+  population?: 'month'
+  month?: string
 }
 
 /**
@@ -346,7 +356,10 @@ type RouterInsight = {
    * Phase 9-B/9-C: All UsageEvent provider status from Core.
    * Sibling of router_failover_analysis — never nest or recompute in panel.
    */
-  usage_event_provider_status?: UsageEventProviderStatusRow[] | null
+  usage_event_provider_status?:
+    | UsageEventProviderStatusRow[]
+    | UsageEventProviderStatusAnalysisView
+    | null
   /**
    * Phase 12-D B: All UsageEvent provider × model status from Core.
    * Sibling field — Raw allEvents; never recompute in panel.
@@ -763,15 +776,27 @@ export function UsagePanel({
   /** Phase 3-B: display API analysis only (no re-analysis / regroup). */
   const failoverAnalysis = data?.router?.router_failover_analysis ?? null
 
-  /** Phase 9-C: Core All UsageEvent status — display only (not Failover Analysis). */
+  /** Phase 9-C / 12-D A-2: month-population status — display only. */
+  const usageEventProviderStatusAnalysis =
+    data?.router?.usage_event_provider_status &&
+    typeof data.router.usage_event_provider_status === 'object' &&
+    !Array.isArray(data.router.usage_event_provider_status)
+      ? data.router.usage_event_provider_status
+      : null
   const usageEventProviderStatus = Array.isArray(
     data?.router?.usage_event_provider_status
   )
     ? data.router.usage_event_provider_status
-    : null
+    : Array.isArray(usageEventProviderStatusAnalysis?.rows)
+      ? usageEventProviderStatusAnalysis.rows
+      : null
   const usageEventProviderTotalMax = usageEventProviderStatus
     ? Math.max(0, ...usageEventProviderStatus.map((row) => Number(row.total) || 0))
     : 0
+  const usageEventProviderStatusMonth =
+    usageEventProviderStatusAnalysis?.month ?? data?.router?.month ?? null
+  const usageEventProviderStatusPopulation =
+    usageEventProviderStatusAnalysis?.population ?? null
 
   /** Phase 12-D B: Core provider × model — display only (Raw allEvents). */
   const usageEventProviderModel =
@@ -1619,21 +1644,29 @@ export function UsagePanel({
                 {usageEventProviderStatus != null &&
                   usageEventProviderStatus.length > 0 && (
                     <div className="usage-event-provider-status">
-                      <h4 className="usage-subhead">All UsageEvent Provider Status</h4>
+                      <h4 className="usage-subhead">
+                        UsageEvent Provider Status — Monthly Population
+                      </h4>
                       <p className="usage-muted usage-event-provider-status-note">
-                        全 UsageEvent が対象 · failoverId
-                        の有無を問わない · Router Failover Analysis（Failover
-                        Chain）とは別母集団 · Hop / Final Success / Final Failed
+                        Population: Month
+                        {usageEventProviderStatusMonth
+                          ? ` · Month: ${usageEventProviderStatusMonth}`
+                          : ''}
+                        {usageEventProviderStatusPopulation
+                          ? ` · population=${usageEventProviderStatusPopulation}`
+                          : ''}
+                      </p>
+                      <p className="usage-muted usage-event-provider-status-note">
+                        指定月（routerMonth）に属する UsageEvent の観測事実です ·
+                        failoverId の有無を問わない · Router Failover Analysis（Failover
+                        Chain）とは別集計 · Hop / Final Success / Final Failed
                         とは別集計
                       </p>
                       <p className="usage-muted usage-event-provider-status-note">
-                        Health / Risk
-                        の自動判定や断定ラベルではない · 単なる OK / Error / Total
+                        Rolling / Completeness / Provider × Model / Usage Metrics の
+                        Raw population とは別母集団です · Health / Risk
+                        の自動判定や断定ラベルではない · OK / Error / Total
                         の事実表示
-                      </p>
-                      <p className="usage-muted usage-event-provider-status-note">
-                        現在保持されている UsageEvent（直近 7 日かつ最大 10,000 件）が母集団です ·
-                        完全な過去データではありません
                       </p>
                       <table className="usage-table usage-event-provider-status-table">
                         <thead>
@@ -1839,19 +1872,27 @@ export function UsagePanel({
                   usageEventProviderDailyRows.length > 0 && (
                     <div className="usage-event-provider-daily">
                       <h4 className="usage-subhead">
-                        All UsageEvent Provider Daily Analysis
+                        UsageEvent Provider Daily Analysis — Monthly Population
                       </h4>
                       <p className="usage-muted usage-event-provider-daily-note">
-                        All UsageEvent を対象とした日次集計です · Failover Chain
-                        Analysis とは別の母集団です
+                        Population: Month
+                        {usageEventProviderDaily?.month
+                          ? ` · Month: ${usageEventProviderDaily.month}`
+                          : usageEventProviderStatusMonth
+                            ? ` · Month: ${usageEventProviderStatusMonth}`
+                            : ''}
+                        {usageEventProviderDaily?.population
+                          ? ` · population=${usageEventProviderDaily.population}`
+                          : ''}
                       </p>
                       <p className="usage-muted usage-event-provider-daily-note">
-                        現在保持されている UsageEvent（直近 7 日かつ最大 10,000 件）の範囲内です ·
-                        完全な過去履歴を示すものではありません
+                        指定月に属する UsageEvent の UTC 日次集計です · Failover Chain
+                        Analysis とは別集計です · Rolling / Completeness の Raw
+                        population とは別母集団です
                       </p>
                       <p className="usage-muted usage-event-provider-daily-note">
-                        UTC カレンダー日 · 月次合計（Provider Status）および Chain
-                        Daily とは別集計 · 自動判定ラベルではありません
+                        UTC カレンダー日 · Provider Status（月次合計）および Chain
+                        Daily とは別集計 · 評価ラベルではありません
                       </p>
                       {usageEventProviderDaily != null && (
                         <p className="usage-muted usage-event-provider-daily-range">
@@ -1897,18 +1938,26 @@ export function UsagePanel({
                   usageEventProviderHourlyRows.length > 0 && (
                     <div className="usage-event-provider-hourly">
                       <h4 className="usage-subhead">
-                        All UsageEvent Provider Hourly Analysis
+                        UsageEvent Provider Hourly Analysis — Monthly Population
                       </h4>
                       <p className="usage-muted usage-event-provider-hourly-note">
-                        保持されている All UsageEvent を UTC 時間単位で見た事実です ·
-                        Failover Chain Analysis / Daily とは別の母集団・別集計です
+                        Population: Month
+                        {usageEventProviderHourly?.month
+                          ? ` · Month: ${usageEventProviderHourly.month}`
+                          : usageEventProviderStatusMonth
+                            ? ` · Month: ${usageEventProviderStatusMonth}`
+                            : ''}
+                        {usageEventProviderHourly?.population
+                          ? ` · population=${usageEventProviderHourly.population}`
+                          : ''}
                       </p>
                       <p className="usage-muted usage-event-provider-hourly-note">
-                        完全な時間履歴ではありません · UsageEvent は直近 7 日かつ最大 10,000 件まで保持されます
-                        · 保持範囲は Completeness セクションを参照してください
+                        指定月に属する UsageEvent を UTC 時間単位で見た事実です ·
+                        Failover Chain Analysis / Daily とは別集計です · Rolling /
+                        Completeness の Raw population とは別母集団です
                       </p>
                       <p className="usage-muted usage-event-provider-hourly-note">
-                        UTC dateHour · 自動判定ラベルではありません
+                        UTC dateHour · 評価ラベルではありません
                       </p>
                       <table className="usage-table usage-event-provider-hourly-table">
                         <thead>

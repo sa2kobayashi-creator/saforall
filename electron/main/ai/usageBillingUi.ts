@@ -752,9 +752,8 @@ export function analyzeFailoverChains(
 }
 
 /**
- * Phase 9-B: All UsageEvent provider status facts (not Health/Risk).
- * Population: every event in the input list — with or without failoverId.
- * Independent of byProvider / finalSuccess* / finalFailed*.
+ * Phase 9-B: UsageEvent provider status facts (not Health/Risk).
+ * Core aggregates whatever list is passed — population is decided by API wiring.
  */
 export type UsageEventProviderStatus = {
   provider: string
@@ -764,7 +763,17 @@ export type UsageEventProviderStatus = {
 }
 
 /**
- * Aggregate ok/error/total per provider across all UsageEvents.
+ * Phase 12-D A-2: Status API envelope — month population metadata (additive).
+ * Core still returns UsageEventProviderStatus[]; API wraps with population/month.
+ */
+export type UsageEventProviderStatusAnalysis = {
+  rows: UsageEventProviderStatus[]
+  population: 'month'
+  month: string
+}
+
+/**
+ * Aggregate ok/error/total per provider across input UsageEvents.
  * Does not call groupUsageEventsByFailoverId or read Chain analysis fields.
  */
 export function analyzeUsageEventProviderStatus(
@@ -793,6 +802,18 @@ export function analyzeUsageEventProviderStatus(
   return Array.from(map.values()).sort((a, b) => a.provider.localeCompare(b.provider))
 }
 
+/** Attach month population metadata for Daily/Hourly analysis envelopes. */
+export function withMonthPopulationAnalysis<T extends object>(
+  analysis: T,
+  month: string
+): T & { population: 'month'; month: string } {
+  return {
+    ...analysis,
+    population: 'month',
+    month: String(month || '').trim()
+  }
+}
+
 /**
  * Phase 10-B: All UsageEvent provider × UTC-day status facts (no evaluative labels).
  * Population: every event in the input list — with or without failoverId.
@@ -815,6 +836,10 @@ export type UsageEventProviderDailyAnalysis = {
   eventCount: number
   oldestTimestamp: string | null
   newestTimestamp: string | null
+  /** Phase 12-D A-2: API wiring population (month when month-filtered). */
+  population?: 'month'
+  /** Phase 12-D A-2: YYYY-MM when population is month. */
+  month?: string
 }
 
 /**
@@ -899,6 +924,10 @@ export type UsageEventProviderHourlyStatus = {
 
 export type UsageEventProviderHourlyAnalysis = {
   rows: UsageEventProviderHourlyStatus[]
+  /** Phase 12-D A-2: API wiring population (month when month-filtered). */
+  population?: 'month'
+  /** Phase 12-D A-2: YYYY-MM when population is month. */
+  month?: string
 }
 
 /**

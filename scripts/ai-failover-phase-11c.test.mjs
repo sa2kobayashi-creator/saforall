@@ -63,7 +63,9 @@ function hopEvent({
 }
 
 function hourlyBlock(panel) {
-  const start = panel.indexOf('All UsageEvent Provider Hourly Analysis')
+  const start = panel.indexOf(
+    'UsageEvent Provider Hourly Analysis — Monthly Population'
+  )
   const end = panel.indexOf(
     '<h4 className="usage-subhead">All UsageEvent Data Completeness</h4>'
   )
@@ -279,7 +281,7 @@ test('11c T10: UI direct display of usage_event_provider_hourly', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
   assert.match(panel, /usage_event_provider_hourly\?:/)
   assert.match(panel, /data\?\.router\?\.usage_event_provider_hourly/)
-  assert.match(panel, /All UsageEvent Provider Hourly Analysis/)
+  assert.match(panel, /UsageEvent Provider Hourly Analysis — Monthly Population/)
   const block = hourlyBlock(panel)
   assert.match(block, /row\.dateHour/)
   assert.match(block, /row\.provider/)
@@ -308,10 +310,11 @@ test('11c T12: Forbidden / evaluation labels absent; exports registered', async 
   assert.doesNotMatch(block, /Health|Risk|Problem Provider|Alert|Error Rate|Chart\.js/i)
   assert.doesNotMatch(block, /Healthy|Unhealthy|Critical|Warning/)
   assert.doesNotMatch(block, /問題Provider|問題 Provider/)
-  assert.doesNotMatch(block, /windowComplete|Rolling|Date\.now/)
-  assert.match(block, /最大 10,000/)
-  assert.match(block, /完全な時間履歴ではありません/)
-  assert.match(block, /Completeness/)
+  assert.doesNotMatch(block, /windowComplete|Date\.now/)
+  assert.match(block, /Population: Month/)
+  assert.match(block, /Raw population/)
+  assert.doesNotMatch(block, /All UsageEvent Provider Hourly Analysis/)
+  assert.doesNotMatch(block, /直近 7 日かつ最大 10,000 件/)
 
   const runAll = await read('scripts/run-all-tests.mjs')
   assert.match(runAll, /ai-failover-phase-11c\.test\.mjs/)

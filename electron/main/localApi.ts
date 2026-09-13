@@ -180,6 +180,7 @@ export async function localApiRequest<T = unknown>(
         analyzeUsageEventProviderRolling,
         analyzeUsageEventProviderModelStatus,
         analyzeUsageEventUsageMetrics,
+        withMonthPopulationAnalysis,
         listPersistedUsageDailyAggregate,
         MAX_EVENTS,
         RAW_RETENTION_DAYS
@@ -216,10 +217,16 @@ export async function localApiRequest<T = unknown>(
       const routerFailoverChainSummaries = groupUsageEventsByFailoverId(usageEvents)
       // Phase 3-A: read-time analysis from summaries only (Single Source).
       const routerFailoverAnalysis = analyzeFailoverChains(routerFailoverChainSummaries)
-      // Phase 9-B: all UsageEvent provider status (separate population from Chain analysis).
-      const usageEventProviderStatus = analyzeUsageEventProviderStatus(usageEvents)
-      // Phase 10-B: all UsageEvent provider × UTC-day status (sibling of status / failover).
-      const usageEventProviderDaily = analyzeUsageEventProviderDailyStatus(usageEvents)
+      // Phase 9-B: provider status from month-filtered usageEvents (population=month).
+      const usageEventProviderStatus = withMonthPopulationAnalysis(
+        { rows: analyzeUsageEventProviderStatus(usageEvents) },
+        routerMonth
+      )
+      // Phase 10-B: provider × UTC-day from month-filtered usageEvents (population=month).
+      const usageEventProviderDaily = withMonthPopulationAnalysis(
+        analyzeUsageEventProviderDailyStatus(usageEvents),
+        routerMonth
+      )
       // Phase 11-B/12-C Completeness: Raw observation facts from allEvents (not month filter).
       const usageEventCompleteness = analyzeUsageEventCompleteness(
         allEvents,
@@ -227,8 +234,11 @@ export async function localApiRequest<T = unknown>(
         Date.now(),
         RAW_RETENTION_DAYS
       )
-      // Phase 11-C: all UsageEvent provider × UTC-hour status (sibling; no retention re-judgment).
-      const usageEventProviderHourly = analyzeUsageEventProviderHourlyStatus(usageEvents)
+      // Phase 11-C: provider × UTC-hour from month-filtered usageEvents (population=month).
+      const usageEventProviderHourly = withMonthPopulationAnalysis(
+        analyzeUsageEventProviderHourlyStatus(usageEvents),
+        routerMonth
+      )
       // Phase 12-B: persistent Daily Aggregate (long-term; separate from Raw-derived daily).
       const usageEventProviderDailyRetained = await listPersistedUsageDailyAggregate()
       // Phase 12-C: Rolling 1h/24h from allEvents (never month-filtered usageEvents).

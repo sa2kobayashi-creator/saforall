@@ -299,7 +299,7 @@ test('10b T10: UI direct display of usage_event_provider_daily', async () => {
   assert.match(panel, /row\.ok/)
   assert.match(panel, /row\.error/)
   assert.match(panel, /row\.total/)
-  assert.match(panel, /All UsageEvent Provider Daily Analysis/)
+  assert.match(panel, /UsageEvent Provider Daily Analysis — Monthly Population/)
 
   const start = panel.indexOf('{usageEventProviderDailyRows != null')
   const end = panel.indexOf('Router Failover Chain')
@@ -317,7 +317,7 @@ test('10b T10: UI direct display of usage_event_provider_daily', async () => {
 
 test('10b T11: no Health / Risk / Problem Provider judgment in daily UI', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
-  const start = panel.indexOf('All UsageEvent Provider Daily Analysis')
+  const start = panel.indexOf('UsageEvent Provider Daily Analysis — Monthly Population')
   const end = panel.indexOf('Router Failover Chain')
   assert.ok(start >= 0 && end > start)
   const block = panel.slice(start, end)
@@ -327,9 +327,10 @@ test('10b T11: no Health / Risk / Problem Provider judgment in daily UI', async 
   assert.doesNotMatch(block, />Health</)
   assert.doesNotMatch(block, />Risk</)
   assert.doesNotMatch(block, />Error Rate</)
-  assert.match(block, /別の母集団/)
-  assert.match(block, /最大 10,000/)
-  assert.match(block, /完全な過去履歴を示すものではありません/)
+  assert.match(block, /Population: Month/)
+  assert.match(block, /別母集団/)
+  assert.doesNotMatch(block, /All UsageEvent Provider Daily Analysis/)
+  assert.doesNotMatch(block, /直近 7 日かつ最大 10,000 件/)
 })
 
 test('10b T12: Secret Safety on daily path', async () => {
@@ -366,7 +367,7 @@ test('10b T12: Secret Safety on daily path', async () => {
   ])
 
   const panel = await read('src/components/UsagePanel.tsx')
-  const start = panel.indexOf('All UsageEvent Provider Daily Analysis')
+  const start = panel.indexOf('UsageEvent Provider Daily Analysis — Monthly Population')
   const end = panel.indexOf('Router Failover Chain')
   const block = panel.slice(start, end)
   assert.doesNotMatch(block, /credentialId/)

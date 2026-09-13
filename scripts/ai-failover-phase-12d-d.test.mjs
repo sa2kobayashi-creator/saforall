@@ -323,7 +323,9 @@ test('12d-d T19: UI factual-only wording', async () => {
 test('12d-d T20: forbidden health/risk/alert wording in metrics UI/Core', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
   const start = panel.indexOf('All UsageEvent Usage Metrics')
-  const end = panel.indexOf('All UsageEvent Provider Daily Analysis')
+  const end = panel.indexOf(
+    'UsageEvent Provider Daily Analysis — Monthly Population'
+  )
   assert.ok(start >= 0 && end > start)
   const block = panel.slice(start, end)
   assert.doesNotMatch(block, /\bHealthy\b|\bUnhealthy\b|\bAlert\b|\bThreshold\b/)
