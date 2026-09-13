@@ -178,6 +178,7 @@ export async function localApiRequest<T = unknown>(
         analyzeUsageEventCompleteness,
         analyzeUsageEventProviderHourlyStatus,
         analyzeUsageEventProviderRolling,
+        analyzeUsageEventProviderModelStatus,
         listPersistedUsageDailyAggregate,
         MAX_EVENTS,
         RAW_RETENTION_DAYS
@@ -234,6 +235,8 @@ export async function localApiRequest<T = unknown>(
         allEvents,
         Date.now()
       )
+      // Phase 12-D B: provider × model facts from allEvents (Raw; not month filter).
+      const usageEventProviderModel = analyzeUsageEventProviderModelStatus(allEvents)
       const router = {
         total: usageEvents.length,
         fallbacks: 0,
@@ -247,6 +250,7 @@ export async function localApiRequest<T = unknown>(
         usage_event_provider_hourly: usageEventProviderHourly,
         usage_event_provider_daily_retained: usageEventProviderDailyRetained,
         usage_event_provider_rolling: usageEventProviderRolling,
+        usage_event_provider_model: usageEventProviderModel,
         by_engine: Array.from(byEngineMap.values()).map((row) => ({
           ...row,
           estimated_usd: Math.round(row.estimated_usd * 10000) / 10000

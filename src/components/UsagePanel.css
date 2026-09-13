@@ -549,6 +549,25 @@
   text-align: right;
 }
 
+/* Phase 12-D B: All UsageEvent Provider × Model */
+.usage-event-provider-model {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-event-provider-model-note {
+  margin: 0;
+}
+
+.usage-event-provider-model-table th:nth-child(n + 3),
+.usage-event-provider-model-table td:nth-child(n + 3) {
+  text-align: right;
+}
+
 .usage-failover-analysis-sub {
   margin: 4px 0 0;
   font-size: 11px;

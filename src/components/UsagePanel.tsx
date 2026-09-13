@@ -193,6 +193,26 @@ type UsageEventProviderStatusRow = {
 }
 
 /**
+ * Phase 12-D B: All UsageEvent provider × model facts (display only).
+ * Raw allEvents based — not Health/Risk / not Chain aggregation.
+ */
+type UsageEventProviderModelStatusRow = {
+  provider: string
+  model: string
+  ok: number
+  error: number
+  total: number
+}
+
+type UsageEventProviderModelAnalysisView = {
+  rows: UsageEventProviderModelStatusRow[]
+  eventCount: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+  population?: 'raw'
+}
+
+/**
  * Phase 10-B: All UsageEvent provider × day status (display only).
  * Sibling of usage_event_provider_status — not Failover dailyBuckets / Health.
  */
@@ -297,6 +317,11 @@ type RouterInsight = {
    * Sibling of router_failover_analysis — never nest or recompute in panel.
    */
   usage_event_provider_status?: UsageEventProviderStatusRow[] | null
+  /**
+   * Phase 12-D B: All UsageEvent provider × model status from Core.
+   * Sibling field — Raw allEvents; never recompute in panel.
+   */
+  usage_event_provider_model?: UsageEventProviderModelAnalysisView | null
   /**
    * Phase 10-B: All UsageEvent provider × UTC-day status from Core.
    * Sibling of usage_event_provider_status / router_failover_analysis.
@@ -712,6 +737,16 @@ export function UsagePanel({
   const usageEventProviderTotalMax = usageEventProviderStatus
     ? Math.max(0, ...usageEventProviderStatus.map((row) => Number(row.total) || 0))
     : 0
+
+  /** Phase 12-D B: Core provider × model — display only (Raw allEvents). */
+  const usageEventProviderModel =
+    data?.router?.usage_event_provider_model &&
+    typeof data.router.usage_event_provider_model === 'object'
+      ? data.router.usage_event_provider_model
+      : null
+  const usageEventProviderModelRows = Array.isArray(usageEventProviderModel?.rows)
+    ? usageEventProviderModel.rows
+    : null
 
   /** Phase 10-B: Core All UsageEvent daily status — display only. */
   const usageEventProviderDaily =
@@ -1620,6 +1655,58 @@ export function UsagePanel({
                                   </div>
                                 </div>
                               </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                {usageEventProviderModelRows != null &&
+                  usageEventProviderModelRows.length > 0 && (
+                    <div className="usage-event-provider-model">
+                      <h4 className="usage-subhead">
+                        All UsageEvent Provider × Model
+                      </h4>
+                      <p className="usage-muted usage-event-provider-model-note">
+                        Raw retained data based · provider × model の観測事実です ·
+                        Failover Chain / Status / Daily / Hourly / Rolling とは別集計です
+                        · 自動判定ラベルではありません
+                      </p>
+                      {usageEventProviderModel != null && (
+                        <p className="usage-muted usage-event-provider-model-note">
+                          Population {usageEventProviderModel.population ?? 'raw'}
+                          {' · '}events {usageEventProviderModel.eventCount}
+                          {usageEventProviderModel.oldestTimestamp
+                            ? ` · oldest ${usageEventProviderModel.oldestTimestamp}`
+                            : ''}
+                          {usageEventProviderModel.newestTimestamp
+                            ? ` · newest ${usageEventProviderModel.newestTimestamp}`
+                            : ''}
+                        </p>
+                      )}
+                      <table className="usage-table usage-event-provider-model-table">
+                        <thead>
+                          <tr>
+                            <th>Provider</th>
+                            <th>Model</th>
+                            <th>OK</th>
+                            <th>Error</th>
+                            <th>Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {usageEventProviderModelRows.map((row) => (
+                            <tr key={`model-${row.provider}\0${row.model}`}>
+                              <td>
+                                {ENGINE_LABELS[
+                                  row.provider as keyof typeof ENGINE_LABELS
+                                ] ?? row.provider}
+                              </td>
+                              <td className="usage-model-id">{row.model}</td>
+                              <td>{row.ok}</td>
+                              <td>{row.error}</td>
+                              <td>{row.total}</td>
                             </tr>
                           ))}
                         </tbody>

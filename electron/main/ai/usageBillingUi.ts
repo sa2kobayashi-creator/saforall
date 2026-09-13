@@ -1252,6 +1252,91 @@ export function analyzeUsageEventProviderRolling(
   }
 }
 
+/**
+ * Phase 12-D B: provider × model observation facts (not Health/Risk).
+ * Population: API must pass allEvents (Raw), not month-filtered usageEvents.
+ * 1 UsageEvent = 1 provider attempt — no Chain/Hop/Final* / no dedupe.
+ */
+export type UsageEventProviderModelStatus = {
+  provider: string
+  model: string
+  ok: number
+  error: number
+  total: number
+}
+
+export type UsageEventProviderModelAnalysis = {
+  rows: UsageEventProviderModelStatus[]
+  eventCount: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+  population: 'raw'
+}
+
+/**
+ * Aggregate ok/error/total per (provider × model) across input UsageEvents.
+ * Invalid timestamps excluded from oldest/newest only (events still counted).
+ */
+export function analyzeUsageEventProviderModelStatus(
+  events: UsageEventLike[] | null | undefined
+): UsageEventProviderModelAnalysis {
+  const list = Array.isArray(events) ? events : []
+  const map = new Map<string, UsageEventProviderModelStatus>()
+  let eventCount = 0
+  let oldestTimestamp: string | null = null
+  let newestTimestamp: string | null = null
+  let oldestMs = Number.POSITIVE_INFINITY
+  let newestMs = Number.NEGATIVE_INFINITY
+
+  for (const event of list) {
+    if (!event || typeof event !== 'object') continue
+    eventCount += 1
+
+    const provider = String(event.provider ?? '').trim() || '?'
+    const model = String(event.model ?? '').trim() || '?'
+    const key = `${provider}\0${model}`
+    const cur = map.get(key) ?? {
+      provider,
+      model,
+      ok: 0,
+      error: 0,
+      total: 0
+    }
+    cur.total += 1
+    const status = String(event.status ?? '').trim()
+    if (status === 'ok') cur.ok += 1
+    else if (status === 'error') cur.error += 1
+    map.set(key, cur)
+
+    const rawTs = String(event.timestamp ?? '').trim()
+    if (!rawTs) continue
+    const ms = Date.parse(normalizeTimestamp(rawTs))
+    if (!Number.isFinite(ms)) continue
+    if (ms < oldestMs) {
+      oldestMs = ms
+      oldestTimestamp = rawTs
+    }
+    if (ms > newestMs) {
+      newestMs = ms
+      newestTimestamp = rawTs
+    }
+  }
+
+  const rows = Array.from(map.values()).sort((a, b) => {
+    const p = a.provider.localeCompare(b.provider)
+    if (p !== 0) return p
+    return a.model.localeCompare(b.model)
+  })
+
+  return {
+    rows,
+    eventCount,
+    oldestTimestamp,
+    newestTimestamp,
+    population: 'raw'
+  }
+}
+
 function engineMatches(provider: string, engine: string): boolean {
   return provider.trim().toLowerCase() === engine.trim().toLowerCase()
 }

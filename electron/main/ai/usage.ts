@@ -45,6 +45,7 @@ export {
   analyzeUsageEventProviderHourlyStatus,
   analyzeUsageEventRolling,
   analyzeUsageEventProviderRolling,
+  analyzeUsageEventProviderModelStatus,
   ROLLING_WINDOW_1H_MS,
   ROLLING_WINDOW_24H_MS,
   usageEventsToRecentRows,
@@ -66,7 +67,9 @@ export {
   type UsageEventProviderHourlyAnalysis,
   type UsageEventRollingProviderStatus,
   type UsageEventRollingWindow,
-  type UsageEventProviderRolling
+  type UsageEventProviderRolling,
+  type UsageEventProviderModelStatus,
+  type UsageEventProviderModelAnalysis
 } from './usageBillingUi'
 import { analyzeUsageEventProviderDailyStatus } from './usageBillingUi'
 
