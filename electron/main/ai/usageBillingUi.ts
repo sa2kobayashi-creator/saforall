@@ -1285,9 +1285,10 @@ export function analyzeUsageEventProviderRolling(
 }
 
 /**
- * Phase 12-D B: provider × model observation facts (not Health/Risk).
+ * Phase 12-D B / 12-E A: provider × model observation facts (not Health/Risk).
  * Population: API must pass allEvents (Raw), not month-filtered usageEvents.
  * 1 UsageEvent = 1 provider attempt — no Chain/Hop/Final* / no dedupe.
+ * Phase 12-E A: additive token / estimatedCost facts (stored values; no input+output recompute).
  */
 export type UsageEventProviderModelStatus = {
   provider: string
@@ -1295,6 +1296,14 @@ export type UsageEventProviderModelStatus = {
   ok: number
   error: number
   total: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  estimatedCost: number
+  missingInputTokenCount: number
+  missingOutputTokenCount: number
+  missingTotalTokenCount: number
+  missingEstimatedCostCount: number
 }
 
 export type UsageEventProviderModelAnalysis = {
@@ -1305,9 +1314,19 @@ export type UsageEventProviderModelAnalysis = {
   population: 'raw'
 }
 
+/** Finite number only — does not treat missing/invalid as 0. Shared by Metrics / Provider×Model. */
+function readFiniteMetric(value: unknown): number | null {
+  if (value === undefined || value === null) return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return null
+  return n
+}
+
 /**
- * Aggregate ok/error/total per (provider × model) across input UsageEvents.
+ * Aggregate ok/error/total and token/cost per (provider × model) across input UsageEvents.
  * Invalid timestamps excluded from oldest/newest only (events still counted).
+ * Does not recompute totalTokens from input+output; uses stored totalTokens.
  */
 export function analyzeUsageEventProviderModelStatus(
   events: UsageEventLike[] | null | undefined
@@ -1332,12 +1351,37 @@ export function analyzeUsageEventProviderModelStatus(
       model,
       ok: 0,
       error: 0,
-      total: 0
+      total: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      estimatedCost: 0,
+      missingInputTokenCount: 0,
+      missingOutputTokenCount: 0,
+      missingTotalTokenCount: 0,
+      missingEstimatedCostCount: 0
     }
     cur.total += 1
     const status = String(event.status ?? '').trim()
     if (status === 'ok') cur.ok += 1
     else if (status === 'error') cur.error += 1
+
+    const inTok = readFiniteMetric(event.inputTokens)
+    if (inTok === null) cur.missingInputTokenCount += 1
+    else cur.inputTokens += inTok
+
+    const outTok = readFiniteMetric(event.outputTokens)
+    if (outTok === null) cur.missingOutputTokenCount += 1
+    else cur.outputTokens += outTok
+
+    const totTok = readFiniteMetric(event.totalTokens)
+    if (totTok === null) cur.missingTotalTokenCount += 1
+    else cur.totalTokens += totTok
+
+    const cost = readFiniteMetric(event.estimatedCost)
+    if (cost === null) cur.missingEstimatedCostCount += 1
+    else cur.estimatedCost += cost
+
     map.set(key, cur)
 
     const rawTs = String(event.timestamp ?? '').trim()
@@ -1402,15 +1446,6 @@ export type UsageEventUsageMetrics = {
   oldestTimestamp: string | null
   newestTimestamp: string | null
   byProvider: UsageEventUsageMetricsProvider[]
-}
-
-/** Finite number only — does not treat missing/invalid as 0. */
-function readFiniteMetric(value: unknown): number | null {
-  if (value === undefined || value === null) return null
-  if (typeof value === 'string' && value.trim() === '') return null
-  const n = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(n)) return null
-  return n
 }
 
 export function analyzeUsageEventUsageMetrics(

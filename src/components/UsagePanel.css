@@ -549,7 +549,7 @@
   text-align: right;
 }
 
-/* Phase 12-D B: All UsageEvent Provider × Model */
+/* Phase 12-D B / 12-E A: All UsageEvent Provider × Model (+ token/cost) */
 .usage-event-provider-model {
   display: flex;
   flex-direction: column;
@@ -563,9 +563,16 @@
   margin: 0;
 }
 
+.usage-event-provider-model-table {
+  overflow-x: auto;
+  display: block;
+  width: 100%;
+}
+
 .usage-event-provider-model-table th:nth-child(n + 3),
 .usage-event-provider-model-table td:nth-child(n + 3) {
   text-align: right;
+  white-space: nowrap;
 }
 
 /* Phase 12-D D: All UsageEvent Usage Metrics */

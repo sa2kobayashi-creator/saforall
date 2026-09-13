@@ -199,8 +199,9 @@ type UsageEventProviderStatusAnalysisView = {
 }
 
 /**
- * Phase 12-D B: All UsageEvent provider × model facts (display only).
+ * Phase 12-D B / 12-E A: All UsageEvent provider × model facts (display only).
  * Raw allEvents based — not Health/Risk / not Chain aggregation.
+ * Phase 12-E A: additive token / estimatedCost observation columns.
  */
 type UsageEventProviderModelStatusRow = {
   provider: string
@@ -208,6 +209,14 @@ type UsageEventProviderModelStatusRow = {
   ok: number
   error: number
   total: number
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  estimatedCost?: number
+  missingInputTokenCount?: number
+  missingOutputTokenCount?: number
+  missingTotalTokenCount?: number
+  missingEstimatedCostCount?: number
 }
 
 type UsageEventProviderModelAnalysisView = {
@@ -1749,7 +1758,9 @@ export function UsagePanel({
                       <p className="usage-muted usage-event-provider-model-note">
                         Raw retained data based · provider × model の観測事実です ·
                         Failover Chain / Status / Daily / Hourly / Rolling とは別集計です
-                        · 自動判定ラベルではありません
+                        · 保存済み input / output / total と estimatedCost を合算します ·
+                        total は input+output の再計算ではありません ·
+                        評価ラベルではありません
                       </p>
                       {usageEventProviderModel != null && (
                         <p className="usage-muted usage-event-provider-model-note">
@@ -1771,6 +1782,14 @@ export function UsagePanel({
                             <th>OK</th>
                             <th>Error</th>
                             <th>Total</th>
+                            <th>Input</th>
+                            <th>Output</th>
+                            <th>Sum Total</th>
+                            <th>Estimated Cost</th>
+                            <th>Missing Input</th>
+                            <th>Missing Output</th>
+                            <th>Missing Total</th>
+                            <th>Missing Cost</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1785,6 +1804,14 @@ export function UsagePanel({
                               <td>{row.ok}</td>
                               <td>{row.error}</td>
                               <td>{row.total}</td>
+                              <td>{row.inputTokens ?? 0}</td>
+                              <td>{row.outputTokens ?? 0}</td>
+                              <td>{row.totalTokens ?? 0}</td>
+                              <td>{row.estimatedCost ?? 0}</td>
+                              <td>{row.missingInputTokenCount ?? 0}</td>
+                              <td>{row.missingOutputTokenCount ?? 0}</td>
+                              <td>{row.missingTotalTokenCount ?? 0}</td>
+                              <td>{row.missingEstimatedCostCount ?? 0}</td>
                             </tr>
                           ))}
                         </tbody>
