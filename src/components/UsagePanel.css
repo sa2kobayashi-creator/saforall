@@ -446,6 +446,25 @@
   text-align: right;
 }
 
+/* Phase 11-C: All UsageEvent Provider Hourly Analysis */
+.usage-event-provider-hourly {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-event-provider-hourly-note {
+  margin: 0;
+}
+
+.usage-event-provider-hourly-table th:nth-child(n + 3),
+.usage-event-provider-hourly-table td:nth-child(n + 3) {
+  text-align: right;
+}
+
 /* Phase 11-B: All UsageEvent Data Completeness */
 .usage-event-completeness {
   display: flex;

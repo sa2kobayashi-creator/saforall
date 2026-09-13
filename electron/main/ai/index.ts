@@ -134,6 +134,7 @@ export {
   analyzeUsageEventProviderStatus,
   analyzeUsageEventProviderDailyStatus,
   analyzeUsageEventCompleteness,
+  analyzeUsageEventProviderHourlyStatus,
   MAX_EVENTS,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
@@ -149,6 +150,8 @@ export {
   type UsageEventProviderStatus,
   type UsageEventProviderDailyStatus,
   type UsageEventProviderDailyAnalysis,
-  type UsageEventCompleteness
+  type UsageEventCompleteness,
+  type UsageEventProviderHourlyStatus,
+  type UsageEventProviderHourlyAnalysis
 } from './usage'
 export { estimateCostUsd } from './cost'

@@ -524,6 +524,35 @@ function parseUtcCalendarDate(raw: unknown): string | null {
   return match[1]
 }
 
+/**
+ * Extract UTC date-hour YYYY-MM-DDTHH from an ISO-like timestamp.
+ * Invalid / empty / non-parseable / non-calendar / missing hour → null (no local TZ).
+ * Used by All UsageEvent hourly (Phase 11-C). Not for Chain day-bucket resolution.
+ */
+function parseUtcDateHour(raw: unknown): string | null {
+  const s = String(raw ?? '').trim()
+  if (!s) return null
+  const normalized = normalizeTimestamp(s)
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2})/.exec(normalized)
+  if (!match) return null
+  if (!Number.isFinite(Date.parse(normalized))) return null
+  const [y, mo, d] = match[1].split('-').map((part) => Number(part))
+  const hour = Number(match[2])
+  if (![y, mo, d, hour].every((n) => Number.isFinite(n))) return null
+  if (hour < 0 || hour > 23) return null
+  const utc = Date.UTC(y, mo - 1, d, hour)
+  const check = new Date(utc)
+  if (
+    check.getUTCFullYear() !== y ||
+    check.getUTCMonth() + 1 !== mo ||
+    check.getUTCDate() !== d ||
+    check.getUTCHours() !== hour
+  ) {
+    return null
+  }
+  return `${match[1]}T${match[2]}`
+}
+
 /** Alias used by Chain dailyBuckets (Phase 8-B). */
 function parseChainBucketDate(raw: unknown): string | null {
   return parseUtcCalendarDate(raw)
@@ -850,6 +879,65 @@ export function analyzeUsageEventProviderDailyStatus(
     oldestTimestamp,
     newestTimestamp
   }
+}
+
+/**
+ * Phase 11-C: All UsageEvent provider × UTC-hour status facts (no evaluative labels).
+ * Population: every event in the input list — with or without failoverId.
+ * Independent of Failover Chain day buckets / Daily totals / Completeness re-judgment.
+ */
+export type UsageEventProviderHourlyStatus = {
+  dateHour: string
+  provider: string
+  ok: number
+  error: number
+  total: number
+}
+
+export type UsageEventProviderHourlyAnalysis = {
+  rows: UsageEventProviderHourlyStatus[]
+}
+
+/**
+ * Aggregate ok/error/total per (UTC dateHour × provider) across all UsageEvents.
+ * Standalone over raw events; no chain grouping, no retention re-judgment.
+ * Retention coverage remains usage_event_completeness (Phase 11-B).
+ */
+export function analyzeUsageEventProviderHourlyStatus(
+  events: UsageEventLike[] | null | undefined
+): UsageEventProviderHourlyAnalysis {
+  const list = Array.isArray(events) ? events : []
+  const map = new Map<string, UsageEventProviderHourlyStatus>()
+
+  for (const event of list) {
+    if (!event || typeof event !== 'object') continue
+
+    const dateHour = parseUtcDateHour(event.timestamp)
+    if (!dateHour) continue
+
+    const provider = String(event.provider ?? '').trim() || '?'
+    const key = `${dateHour}\0${provider}`
+    const cur = map.get(key) ?? {
+      dateHour,
+      provider,
+      ok: 0,
+      error: 0,
+      total: 0
+    }
+    cur.total += 1
+    const status = String(event.status ?? '').trim()
+    if (status === 'ok') cur.ok += 1
+    else if (status === 'error') cur.error += 1
+    map.set(key, cur)
+  }
+
+  const rows = Array.from(map.values()).sort((a, b) => {
+    const hourCmp = a.dateHour.localeCompare(b.dateHour)
+    if (hourCmp !== 0) return hourCmp
+    return a.provider.localeCompare(b.provider)
+  })
+
+  return { rows }
 }
 
 /**

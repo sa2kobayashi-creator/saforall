@@ -212,6 +212,22 @@ type UsageEventProviderDailyAnalysisView = {
 }
 
 /**
+ * Phase 11-C: All UsageEvent provider × UTC-hour status (display only).
+ * Sibling of daily / completeness — not Failover dailyBuckets / Health / Rolling.
+ */
+type UsageEventProviderHourlyStatusRow = {
+  dateHour: string
+  provider: string
+  ok: number
+  error: number
+  total: number
+}
+
+type UsageEventProviderHourlyAnalysisView = {
+  rows: UsageEventProviderHourlyStatusRow[]
+}
+
+/**
  * Phase 11-B: All UsageEvent retention completeness (display only).
  * Not Health/Risk — retention-cap facts from Core.
  */
@@ -243,6 +259,11 @@ type RouterInsight = {
    * Sibling of usage_event_provider_status / router_failover_analysis.
    */
   usage_event_provider_daily?: UsageEventProviderDailyAnalysisView | null
+  /**
+   * Phase 11-C: All UsageEvent provider × UTC-hour status from Core.
+   * Sibling field — never recompute hourly buckets in panel.
+   */
+  usage_event_provider_hourly?: UsageEventProviderHourlyAnalysisView | null
   /**
    * Phase 11-B: All UsageEvent retention completeness from Core.
    * Sibling field — never recompute possiblyTruncated in panel.
@@ -647,6 +668,16 @@ export function UsagePanel({
       : null
   const usageEventProviderDailyRows = Array.isArray(usageEventProviderDaily?.rows)
     ? usageEventProviderDaily.rows
+    : null
+
+  /** Phase 11-C: Core All UsageEvent hourly status — display only. */
+  const usageEventProviderHourly =
+    data?.router?.usage_event_provider_hourly &&
+    typeof data.router.usage_event_provider_hourly === 'object'
+      ? data.router.usage_event_provider_hourly
+      : null
+  const usageEventProviderHourlyRows = Array.isArray(usageEventProviderHourly?.rows)
+    ? usageEventProviderHourly.rows
     : null
 
   /** Phase 11-B: Core retention completeness — display only (not Health). */
@@ -1565,6 +1596,52 @@ export function UsagePanel({
                           {usageEventProviderDailyRows.map((row) => (
                             <tr key={`${row.date}\0${row.provider}`}>
                               <td className="usage-model-id">{row.date}</td>
+                              <td>
+                                {ENGINE_LABELS[
+                                  row.provider as keyof typeof ENGINE_LABELS
+                                ] ?? row.provider}
+                              </td>
+                              <td>{row.ok}</td>
+                              <td>{row.error}</td>
+                              <td>{row.total}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                {usageEventProviderHourlyRows != null &&
+                  usageEventProviderHourlyRows.length > 0 && (
+                    <div className="usage-event-provider-hourly">
+                      <h4 className="usage-subhead">
+                        All UsageEvent Provider Hourly Analysis
+                      </h4>
+                      <p className="usage-muted usage-event-provider-hourly-note">
+                        保持されている All UsageEvent を UTC 時間単位で見た事実です ·
+                        Failover Chain Analysis / Daily とは別の母集団・別集計です
+                      </p>
+                      <p className="usage-muted usage-event-provider-hourly-note">
+                        完全な時間履歴ではありません · UsageEvent は最大 500 件まで保持されます
+                        · 保持範囲は Completeness セクションを参照してください
+                      </p>
+                      <p className="usage-muted usage-event-provider-hourly-note">
+                        UTC dateHour · 自動判定ラベルではありません
+                      </p>
+                      <table className="usage-table usage-event-provider-hourly-table">
+                        <thead>
+                          <tr>
+                            <th>Date Hour</th>
+                            <th>Provider</th>
+                            <th>OK</th>
+                            <th>Error</th>
+                            <th>Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {usageEventProviderHourlyRows.map((row) => (
+                            <tr key={`${row.dateHour}\0${row.provider}`}>
+                              <td className="usage-model-id">{row.dateHour}</td>
                               <td>
                                 {ENGINE_LABELS[
                                   row.provider as keyof typeof ENGINE_LABELS

@@ -19,6 +19,7 @@ export {
   analyzeUsageEventProviderStatus,
   analyzeUsageEventProviderDailyStatus,
   analyzeUsageEventCompleteness,
+  analyzeUsageEventProviderHourlyStatus,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   type UsageRecentRow,
@@ -33,7 +34,9 @@ export {
   type UsageEventProviderStatus,
   type UsageEventProviderDailyStatus,
   type UsageEventProviderDailyAnalysis,
-  type UsageEventCompleteness
+  type UsageEventCompleteness,
+  type UsageEventProviderHourlyStatus,
+  type UsageEventProviderHourlyAnalysis
 } from './usageBillingUi'
 
 export type UsageEventStatus = 'ok' | 'error'
