@@ -12,7 +12,10 @@ export type UsageFailoverUi = {
 export type UsageEventLike = {
   provider: string
   model: string
-  estimatedCost: number
+  estimatedCost?: number | null
+  inputTokens?: number | null
+  outputTokens?: number | null
+  totalTokens?: number | null
   timestamp: string
   status?: string
   billingMode?: string | null
@@ -1334,6 +1337,164 @@ export function analyzeUsageEventProviderModelStatus(
     oldestTimestamp,
     newestTimestamp,
     population: 'raw'
+  }
+}
+
+/**
+ * Phase 12-D D: token / estimatedCost observation facts (not evaluative labels).
+ * Population: API must pass allEvents (Raw). Does not recompute totalTokens from input+output.
+ * Invalid / missing numeric values are not coerced to 0 in the sum — counted as missing*.
+ */
+export type UsageEventUsageMetricsProvider = {
+  provider: string
+  eventCount: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  estimatedCost: number
+  missingInputTokenCount: number
+  missingOutputTokenCount: number
+  missingTotalTokenCount: number
+  missingEstimatedCostCount: number
+}
+
+export type UsageEventUsageMetrics = {
+  population: 'raw'
+  retentionDays: number
+  eventCount: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  estimatedCost: number
+  missingInputTokenCount: number
+  missingOutputTokenCount: number
+  missingTotalTokenCount: number
+  missingEstimatedCostCount: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+  byProvider: UsageEventUsageMetricsProvider[]
+}
+
+/** Finite number only — does not treat missing/invalid as 0. */
+function readFiniteMetric(value: unknown): number | null {
+  if (value === undefined || value === null) return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return null
+  return n
+}
+
+export function analyzeUsageEventUsageMetrics(
+  events: UsageEventLike[] | null | undefined,
+  retentionDays: number = 7
+): UsageEventUsageMetrics {
+  const list = Array.isArray(events) ? events : []
+  const days = Number.isFinite(retentionDays) ? Math.max(0, Math.floor(retentionDays)) : 7
+  const map = new Map<string, UsageEventUsageMetricsProvider>()
+  let eventCount = 0
+  let inputTokens = 0
+  let outputTokens = 0
+  let totalTokens = 0
+  let estimatedCost = 0
+  let missingInputTokenCount = 0
+  let missingOutputTokenCount = 0
+  let missingTotalTokenCount = 0
+  let missingEstimatedCostCount = 0
+  let oldestTimestamp: string | null = null
+  let newestTimestamp: string | null = null
+  let oldestMs = Number.POSITIVE_INFINITY
+  let newestMs = Number.NEGATIVE_INFINITY
+
+  for (const event of list) {
+    if (!event || typeof event !== 'object') continue
+    eventCount += 1
+
+    const provider = String(event.provider ?? '').trim() || '?'
+    const cur = map.get(provider) ?? {
+      provider,
+      eventCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      estimatedCost: 0,
+      missingInputTokenCount: 0,
+      missingOutputTokenCount: 0,
+      missingTotalTokenCount: 0,
+      missingEstimatedCostCount: 0
+    }
+    cur.eventCount += 1
+
+    const inTok = readFiniteMetric(event.inputTokens)
+    if (inTok === null) {
+      missingInputTokenCount += 1
+      cur.missingInputTokenCount += 1
+    } else {
+      inputTokens += inTok
+      cur.inputTokens += inTok
+    }
+
+    const outTok = readFiniteMetric(event.outputTokens)
+    if (outTok === null) {
+      missingOutputTokenCount += 1
+      cur.missingOutputTokenCount += 1
+    } else {
+      outputTokens += outTok
+      cur.outputTokens += outTok
+    }
+
+    const totTok = readFiniteMetric(event.totalTokens)
+    if (totTok === null) {
+      missingTotalTokenCount += 1
+      cur.missingTotalTokenCount += 1
+    } else {
+      totalTokens += totTok
+      cur.totalTokens += totTok
+    }
+
+    const cost = readFiniteMetric(event.estimatedCost)
+    if (cost === null) {
+      missingEstimatedCostCount += 1
+      cur.missingEstimatedCostCount += 1
+    } else {
+      estimatedCost += cost
+      cur.estimatedCost += cost
+    }
+
+    map.set(provider, cur)
+
+    const rawTs = String(event.timestamp ?? '').trim()
+    if (!rawTs) continue
+    const ms = Date.parse(normalizeTimestamp(rawTs))
+    if (!Number.isFinite(ms)) continue
+    if (ms < oldestMs) {
+      oldestMs = ms
+      oldestTimestamp = rawTs
+    }
+    if (ms > newestMs) {
+      newestMs = ms
+      newestTimestamp = rawTs
+    }
+  }
+
+  const byProvider = Array.from(map.values()).sort((a, b) =>
+    a.provider.localeCompare(b.provider)
+  )
+
+  return {
+    population: 'raw',
+    retentionDays: days,
+    eventCount,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    estimatedCost,
+    missingInputTokenCount,
+    missingOutputTokenCount,
+    missingTotalTokenCount,
+    missingEstimatedCostCount,
+    oldestTimestamp,
+    newestTimestamp,
+    byProvider
   }
 }
 

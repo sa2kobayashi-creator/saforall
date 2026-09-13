@@ -230,7 +230,8 @@ test('12d-b T11: existing sibling APIs intact', async () => {
 test('12d-b T12: Core has no Health/Risk/Chain helpers', async () => {
   const billing = await read('electron/main/ai/usageBillingUi.ts')
   const fnStart = billing.indexOf('export function analyzeUsageEventProviderModelStatus')
-  const fnEnd = billing.indexOf('function engineMatches', fnStart)
+  const fnEnd = billing.indexOf('export function analyzeUsageEventUsageMetrics', fnStart)
+  assert.ok(fnStart >= 0 && fnEnd > fnStart)
   const fnBody = billing.slice(fnStart, fnEnd)
   assert.doesNotMatch(fnBody, /Healthy|Unhealthy|Risk|Alert|Threshold/)
   assert.doesNotMatch(fnBody, /analyzeFailoverChains|groupUsageEventsByFailoverId/)
@@ -244,7 +245,7 @@ test('12d-b T13: UI facts only', async () => {
   assert.match(panel, /usage_event_provider_model/)
   assert.match(panel, /Raw retained data based/)
   const start = panel.indexOf('All UsageEvent Provider × Model')
-  const end = panel.indexOf('All UsageEvent Provider Daily Analysis')
+  const end = panel.indexOf('All UsageEvent Usage Metrics')
   assert.ok(start >= 0 && end > start)
   const block = panel.slice(start, end)
   assert.doesNotMatch(block, /\bHealthy\b|\bUnhealthy\b|\bAlert\b|\bRisk\b/)

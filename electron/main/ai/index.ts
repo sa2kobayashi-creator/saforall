@@ -138,6 +138,7 @@ export {
   analyzeUsageEventRolling,
   analyzeUsageEventProviderRolling,
   analyzeUsageEventProviderModelStatus,
+  analyzeUsageEventUsageMetrics,
   ROLLING_WINDOW_1H_MS,
   ROLLING_WINDOW_24H_MS,
   MAX_EVENTS,
@@ -170,6 +171,8 @@ export {
   type UsageEventProviderRolling,
   type UsageEventProviderModelStatus,
   type UsageEventProviderModelAnalysis,
+  type UsageEventUsageMetricsProvider,
+  type UsageEventUsageMetrics,
   type UsageEventProviderDailyRetained,
   type UsageDailyAggregateRow,
   type UsageDailyAggregateFile

@@ -132,7 +132,7 @@ test('3b T14: analysis UI does not use secret fields', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
   const analysisBlock = panel.slice(
     panel.indexOf('usage-failover-analysis'),
-    panel.indexOf('Router Failover Chain')
+    panel.indexOf('All UsageEvent Provider Status')
   )
   assert.ok(analysisBlock.length > 100)
   assert.doesNotMatch(analysisBlock, /credentialId/)

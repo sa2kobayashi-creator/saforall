@@ -179,6 +179,7 @@ export async function localApiRequest<T = unknown>(
         analyzeUsageEventProviderHourlyStatus,
         analyzeUsageEventProviderRolling,
         analyzeUsageEventProviderModelStatus,
+        analyzeUsageEventUsageMetrics,
         listPersistedUsageDailyAggregate,
         MAX_EVENTS,
         RAW_RETENTION_DAYS
@@ -237,6 +238,11 @@ export async function localApiRequest<T = unknown>(
       )
       // Phase 12-D B: provider × model facts from allEvents (Raw; not month filter).
       const usageEventProviderModel = analyzeUsageEventProviderModelStatus(allEvents)
+      // Phase 12-D D: token / estimatedCost facts from allEvents (Raw; not month filter).
+      const usageEventUsageMetrics = analyzeUsageEventUsageMetrics(
+        allEvents,
+        RAW_RETENTION_DAYS
+      )
       const router = {
         total: usageEvents.length,
         fallbacks: 0,
@@ -251,6 +257,7 @@ export async function localApiRequest<T = unknown>(
         usage_event_provider_daily_retained: usageEventProviderDailyRetained,
         usage_event_provider_rolling: usageEventProviderRolling,
         usage_event_provider_model: usageEventProviderModel,
+        usage_event_usage_metrics: usageEventUsageMetrics,
         by_engine: Array.from(byEngineMap.values()).map((row) => ({
           ...row,
           estimated_usd: Math.round(row.estimated_usd * 10000) / 10000

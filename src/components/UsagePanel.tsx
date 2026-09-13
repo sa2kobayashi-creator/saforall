@@ -213,6 +213,36 @@ type UsageEventProviderModelAnalysisView = {
 }
 
 /**
+ * Phase 12-D D: token / estimatedCost facts (display only).
+ * Raw allEvents based — not Health/Risk / Cost Alert.
+ */
+type UsageEventUsageMetricsProviderRow = {
+  provider: string
+  eventCount: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  estimatedCost: number
+}
+
+type UsageEventUsageMetricsView = {
+  population?: 'raw'
+  retentionDays?: number
+  eventCount: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  estimatedCost: number
+  missingInputTokenCount?: number
+  missingOutputTokenCount?: number
+  missingTotalTokenCount?: number
+  missingEstimatedCostCount?: number
+  oldestTimestamp?: string | null
+  newestTimestamp?: string | null
+  byProvider?: UsageEventUsageMetricsProviderRow[]
+}
+
+/**
  * Phase 10-B: All UsageEvent provider × day status (display only).
  * Sibling of usage_event_provider_status — not Failover dailyBuckets / Health.
  */
@@ -322,6 +352,11 @@ type RouterInsight = {
    * Sibling field — Raw allEvents; never recompute in panel.
    */
   usage_event_provider_model?: UsageEventProviderModelAnalysisView | null
+  /**
+   * Phase 12-D D: token / estimatedCost facts from Core (Raw allEvents).
+   * Sibling field — never recompute metrics in panel.
+   */
+  usage_event_usage_metrics?: UsageEventUsageMetricsView | null
   /**
    * Phase 10-B: All UsageEvent provider × UTC-day status from Core.
    * Sibling of usage_event_provider_status / router_failover_analysis.
@@ -746,6 +781,16 @@ export function UsagePanel({
       : null
   const usageEventProviderModelRows = Array.isArray(usageEventProviderModel?.rows)
     ? usageEventProviderModel.rows
+    : null
+
+  /** Phase 12-D D: Core token / cost metrics — display only (Raw allEvents). */
+  const usageEventUsageMetrics =
+    data?.router?.usage_event_usage_metrics &&
+    typeof data.router.usage_event_usage_metrics === 'object'
+      ? data.router.usage_event_usage_metrics
+      : null
+  const usageEventUsageMetricsProviders = Array.isArray(usageEventUsageMetrics?.byProvider)
+    ? usageEventUsageMetrics.byProvider
     : null
 
   /** Phase 10-B: Core All UsageEvent daily status — display only. */
@@ -1713,6 +1758,82 @@ export function UsagePanel({
                       </table>
                     </div>
                   )}
+
+                {usageEventUsageMetrics != null && (
+                  <div className="usage-event-usage-metrics">
+                    <h4 className="usage-subhead">All UsageEvent Usage Metrics</h4>
+                    <p className="usage-muted usage-event-usage-metrics-note">
+                      Raw retained data based · 現在保持されている UsageEvent のトークン /
+                      estimatedCost 観測値です · 実発生全イベントの総量を保証しません ·
+                      評価ラベルではありません · 観測数値のみです
+                    </p>
+                    <dl className="usage-event-completeness-stats">
+                      <div>
+                        <dt>Population</dt>
+                        <dd>{usageEventUsageMetrics.population ?? 'raw'}</dd>
+                      </div>
+                      <div>
+                        <dt>Retention Days</dt>
+                        <dd>{usageEventUsageMetrics.retentionDays ?? 7}</dd>
+                      </div>
+                      <div>
+                        <dt>Event Count</dt>
+                        <dd>{usageEventUsageMetrics.eventCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Input</dt>
+                        <dd>{usageEventUsageMetrics.inputTokens}</dd>
+                      </div>
+                      <div>
+                        <dt>Output</dt>
+                        <dd>{usageEventUsageMetrics.outputTokens}</dd>
+                      </div>
+                      <div>
+                        <dt>Total</dt>
+                        <dd>{usageEventUsageMetrics.totalTokens}</dd>
+                      </div>
+                      <div>
+                        <dt>Estimated Cost</dt>
+                        <dd>{usageEventUsageMetrics.estimatedCost}</dd>
+                      </div>
+                      <div>
+                        <dt>Missing Cost Count</dt>
+                        <dd>{usageEventUsageMetrics.missingEstimatedCostCount ?? 0}</dd>
+                      </div>
+                    </dl>
+                    {usageEventUsageMetricsProviders != null &&
+                      usageEventUsageMetricsProviders.length > 0 && (
+                        <table className="usage-table usage-event-usage-metrics-table">
+                          <thead>
+                            <tr>
+                              <th>Provider</th>
+                              <th>Events</th>
+                              <th>Input</th>
+                              <th>Output</th>
+                              <th>Total</th>
+                              <th>Estimated Cost</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {usageEventUsageMetricsProviders.map((row) => (
+                              <tr key={`metrics-${row.provider}`}>
+                                <td>
+                                  {ENGINE_LABELS[
+                                    row.provider as keyof typeof ENGINE_LABELS
+                                  ] ?? row.provider}
+                                </td>
+                                <td>{row.eventCount}</td>
+                                <td>{row.inputTokens}</td>
+                                <td>{row.outputTokens}</td>
+                                <td>{row.totalTokens}</td>
+                                <td>{row.estimatedCost}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                  </div>
+                )}
 
                 {usageEventProviderDailyRows != null &&
                   usageEventProviderDailyRows.length > 0 && (
