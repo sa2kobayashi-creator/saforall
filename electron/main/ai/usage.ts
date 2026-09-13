@@ -18,6 +18,7 @@ export {
   resolveFinalFailedProvider,
   analyzeUsageEventProviderStatus,
   analyzeUsageEventProviderDailyStatus,
+  analyzeUsageEventCompleteness,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   type UsageRecentRow,
@@ -31,7 +32,8 @@ export {
   type FailoverChainDailyBucket,
   type UsageEventProviderStatus,
   type UsageEventProviderDailyStatus,
-  type UsageEventProviderDailyAnalysis
+  type UsageEventProviderDailyAnalysis,
+  type UsageEventCompleteness
 } from './usageBillingUi'
 
 export type UsageEventStatus = 'ok' | 'error'
@@ -71,7 +73,8 @@ type UsageFile = {
   events: UsageEvent[]
 }
 
-const MAX_EVENTS = 500
+/** Retention ring capacity for UsageEvent memory + disk. Do not change casually. */
+export const MAX_EVENTS = 500
 const memoryEvents: UsageEvent[] = []
 
 function isoNow(): string {

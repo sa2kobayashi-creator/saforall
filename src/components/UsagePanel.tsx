@@ -211,6 +211,18 @@ type UsageEventProviderDailyAnalysisView = {
   newestTimestamp: string | null
 }
 
+/**
+ * Phase 11-B: All UsageEvent retention completeness (display only).
+ * Not Health/Risk — retention-cap facts from Core.
+ */
+type UsageEventCompletenessView = {
+  eventCount: number
+  maxEvents: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+  possiblyTruncated: boolean
+}
+
 type RouterInsight = {
   total: number
   fallbacks: number
@@ -231,6 +243,11 @@ type RouterInsight = {
    * Sibling of usage_event_provider_status / router_failover_analysis.
    */
   usage_event_provider_daily?: UsageEventProviderDailyAnalysisView | null
+  /**
+   * Phase 11-B: All UsageEvent retention completeness from Core.
+   * Sibling field — never recompute possiblyTruncated in panel.
+   */
+  usage_event_completeness?: UsageEventCompletenessView | null
   by_engine: RouteEngineStat[]
   by_task: RouteTaskStat[]
   recent: RouteRecent[]
@@ -631,6 +648,13 @@ export function UsagePanel({
   const usageEventProviderDailyRows = Array.isArray(usageEventProviderDaily?.rows)
     ? usageEventProviderDaily.rows
     : null
+
+  /** Phase 11-B: Core retention completeness — display only (not Health). */
+  const usageEventCompleteness =
+    data?.router?.usage_event_completeness &&
+    typeof data.router.usage_event_completeness === 'object'
+      ? data.router.usage_event_completeness
+      : null
 
   // Phase 4-A display-only maxima for relative bars (not Chain re-aggregation).
   const providerHopMax = Array.isArray(failoverAnalysis?.byProvider)
@@ -1555,6 +1579,48 @@ export function UsagePanel({
                       </table>
                     </div>
                   )}
+
+                {usageEventCompleteness != null && (
+                  <div className="usage-event-completeness">
+                    <h4 className="usage-subhead">All UsageEvent Data Completeness</h4>
+                    <p className="usage-muted usage-event-completeness-note">
+                      現在保持されている UsageEvent を対象とした保持状態です ·
+                      保持上限は最大 500 件 · 完全な過去履歴を意味しません
+                    </p>
+                    <p className="usage-muted usage-event-completeness-note">
+                      上限に達している場合、より古いイベントが保持されていない可能性があります
+                      · 自動判定ラベルではありません
+                    </p>
+                    <dl className="usage-event-completeness-stats">
+                      <div>
+                        <dt>Event Count</dt>
+                        <dd>{usageEventCompleteness.eventCount}</dd>
+                      </div>
+                      <div>
+                        <dt>MAX_EVENTS</dt>
+                        <dd>{usageEventCompleteness.maxEvents}</dd>
+                      </div>
+                      <div>
+                        <dt>Oldest Timestamp</dt>
+                        <dd className="usage-model-id">
+                          {usageEventCompleteness.oldestTimestamp ?? '—'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Newest Timestamp</dt>
+                        <dd className="usage-model-id">
+                          {usageEventCompleteness.newestTimestamp ?? '—'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Possibly Truncated</dt>
+                        <dd>
+                          {usageEventCompleteness.possiblyTruncated ? 'true' : 'false'}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                )}
 
                 {failoverChains.length > 0 && (
                   <>

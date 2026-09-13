@@ -852,6 +852,64 @@ export function analyzeUsageEventProviderDailyStatus(
   }
 }
 
+/**
+ * Phase 11-B: All UsageEvent retention / completeness facts (not Health/Risk).
+ * Describes how much of the input list is retained relative to maxEvents.
+ * Independent of provider status / daily rows / Failover analysis.
+ */
+export type UsageEventCompleteness = {
+  eventCount: number
+  maxEvents: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+  /** Retention-cap fact only — not Health, Risk, Problem, or Alert. */
+  possiblyTruncated: boolean
+}
+
+/**
+ * Fact layer for retained UsageEvent coverage.
+ * eventCount matches Phase 10-B daily.eventCount (object events in the input).
+ * possiblyTruncated := eventCount >= maxEvents (older events may have been dropped).
+ */
+export function analyzeUsageEventCompleteness(
+  events: UsageEventLike[] | null | undefined,
+  maxEvents: number
+): UsageEventCompleteness {
+  const list = Array.isArray(events) ? events : []
+  const cap = Number.isFinite(maxEvents) ? Math.max(0, Math.floor(maxEvents)) : 0
+  let eventCount = 0
+  let oldestTimestamp: string | null = null
+  let newestTimestamp: string | null = null
+  let oldestMs = Number.POSITIVE_INFINITY
+  let newestMs = Number.NEGATIVE_INFINITY
+
+  for (const event of list) {
+    if (!event || typeof event !== 'object') continue
+    eventCount += 1
+
+    const rawTs = String(event.timestamp ?? '').trim()
+    if (!rawTs) continue
+    const ms = Date.parse(normalizeTimestamp(rawTs))
+    if (!Number.isFinite(ms)) continue
+    if (ms < oldestMs) {
+      oldestMs = ms
+      oldestTimestamp = rawTs
+    }
+    if (ms > newestMs) {
+      newestMs = ms
+      newestTimestamp = rawTs
+    }
+  }
+
+  return {
+    eventCount,
+    maxEvents: cap,
+    oldestTimestamp,
+    newestTimestamp,
+    possiblyTruncated: eventCount >= cap && cap > 0
+  }
+}
+
 export type UsageRecentRow = {
   id: number
   engine: string

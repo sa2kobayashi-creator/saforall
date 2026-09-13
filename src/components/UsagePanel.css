@@ -446,6 +446,45 @@
   text-align: right;
 }
 
+/* Phase 11-B: All UsageEvent Data Completeness */
+.usage-event-completeness {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-event-completeness-note {
+  margin: 0;
+}
+
+.usage-event-completeness-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.usage-event-completeness-stats > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.usage-event-completeness-stats dt {
+  color: var(--text-muted);
+}
+
+.usage-event-completeness-stats dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+  word-break: break-all;
+}
+
 .usage-failover-analysis-sub {
   margin: 4px 0 0;
   font-size: 11px;
