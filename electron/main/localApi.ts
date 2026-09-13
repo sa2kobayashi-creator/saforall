@@ -179,7 +179,8 @@ export async function localApiRequest<T = unknown>(
         analyzeUsageEventProviderHourlyStatus,
         analyzeUsageEventProviderRolling,
         listPersistedUsageDailyAggregate,
-        MAX_EVENTS
+        MAX_EVENTS,
+        RAW_RETENTION_DAYS
       } = await import('./ai/usage')
       const { resolveCredential } = await import('./ai/credentials')
       const { parseProviderId } = await import('./ai/types')
@@ -217,8 +218,13 @@ export async function localApiRequest<T = unknown>(
       const usageEventProviderStatus = analyzeUsageEventProviderStatus(usageEvents)
       // Phase 10-B: all UsageEvent provider × UTC-day status (sibling of status / failover).
       const usageEventProviderDaily = analyzeUsageEventProviderDailyStatus(usageEvents)
-      // Phase 11-B: retention / completeness facts for the same usageEvents input.
-      const usageEventCompleteness = analyzeUsageEventCompleteness(usageEvents, MAX_EVENTS)
+      // Phase 11-B/12-C Completeness: Raw observation facts from allEvents (not month filter).
+      const usageEventCompleteness = analyzeUsageEventCompleteness(
+        allEvents,
+        MAX_EVENTS,
+        Date.now(),
+        RAW_RETENTION_DAYS
+      )
       // Phase 11-C: all UsageEvent provider × UTC-hour status (sibling; no retention re-judgment).
       const usageEventProviderHourly = analyzeUsageEventProviderHourlyStatus(usageEvents)
       // Phase 12-B: persistent Daily Aggregate (long-term; separate from Raw-derived daily).

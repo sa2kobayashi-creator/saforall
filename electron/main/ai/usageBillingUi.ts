@@ -941,31 +941,46 @@ export function analyzeUsageEventProviderHourlyStatus(
 }
 
 /**
- * Phase 11-B: All UsageEvent retention / completeness facts (not Health/Risk).
- * Describes how much of the input list is retained relative to maxEvents.
- * Independent of provider status / daily rows / Failover analysis.
+ * Phase 11-B / 12-C Completeness: Raw UsageEvent observation facts (not Health/Risk).
+ * Population: API must pass allEvents (Raw retained), not month-filtered usageEvents.
+ * Does not assert completeness-guarantee booleans.
  */
 export type UsageEventCompleteness = {
   eventCount: number
   maxEvents: number
   oldestTimestamp: string | null
   newestTimestamp: string | null
-  /** Retention-cap fact only — not Health, Risk, Problem, or Alert. */
+  /** Cap fact only — true means eventCount hit maxEvents; false is not a completeness guarantee. */
   possiblyTruncated: boolean
+  /** Raw retention day upper bound (fact). Not “7 days fully retained”. */
+  retentionDays: number
+  /** Input population label — Raw retained UsageEvents. */
+  population: 'raw'
+  /** Object events whose timestamp is empty or unparseable (still counted in eventCount). */
+  invalidTimestampCount: number
+  /** Valid timestamps with ms > nowMs (0 when nowMs not provided). Not an error label. */
+  futureEventCount: number
 }
 
 /**
- * Fact layer for retained UsageEvent coverage.
- * eventCount matches Phase 10-B daily.eventCount (object events in the input).
+ * Fact layer for Raw UsageEvent observation coverage.
+ * eventCount = object events in the input (attempt units; no Chain/Hop collapse).
  * possiblyTruncated := eventCount >= maxEvents (older events may have been dropped).
+ * Invalid timestamps are not rewritten. Future timestamps remain in oldest/newest when present.
  */
 export function analyzeUsageEventCompleteness(
   events: UsageEventLike[] | null | undefined,
-  maxEvents: number
+  maxEvents: number,
+  nowMs?: number,
+  retentionDays: number = 7
 ): UsageEventCompleteness {
   const list = Array.isArray(events) ? events : []
   const cap = Number.isFinite(maxEvents) ? Math.max(0, Math.floor(maxEvents)) : 0
+  const days = Number.isFinite(retentionDays) ? Math.max(0, Math.floor(retentionDays)) : 7
+  const hasNow = typeof nowMs === 'number' && Number.isFinite(nowMs)
   let eventCount = 0
+  let invalidTimestampCount = 0
+  let futureEventCount = 0
   let oldestTimestamp: string | null = null
   let newestTimestamp: string | null = null
   let oldestMs = Number.POSITIVE_INFINITY
@@ -976,9 +991,18 @@ export function analyzeUsageEventCompleteness(
     eventCount += 1
 
     const rawTs = String(event.timestamp ?? '').trim()
-    if (!rawTs) continue
+    if (!rawTs) {
+      invalidTimestampCount += 1
+      continue
+    }
     const ms = Date.parse(normalizeTimestamp(rawTs))
-    if (!Number.isFinite(ms)) continue
+    if (!Number.isFinite(ms)) {
+      invalidTimestampCount += 1
+      continue
+    }
+    if (hasNow && ms > (nowMs as number)) {
+      futureEventCount += 1
+    }
     if (ms < oldestMs) {
       oldestMs = ms
       oldestTimestamp = rawTs
@@ -994,7 +1018,11 @@ export function analyzeUsageEventCompleteness(
     maxEvents: cap,
     oldestTimestamp,
     newestTimestamp,
-    possiblyTruncated: eventCount >= cap && cap > 0
+    possiblyTruncated: eventCount >= cap && cap > 0,
+    retentionDays: days,
+    population: 'raw',
+    invalidTimestampCount,
+    futureEventCount
   }
 }
 

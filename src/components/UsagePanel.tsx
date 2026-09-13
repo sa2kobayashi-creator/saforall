@@ -239,8 +239,8 @@ type UsageEventProviderDailyRetainedView = {
 }
 
 /**
- * Phase 11-B: All UsageEvent retention completeness (display only).
- * Not Health/Risk — retention-cap facts from Core.
+ * Phase 11-B / 12-C: All UsageEvent Raw observation completeness (display only).
+ * Not Health/Risk — retention / observation facts from Core.
  */
 type UsageEventCompletenessView = {
   eventCount: number
@@ -248,6 +248,10 @@ type UsageEventCompletenessView = {
   oldestTimestamp: string | null
   newestTimestamp: string | null
   possiblyTruncated: boolean
+  retentionDays?: number
+  population?: 'raw'
+  invalidTimestampCount?: number
+  futureEventCount?: number
 }
 
 /**
@@ -1785,12 +1789,16 @@ export function UsagePanel({
                   <div className="usage-event-completeness">
                     <h4 className="usage-subhead">All UsageEvent Data Completeness</h4>
                     <p className="usage-muted usage-event-completeness-note">
-                      現在保持されている UsageEvent を対象とした保持状態です ·
-                      保持上限は直近 7 日かつ最大 10,000 件 · 完全な過去履歴を意味しません
+                      Raw retained data based · 現在保持されている UsageEvent
+                      の観測事実です · 保持上限は直近{' '}
+                      {usageEventCompleteness.retentionDays ?? 7} 日かつ最大{' '}
+                      {usageEventCompleteness.maxEvents.toLocaleString()} 件 ·
+                      完全な過去履歴を意味しません
                     </p>
                     <p className="usage-muted usage-event-completeness-note">
                       上限に達している場合、より古いイベントが保持されていない可能性があります
-                      · Daily Retained の長期集計とは別事実です · 自動判定ラベルではありません
+                      · Daily / Hourly / Rolling とは別事実です · Possibly Truncated =
+                      false は完全保証ではありません · 自動判定ラベルではありません
                     </p>
                     <dl className="usage-event-completeness-stats">
                       <div>
@@ -1800,6 +1808,14 @@ export function UsagePanel({
                       <div>
                         <dt>MAX_EVENTS</dt>
                         <dd>{usageEventCompleteness.maxEvents}</dd>
+                      </div>
+                      <div>
+                        <dt>Raw Retention Days</dt>
+                        <dd>{usageEventCompleteness.retentionDays ?? 7}</dd>
+                      </div>
+                      <div>
+                        <dt>Population</dt>
+                        <dd>{usageEventCompleteness.population ?? 'raw'}</dd>
                       </div>
                       <div>
                         <dt>Oldest Timestamp</dt>
@@ -1812,6 +1828,14 @@ export function UsagePanel({
                         <dd className="usage-model-id">
                           {usageEventCompleteness.newestTimestamp ?? '—'}
                         </dd>
+                      </div>
+                      <div>
+                        <dt>Invalid Timestamp Count</dt>
+                        <dd>{usageEventCompleteness.invalidTimestampCount ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Future Event Count</dt>
+                        <dd>{usageEventCompleteness.futureEventCount ?? 0}</dd>
                       </div>
                       <div>
                         <dt>Possibly Truncated</dt>

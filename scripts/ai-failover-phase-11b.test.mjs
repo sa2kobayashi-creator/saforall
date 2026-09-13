@@ -54,31 +54,28 @@ test('11b T1: basic completeness fields', async () => {
   assert.equal(result.oldestTimestamp, '2026-09-01T08:00:00.000Z')
   assert.equal(result.newestTimestamp, '2026-09-03T18:00:00.000Z')
   assert.equal(result.possiblyTruncated, false)
+  assert.equal(result.retentionDays, 7)
+  assert.equal(result.population, 'raw')
+  assert.equal(result.invalidTimestampCount, 0)
+  assert.equal(result.futureEventCount, 0)
 })
 
 test('11b T2: empty input is safe', async () => {
   const h = await loadHelpers()
-  assert.deepEqual(h.analyzeUsageEventCompleteness([], 500), {
+  const empty = {
     eventCount: 0,
     maxEvents: 500,
     oldestTimestamp: null,
     newestTimestamp: null,
-    possiblyTruncated: false
-  })
-  assert.deepEqual(h.analyzeUsageEventCompleteness(null, 500), {
-    eventCount: 0,
-    maxEvents: 500,
-    oldestTimestamp: null,
-    newestTimestamp: null,
-    possiblyTruncated: false
-  })
-  assert.deepEqual(h.analyzeUsageEventCompleteness(undefined, 500), {
-    eventCount: 0,
-    maxEvents: 500,
-    oldestTimestamp: null,
-    newestTimestamp: null,
-    possiblyTruncated: false
-  })
+    possiblyTruncated: false,
+    retentionDays: 7,
+    population: 'raw',
+    invalidTimestampCount: 0,
+    futureEventCount: 0
+  }
+  assert.deepEqual(h.analyzeUsageEventCompleteness([], 500), empty)
+  assert.deepEqual(h.analyzeUsageEventCompleteness(null, 500), empty)
+  assert.deepEqual(h.analyzeUsageEventCompleteness(undefined, 500), empty)
 })
 
 test('11b T3: malformed events skipped without throw', async () => {
@@ -108,6 +105,7 @@ test('11b T4: oldest / newest timestamp selection', async () => {
   assert.equal(result.eventCount, 6)
   assert.equal(result.oldestTimestamp, '2026-09-01T00:00:00.000Z')
   assert.equal(result.newestTimestamp, '2026-09-10T23:59:59.000Z')
+  assert.equal(result.invalidTimestampCount, 3)
 })
 
 test('11b T5: maxEvents matches retention count cap 10000', async () => {
@@ -183,7 +181,15 @@ test('11b T10: localApi wires usage_event_completeness', async () => {
   const local = await read('electron/main/localApi.ts')
   assert.match(local, /analyzeUsageEventCompleteness/)
   assert.match(local, /MAX_EVENTS/)
-  assert.match(local, /analyzeUsageEventCompleteness\s*\(\s*usageEvents\s*,\s*MAX_EVENTS\s*\)/)
+  assert.match(local, /RAW_RETENTION_DAYS/)
+  assert.match(
+    local,
+    /analyzeUsageEventCompleteness\s*\(\s*allEvents\s*,\s*MAX_EVENTS\s*,\s*Date\.now\s*\(\s*\)\s*,\s*RAW_RETENTION_DAYS\s*\)/
+  )
+  assert.doesNotMatch(
+    local,
+    /analyzeUsageEventCompleteness\s*\(\s*usageEvents\s*,/
+  )
   assert.match(local, /usage_event_completeness:\s*usageEventCompleteness/)
 })
 
@@ -231,10 +237,14 @@ test('11b T12: Secret Safety', async () => {
   const json = JSON.stringify(result)
   assert.deepEqual(Object.keys(result).sort(), [
     'eventCount',
+    'futureEventCount',
+    'invalidTimestampCount',
     'maxEvents',
     'newestTimestamp',
     'oldestTimestamp',
-    'possiblyTruncated'
+    'population',
+    'possiblyTruncated',
+    'retentionDays'
   ])
   assert.equal(json.includes('credentialId'), false)
   assert.equal(json.includes('billingMode'), false)
@@ -249,10 +259,11 @@ test('11b T12: Secret Safety', async () => {
   assert.doesNotMatch(block, /password/i)
   assert.doesNotMatch(block, /Problem Provider|Healthy|Unhealthy|High Risk/i)
   assert.doesNotMatch(block, /問題Provider|問題 Provider/)
-  assert.match(block, /最大 10,000/)
-  assert.match(block, /7\s*日/)
   assert.match(block, /完全な過去履歴を意味しません/)
   assert.match(block, /自動判定ラベルではありません/)
+  assert.match(block, /Raw retained data based/)
+  assert.match(block, /Possibly Truncated/)
+  assert.match(block, /完全保証ではありません/)
 
   const runAll = await read('scripts/run-all-tests.mjs')
   assert.match(runAll, /ai-failover-phase-11b\.test\.mjs/)
