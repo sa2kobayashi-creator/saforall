@@ -140,6 +140,7 @@ export {
   analyzeUsageEventProviderModelStatus,
   analyzeUsageEventUsageMetrics,
   withMonthPopulationAnalysis,
+  analyzeUsageEventBillingMode,
   ROLLING_WINDOW_1H_MS,
   ROLLING_WINDOW_24H_MS,
   MAX_EVENTS,
@@ -175,6 +176,9 @@ export {
   type UsageEventProviderModelAnalysis,
   type UsageEventUsageMetricsProvider,
   type UsageEventUsageMetrics,
+  type UsageEventBillingModeRow,
+  type UsageEventBillingModeProviderRow,
+  type UsageEventBillingModeAnalysis,
   type UsageEventProviderDailyRetained,
   type UsageDailyAggregateRow,
   type UsageDailyAggregateFile

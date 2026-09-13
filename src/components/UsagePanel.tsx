@@ -258,6 +258,32 @@ type UsageEventUsageMetricsView = {
 }
 
 /**
+ * Phase 12-E B: billingMode facts (display only).
+ * Raw allEvents based — billingModeForUi keys only (BYOK / DEVELOPMENT).
+ */
+type UsageEventBillingModeRow = {
+  billingMode: 'BYOK' | 'DEVELOPMENT'
+  total: number
+}
+
+type UsageEventBillingModeProviderRow = {
+  billingMode: 'BYOK' | 'DEVELOPMENT'
+  provider: string
+  total: number
+}
+
+type UsageEventBillingModeAnalysisView = {
+  population?: 'raw'
+  retentionDays?: number
+  eventCount: number
+  missingBillingModeCount?: number
+  oldestTimestamp?: string | null
+  newestTimestamp?: string | null
+  rows: UsageEventBillingModeRow[]
+  byBillingModeProvider?: UsageEventBillingModeProviderRow[]
+}
+
+/**
  * Phase 10-B: All UsageEvent provider × day status (display only).
  * Sibling of usage_event_provider_status — not Failover dailyBuckets / Health.
  */
@@ -379,6 +405,11 @@ type RouterInsight = {
    * Sibling field — never recompute metrics in panel.
    */
   usage_event_usage_metrics?: UsageEventUsageMetricsView | null
+  /**
+   * Phase 12-E B: billingMode facts from Core (Raw allEvents).
+   * Sibling field — billingModeForUi keys only; never recompute in panel.
+   */
+  usage_event_billing_mode?: UsageEventBillingModeAnalysisView | null
   /**
    * Phase 10-B: All UsageEvent provider × UTC-day status from Core.
    * Sibling of usage_event_provider_status / router_failover_analysis.
@@ -825,6 +856,21 @@ export function UsagePanel({
       : null
   const usageEventUsageMetricsProviders = Array.isArray(usageEventUsageMetrics?.byProvider)
     ? usageEventUsageMetrics.byProvider
+    : null
+
+  /** Phase 12-E B: Core billingMode facts — display only (Raw allEvents). */
+  const usageEventBillingMode =
+    data?.router?.usage_event_billing_mode &&
+    typeof data.router.usage_event_billing_mode === 'object'
+      ? data.router.usage_event_billing_mode
+      : null
+  const usageEventBillingModeRows = Array.isArray(usageEventBillingMode?.rows)
+    ? usageEventBillingMode.rows
+    : null
+  const usageEventBillingModeProviderRows = Array.isArray(
+    usageEventBillingMode?.byBillingModeProvider
+  )
+    ? usageEventBillingMode.byBillingModeProvider
     : null
 
   /** Phase 10-B: Core All UsageEvent daily status — display only. */
@@ -1894,6 +1940,86 @@ export function UsagePanel({
                       )}
                   </div>
                 )}
+
+                {usageEventBillingMode != null &&
+                  ((usageEventBillingModeRows != null &&
+                    usageEventBillingModeRows.length > 0) ||
+                    (usageEventBillingMode.missingBillingModeCount ?? 0) > 0 ||
+                    usageEventBillingMode.eventCount > 0) && (
+                    <div className="usage-event-billing-mode">
+                      <h4 className="usage-subhead">All UsageEvent Billing Mode</h4>
+                      <p className="usage-muted usage-event-billing-mode-note">
+                        Raw retained data based · billingModeForUi（BYOK /
+                        DEVELOPMENT）の観測件数です · ORGANIZATION / MANAGED /
+                        欠損は Missing に計上します · Failover Chain / Status /
+                        Daily / Hourly とは別集計です · 評価ラベルではありません
+                      </p>
+                      <dl className="usage-event-completeness-stats">
+                        <div>
+                          <dt>Population</dt>
+                          <dd>{usageEventBillingMode.population ?? 'raw'}</dd>
+                        </div>
+                        <div>
+                          <dt>Retention Days</dt>
+                          <dd>{usageEventBillingMode.retentionDays ?? 7}</dd>
+                        </div>
+                        <div>
+                          <dt>Event Count</dt>
+                          <dd>{usageEventBillingMode.eventCount}</dd>
+                        </div>
+                        <div>
+                          <dt>Missing Billing Mode</dt>
+                          <dd>{usageEventBillingMode.missingBillingModeCount ?? 0}</dd>
+                        </div>
+                      </dl>
+                      {usageEventBillingModeRows != null &&
+                        usageEventBillingModeRows.length > 0 && (
+                          <table className="usage-table usage-event-billing-mode-table">
+                            <thead>
+                              <tr>
+                                <th>Billing Mode</th>
+                                <th>Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {usageEventBillingModeRows.map((row) => (
+                                <tr key={`billing-mode-${row.billingMode}`}>
+                                  <td>{row.billingMode}</td>
+                                  <td>{row.total}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      {usageEventBillingModeProviderRows != null &&
+                        usageEventBillingModeProviderRows.length > 0 && (
+                          <table className="usage-table usage-event-billing-mode-provider-table">
+                            <thead>
+                              <tr>
+                                <th>Billing Mode</th>
+                                <th>Provider</th>
+                                <th>Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {usageEventBillingModeProviderRows.map((row) => (
+                                <tr
+                                  key={`billing-mode-provider-${row.billingMode}\0${row.provider}`}
+                                >
+                                  <td>{row.billingMode}</td>
+                                  <td>
+                                    {ENGINE_LABELS[
+                                      row.provider as keyof typeof ENGINE_LABELS
+                                    ] ?? row.provider}
+                                  </td>
+                                  <td>{row.total}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                    </div>
+                  )}
 
                 {usageEventProviderDailyRows != null &&
                   usageEventProviderDailyRows.length > 0 && (

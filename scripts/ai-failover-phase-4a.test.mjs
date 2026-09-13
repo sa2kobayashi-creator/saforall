@@ -107,7 +107,7 @@ test('4a T12: secrets not on analysis display path', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
   const analysisBlock = panel.slice(
     panel.indexOf('Router Failover Analysis'),
-    panel.indexOf('Router Failover Chain')
+    panel.indexOf('UsageEvent Provider Status — Monthly Population')
   )
   assert.doesNotMatch(analysisBlock, /api[_-]?key/i)
   assert.doesNotMatch(analysisBlock, /Authorization/)

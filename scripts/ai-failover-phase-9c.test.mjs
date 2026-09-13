@@ -121,7 +121,12 @@ test('9c T7: Health / Risk / Problem Provider forbidden in new section', async (
 })
 
 test('9c T8: secrets not on All UsageEvent display path', async () => {
-  const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
+  // Status section only — Raw Billing Mode section (12-E B) may mention billingMode by design.
+  const panel = await read('src/components/UsagePanel.tsx')
+  const start = panel.indexOf('UsageEvent Provider Status — Monthly Population')
+  const end = panel.indexOf('All UsageEvent Provider × Model')
+  assert.ok(start >= 0 && end > start)
+  const block = panel.slice(start, end)
   assert.doesNotMatch(block, /credentialId/)
   assert.doesNotMatch(block, /billingMode/)
   assert.doesNotMatch(block, /api[_-]?key/i)

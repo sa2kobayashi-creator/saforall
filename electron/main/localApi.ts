@@ -181,6 +181,7 @@ export async function localApiRequest<T = unknown>(
         analyzeUsageEventProviderModelStatus,
         analyzeUsageEventUsageMetrics,
         withMonthPopulationAnalysis,
+        analyzeUsageEventBillingMode,
         listPersistedUsageDailyAggregate,
         MAX_EVENTS,
         RAW_RETENTION_DAYS
@@ -253,6 +254,11 @@ export async function localApiRequest<T = unknown>(
         allEvents,
         RAW_RETENTION_DAYS
       )
+      // Phase 12-E B: billingMode facts from allEvents (Raw; billingModeForUi keys only).
+      const usageEventBillingMode = analyzeUsageEventBillingMode(
+        allEvents,
+        RAW_RETENTION_DAYS
+      )
       const router = {
         total: usageEvents.length,
         fallbacks: 0,
@@ -268,6 +274,7 @@ export async function localApiRequest<T = unknown>(
         usage_event_provider_rolling: usageEventProviderRolling,
         usage_event_provider_model: usageEventProviderModel,
         usage_event_usage_metrics: usageEventUsageMetrics,
+        usage_event_billing_mode: usageEventBillingMode,
         by_engine: Array.from(byEngineMap.values()).map((row) => ({
           ...row,
           estimated_usd: Math.round(row.estimated_usd * 10000) / 10000

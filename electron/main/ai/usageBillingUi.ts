@@ -1562,6 +1562,107 @@ export function analyzeUsageEventUsageMetrics(
   }
 }
 
+/**
+ * Phase 12-E B: billingMode observation facts (not evaluative labels).
+ * Population: API must pass allEvents (Raw). Keys use billingModeForUi only
+ * (BYOK | DEVELOPMENT). ORGANIZATION / MANAGED / null / other → missingBillingModeCount.
+ * 1 UsageEvent = 1 provider attempt — no Chain/Hop/Final* / no credentialId keying.
+ */
+export type UsageEventBillingModeRow = {
+  billingMode: 'BYOK' | 'DEVELOPMENT'
+  total: number
+}
+
+export type UsageEventBillingModeProviderRow = {
+  billingMode: 'BYOK' | 'DEVELOPMENT'
+  provider: string
+  total: number
+}
+
+export type UsageEventBillingModeAnalysis = {
+  population: 'raw'
+  retentionDays: number
+  eventCount: number
+  missingBillingModeCount: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+  rows: UsageEventBillingModeRow[]
+  byBillingModeProvider: UsageEventBillingModeProviderRow[]
+}
+
+export function analyzeUsageEventBillingMode(
+  events: UsageEventLike[] | null | undefined,
+  retentionDays: number = 7
+): UsageEventBillingModeAnalysis {
+  const list = Array.isArray(events) ? events : []
+  const days = Number.isFinite(retentionDays) ? Math.max(0, Math.floor(retentionDays)) : 7
+  const modeMap = new Map<'BYOK' | 'DEVELOPMENT', UsageEventBillingModeRow>()
+  const crossMap = new Map<string, UsageEventBillingModeProviderRow>()
+  let eventCount = 0
+  let missingBillingModeCount = 0
+  let oldestTimestamp: string | null = null
+  let newestTimestamp: string | null = null
+  let oldestMs = Number.POSITIVE_INFINITY
+  let newestMs = Number.NEGATIVE_INFINITY
+
+  for (const event of list) {
+    if (!event || typeof event !== 'object') continue
+    eventCount += 1
+
+    const mode = billingModeForUi(event.billingMode)
+    if (mode === null) {
+      missingBillingModeCount += 1
+    } else {
+      const cur = modeMap.get(mode) ?? { billingMode: mode, total: 0 }
+      cur.total += 1
+      modeMap.set(mode, cur)
+
+      const provider = String(event.provider ?? '').trim() || '?'
+      const key = `${mode}\0${provider}`
+      const cross = crossMap.get(key) ?? {
+        billingMode: mode,
+        provider,
+        total: 0
+      }
+      cross.total += 1
+      crossMap.set(key, cross)
+    }
+
+    const rawTs = String(event.timestamp ?? '').trim()
+    if (!rawTs) continue
+    const ms = Date.parse(normalizeTimestamp(rawTs))
+    if (!Number.isFinite(ms)) continue
+    if (ms < oldestMs) {
+      oldestMs = ms
+      oldestTimestamp = rawTs
+    }
+    if (ms > newestMs) {
+      newestMs = ms
+      newestTimestamp = rawTs
+    }
+  }
+
+  const rows = Array.from(modeMap.values()).sort((a, b) =>
+    a.billingMode.localeCompare(b.billingMode)
+  )
+  const byBillingModeProvider = Array.from(crossMap.values()).sort((a, b) => {
+    const m = a.billingMode.localeCompare(b.billingMode)
+    if (m !== 0) return m
+    return a.provider.localeCompare(b.provider)
+  })
+
+  return {
+    population: 'raw',
+    retentionDays: days,
+    eventCount,
+    missingBillingModeCount,
+    oldestTimestamp,
+    newestTimestamp,
+    rows,
+    byBillingModeProvider
+  }
+}
+
 function engineMatches(provider: string, engine: string): boolean {
   return provider.trim().toLowerCase() === engine.trim().toLowerCase()
 }

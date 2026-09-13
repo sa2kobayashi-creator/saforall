@@ -13,7 +13,8 @@ async function read(rel) {
 
 function analysisBlock(panel) {
   const start = panel.indexOf('Router Failover Analysis')
-  const end = panel.indexOf('Router Failover Chain')
+  // Phase 12-E B: Status/Raw sections sit before Chain; Analysis secrets scope ends at Status.
+  const end = panel.indexOf('UsageEvent Provider Status — Monthly Population')
   assert.ok(start >= 0 && end > start)
   return panel.slice(start, end)
 }

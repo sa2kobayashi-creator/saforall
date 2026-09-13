@@ -323,9 +323,7 @@ test('12d-d T19: UI factual-only wording', async () => {
 test('12d-d T20: forbidden health/risk/alert wording in metrics UI/Core', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
   const start = panel.indexOf('All UsageEvent Usage Metrics')
-  const end = panel.indexOf(
-    'UsageEvent Provider Daily Analysis — Monthly Population'
-  )
+  const end = panel.indexOf('All UsageEvent Billing Mode')
   assert.ok(start >= 0 && end > start)
   const block = panel.slice(start, end)
   assert.doesNotMatch(block, /\bHealthy\b|\bUnhealthy\b|\bAlert\b|\bThreshold\b/)
@@ -336,7 +334,8 @@ test('12d-d T20: forbidden health/risk/alert wording in metrics UI/Core', async 
 
   const billing = await read('electron/main/ai/usageBillingUi.ts')
   const fnStart = billing.indexOf('export function analyzeUsageEventUsageMetrics')
-  const fnEnd = billing.indexOf('function engineMatches', fnStart)
+  const fnEnd = billing.indexOf('export type UsageEventBillingModeRow', fnStart)
+  assert.ok(fnStart >= 0 && fnEnd > fnStart)
   const fnBody = billing.slice(fnStart, fnEnd)
   assert.doesNotMatch(fnBody, /Healthy|Unhealthy|Alert|Threshold|windowComplete/)
   assert.doesNotMatch(fnBody, /\bRisk\b/)
