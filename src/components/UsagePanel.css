@@ -465,6 +465,26 @@
   text-align: right;
 }
 
+/* Phase 12-B: Persistent Daily Aggregate (retained) */
+.usage-event-provider-daily-retained {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-event-provider-daily-retained-note,
+.usage-event-provider-daily-retained-range {
+  margin: 0;
+}
+
+.usage-event-provider-daily-retained-table th:nth-child(n + 3),
+.usage-event-provider-daily-retained-table td:nth-child(n + 3) {
+  text-align: right;
+}
+
 /* Phase 11-B: All UsageEvent Data Completeness */
 .usage-event-completeness {
   display: flex;

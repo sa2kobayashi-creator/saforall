@@ -136,6 +136,13 @@ export {
   analyzeUsageEventCompleteness,
   analyzeUsageEventProviderHourlyStatus,
   MAX_EVENTS,
+  RAW_MAX_EVENTS,
+  RAW_RETENTION_DAYS,
+  pruneUsageEventsForRetention,
+  reconcileDailyAggregateWithRaw,
+  applyUsageEventToDailyAggregate,
+  summarizeDailyAggregateRetained,
+  listPersistedUsageDailyAggregate,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   resetUsageForTests,
@@ -152,6 +159,9 @@ export {
   type UsageEventProviderDailyAnalysis,
   type UsageEventCompleteness,
   type UsageEventProviderHourlyStatus,
-  type UsageEventProviderHourlyAnalysis
+  type UsageEventProviderHourlyAnalysis,
+  type UsageEventProviderDailyRetained,
+  type UsageDailyAggregateRow,
+  type UsageDailyAggregateFile
 } from './usage'
 export { estimateCostUsd } from './cost'

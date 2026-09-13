@@ -328,7 +328,7 @@ test('10b T11: no Health / Risk / Problem Provider judgment in daily UI', async 
   assert.doesNotMatch(block, />Risk</)
   assert.doesNotMatch(block, />Error Rate</)
   assert.match(block, /別の母集団/)
-  assert.match(block, /最大 500/)
+  assert.match(block, /最大 10,000/)
   assert.match(block, /完全な過去履歴を示すものではありません/)
 })
 
@@ -376,10 +376,14 @@ test('10b T12: Secret Safety on daily path', async () => {
   assert.doesNotMatch(block, /raw error/i)
 })
 
-test('10b T13: MAX_EVENTS=500 unchanged', async () => {
+test('10b T13: Raw retention caps (7d / 10000)', async () => {
   const usage = await read('electron/main/ai/usage.ts')
-  assert.match(usage, /const MAX_EVENTS\s*=\s*500\b/)
-  assert.doesNotMatch(usage, /const MAX_EVENTS\s*=\s*(?!500\b)\d+/)
+  const retention = await read('electron/main/ai/usageRetention.ts')
+  assert.match(retention, /export const RAW_RETENTION_DAYS\s*=\s*7\b/)
+  assert.match(retention, /export const RAW_MAX_EVENTS\s*=\s*10000\b/)
+  assert.match(retention, /export const MAX_EVENTS\s*=\s*RAW_MAX_EVENTS\b/)
+  assert.match(usage, /RAW_MAX_EVENTS/)
+  assert.doesNotMatch(usage, /export const MAX_EVENTS\s*=\s*500\b/)
 })
 
 test('10b T14: exports, wiring, range meta, registration', async () => {

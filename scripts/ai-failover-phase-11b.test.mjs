@@ -110,12 +110,15 @@ test('11b T4: oldest / newest timestamp selection', async () => {
   assert.equal(result.newestTimestamp, '2026-09-10T23:59:59.000Z')
 })
 
-test('11b T5: maxEvents matches retention cap 500', async () => {
+test('11b T5: maxEvents matches retention count cap 10000', async () => {
   const h = await loadHelpers()
   const usage = await read('electron/main/ai/usage.ts')
-  assert.match(usage, /export const MAX_EVENTS\s*=\s*500\b/)
-  const result = h.analyzeUsageEventCompleteness([plainEvent()], 500)
-  assert.equal(result.maxEvents, 500)
+  const retention = await read('electron/main/ai/usageRetention.ts')
+  assert.match(retention, /export const RAW_MAX_EVENTS\s*=\s*10000\b/)
+  assert.match(retention, /export const MAX_EVENTS\s*=\s*RAW_MAX_EVENTS\b/)
+  assert.match(usage, /RAW_MAX_EVENTS/)
+  const result = h.analyzeUsageEventCompleteness([plainEvent()], 10000)
+  assert.equal(result.maxEvents, 10000)
 })
 
 test('11b T6: possiblyTruncated false below cap', async () => {
@@ -246,7 +249,8 @@ test('11b T12: Secret Safety', async () => {
   assert.doesNotMatch(block, /password/i)
   assert.doesNotMatch(block, /Problem Provider|Healthy|Unhealthy|High Risk/i)
   assert.doesNotMatch(block, /問題Provider|問題 Provider/)
-  assert.match(block, /最大 500/)
+  assert.match(block, /最大 10,000/)
+  assert.match(block, /7\s*日/)
   assert.match(block, /完全な過去履歴を意味しません/)
   assert.match(block, /自動判定ラベルではありません/)
 

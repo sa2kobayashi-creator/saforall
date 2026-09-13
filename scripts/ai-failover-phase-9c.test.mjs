@@ -66,9 +66,10 @@ test('9c T3: notes separate Failover Analysis / Hop / Final*', async () => {
   assert.match(block, /別集計/)
 })
 
-test('9c T4: notes — MAX_EVENTS=500 retained population; not complete history', async () => {
+test('9c T4: notes — Raw retention population; not complete history', async () => {
   const block = allUsageBlock(await read('src/components/UsagePanel.tsx'))
-  assert.match(block, /最大 500/)
+  assert.match(block, /最大 10,000/)
+  assert.match(block, /7\s*日/)
   assert.match(block, /完全な過去データではありません/)
   assert.match(block, /現在保持されている UsageEvent/)
 })

@@ -228,6 +228,17 @@ type UsageEventProviderHourlyAnalysisView = {
 }
 
 /**
+ * Phase 12-B: Persistent Daily Aggregate (display only).
+ * Long-term All UsageEvent facts — not Raw-derived daily / not Health.
+ */
+type UsageEventProviderDailyRetainedView = {
+  rows: UsageEventProviderDailyStatusRow[]
+  oldestDate: string | null
+  newestDate: string | null
+  dayCount: number
+}
+
+/**
  * Phase 11-B: All UsageEvent retention completeness (display only).
  * Not Health/Risk — retention-cap facts from Core.
  */
@@ -264,6 +275,11 @@ type RouterInsight = {
    * Sibling field — never recompute hourly buckets in panel.
    */
   usage_event_provider_hourly?: UsageEventProviderHourlyAnalysisView | null
+  /**
+   * Phase 12-B: Persistent Daily Aggregate (long-term All UsageEvent facts).
+   * Sibling of Raw-derived usage_event_provider_daily — never mix or recompute.
+   */
+  usage_event_provider_daily_retained?: UsageEventProviderDailyRetainedView | null
   /**
    * Phase 11-B: All UsageEvent retention completeness from Core.
    * Sibling field — never recompute possiblyTruncated in panel.
@@ -678,6 +694,18 @@ export function UsagePanel({
       : null
   const usageEventProviderHourlyRows = Array.isArray(usageEventProviderHourly?.rows)
     ? usageEventProviderHourly.rows
+    : null
+
+  /** Phase 12-B: Persistent Daily Aggregate — display only. */
+  const usageEventProviderDailyRetained =
+    data?.router?.usage_event_provider_daily_retained &&
+    typeof data.router.usage_event_provider_daily_retained === 'object'
+      ? data.router.usage_event_provider_daily_retained
+      : null
+  const usageEventProviderDailyRetainedRows = Array.isArray(
+    usageEventProviderDailyRetained?.rows
+  )
+    ? usageEventProviderDailyRetained.rows
     : null
 
   /** Phase 11-B: Core retention completeness — display only (not Health). */
@@ -1478,7 +1506,7 @@ export function UsagePanel({
                         の事実表示
                       </p>
                       <p className="usage-muted usage-event-provider-status-note">
-                        現在保持されている UsageEvent（最大 500）が母集団です ·
+                        現在保持されている UsageEvent（直近 7 日かつ最大 10,000 件）が母集団です ·
                         完全な過去データではありません
                       </p>
                       <table className="usage-table usage-event-provider-status-table">
@@ -1564,7 +1592,7 @@ export function UsagePanel({
                         Analysis とは別の母集団です
                       </p>
                       <p className="usage-muted usage-event-provider-daily-note">
-                        現在保持されている UsageEvent（最大 500）の範囲内です ·
+                        現在保持されている UsageEvent（直近 7 日かつ最大 10,000 件）の範囲内です ·
                         完全な過去履歴を示すものではありません
                       </p>
                       <p className="usage-muted usage-event-provider-daily-note">
@@ -1622,7 +1650,7 @@ export function UsagePanel({
                         Failover Chain Analysis / Daily とは別の母集団・別集計です
                       </p>
                       <p className="usage-muted usage-event-provider-hourly-note">
-                        完全な時間履歴ではありません · UsageEvent は最大 500 件まで保持されます
+                        完全な時間履歴ではありません · UsageEvent は直近 7 日かつ最大 10,000 件まで保持されます
                         · 保持範囲は Completeness セクションを参照してください
                       </p>
                       <p className="usage-muted usage-event-provider-hourly-note">
@@ -1657,16 +1685,70 @@ export function UsagePanel({
                     </div>
                   )}
 
+                {usageEventProviderDailyRetainedRows != null &&
+                  usageEventProviderDailyRetainedRows.length > 0 && (
+                    <div className="usage-event-provider-daily-retained">
+                      <h4 className="usage-subhead">
+                        All UsageEvent Provider Daily Retained
+                      </h4>
+                      <p className="usage-muted usage-event-provider-daily-retained-note">
+                        長期保持の Daily Aggregate です · Raw（直近 7 日）由来の Daily
+                        とは別の事実レイヤです
+                      </p>
+                      <p className="usage-muted usage-event-provider-daily-retained-note">
+                        All UsageEvent 母集団 · Failover Chain / Hop / Final* とは別 ·
+                        Raw 削除後も日次事実は残ります · 自動判定ラベルではありません
+                      </p>
+                      {usageEventProviderDailyRetained != null && (
+                        <p className="usage-muted usage-event-provider-daily-retained-range">
+                          範囲 · days {usageEventProviderDailyRetained.dayCount}
+                          {usageEventProviderDailyRetained.oldestDate
+                            ? ` · oldest ${usageEventProviderDailyRetained.oldestDate}`
+                            : ''}
+                          {usageEventProviderDailyRetained.newestDate
+                            ? ` · newest ${usageEventProviderDailyRetained.newestDate}`
+                            : ''}
+                        </p>
+                      )}
+                      <table className="usage-table usage-event-provider-daily-retained-table">
+                        <thead>
+                          <tr>
+                            <th>Date</th>
+                            <th>Provider</th>
+                            <th>OK</th>
+                            <th>Error</th>
+                            <th>Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {usageEventProviderDailyRetainedRows.map((row) => (
+                            <tr key={`retained-${row.date}\0${row.provider}`}>
+                              <td className="usage-model-id">{row.date}</td>
+                              <td>
+                                {ENGINE_LABELS[
+                                  row.provider as keyof typeof ENGINE_LABELS
+                                ] ?? row.provider}
+                              </td>
+                              <td>{row.ok}</td>
+                              <td>{row.error}</td>
+                              <td>{row.total}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
                 {usageEventCompleteness != null && (
                   <div className="usage-event-completeness">
                     <h4 className="usage-subhead">All UsageEvent Data Completeness</h4>
                     <p className="usage-muted usage-event-completeness-note">
                       現在保持されている UsageEvent を対象とした保持状態です ·
-                      保持上限は最大 500 件 · 完全な過去履歴を意味しません
+                      保持上限は直近 7 日かつ最大 10,000 件 · 完全な過去履歴を意味しません
                     </p>
                     <p className="usage-muted usage-event-completeness-note">
                       上限に達している場合、より古いイベントが保持されていない可能性があります
-                      · 自動判定ラベルではありません
+                      · Daily Retained の長期集計とは別事実です · 自動判定ラベルではありません
                     </p>
                     <dl className="usage-event-completeness-stats">
                       <div>

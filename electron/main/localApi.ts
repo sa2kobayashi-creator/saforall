@@ -177,6 +177,7 @@ export async function localApiRequest<T = unknown>(
         analyzeUsageEventProviderDailyStatus,
         analyzeUsageEventCompleteness,
         analyzeUsageEventProviderHourlyStatus,
+        listPersistedUsageDailyAggregate,
         MAX_EVENTS
       } = await import('./ai/usage')
       const { resolveCredential } = await import('./ai/credentials')
@@ -219,6 +220,8 @@ export async function localApiRequest<T = unknown>(
       const usageEventCompleteness = analyzeUsageEventCompleteness(usageEvents, MAX_EVENTS)
       // Phase 11-C: all UsageEvent provider × UTC-hour status (sibling; no retention re-judgment).
       const usageEventProviderHourly = analyzeUsageEventProviderHourlyStatus(usageEvents)
+      // Phase 12-B: persistent Daily Aggregate (long-term; separate from Raw-derived daily).
+      const usageEventProviderDailyRetained = await listPersistedUsageDailyAggregate()
       const router = {
         total: usageEvents.length,
         fallbacks: 0,
@@ -230,6 +233,7 @@ export async function localApiRequest<T = unknown>(
         usage_event_provider_daily: usageEventProviderDaily,
         usage_event_completeness: usageEventCompleteness,
         usage_event_provider_hourly: usageEventProviderHourly,
+        usage_event_provider_daily_retained: usageEventProviderDailyRetained,
         by_engine: Array.from(byEngineMap.values()).map((row) => ({
           ...row,
           estimated_usd: Math.round(row.estimated_usd * 10000) / 10000

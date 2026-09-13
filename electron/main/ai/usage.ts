@@ -1,6 +1,29 @@
 import { join } from 'path'
 import { estimateCostUsd } from './cost'
 import { newRequestId, type BillingMode, type ProviderId } from './types'
+import {
+  RAW_MAX_EVENTS,
+  RAW_RETENTION_DAYS,
+  pruneUsageEventsForRetention,
+  reconcileDailyAggregateWithRaw,
+  emptyUsageDailyAggregateFile,
+  summarizeDailyAggregateRetained,
+  type UsageDailyAggregateFile,
+  type UsageEventProviderDailyRetained
+} from './usageRetention'
+export {
+  RAW_MAX_EVENTS,
+  RAW_RETENTION_DAYS,
+  MAX_EVENTS,
+  pruneUsageEventsForRetention,
+  reconcileDailyAggregateWithRaw,
+  applyUsageEventToDailyAggregate,
+  summarizeDailyAggregateRetained,
+  emptyUsageDailyAggregateFile,
+  type UsageDailyAggregateRow,
+  type UsageDailyAggregateFile,
+  type UsageEventProviderDailyRetained
+} from './usageRetention'
 export {
   billingModeForUi,
   credentialIdForUi,
@@ -38,6 +61,7 @@ export {
   type UsageEventProviderHourlyStatus,
   type UsageEventProviderHourlyAnalysis
 } from './usageBillingUi'
+import { analyzeUsageEventProviderDailyStatus } from './usageBillingUi'
 
 export type UsageEventStatus = 'ok' | 'error'
 
@@ -76,24 +100,66 @@ type UsageFile = {
   events: UsageEvent[]
 }
 
-/** Retention ring capacity for UsageEvent memory + disk. Do not change casually. */
-export const MAX_EVENTS = 500
 const memoryEvents: UsageEvent[] = []
 
 function isoNow(): string {
   return new Date().toISOString()
 }
 
-async function persist(event: UsageEvent): Promise<void> {
+function usageEventsPath(getLocalDbRoot: () => string): string {
+  return join(getLocalDbRoot(), 'usage-events.json')
+}
+
+function usageDailyPath(getLocalDbRoot: () => string): string {
+  return join(getLocalDbRoot(), 'usage-daily.json')
+}
+
+async function loadLocalDb() {
+  const { ensureLocalDbReady, getLocalDbRoot, readJsonFile, writeJsonFile } = await import(
+    '../localDb'
+  )
+  await ensureLocalDbReady()
+  return { getLocalDbRoot, readJsonFile, writeJsonFile }
+}
+
+/**
+ * Reconcile Daily Aggregate for UTC dates present in Raw; preserve older Aggregate rows.
+ * processedRequestIds tracks Raw requestIds (bounded by Raw retention).
+ */
+async function syncDailyAggregateFromRaw(rawEvents: UsageEvent[]): Promise<void> {
   try {
-    const { ensureLocalDbReady, getLocalDbRoot, readJsonFile, writeJsonFile } = await import(
-      '../localDb'
+    const { getLocalDbRoot, readJsonFile, writeJsonFile } = await loadLocalDb()
+    const path = usageDailyPath(getLocalDbRoot)
+    const existing = await readJsonFile<UsageDailyAggregateFile>(
+      path,
+      emptyUsageDailyAggregateFile()
     )
-    await ensureLocalDbReady()
-    const path = join(getLocalDbRoot(), 'usage-events.json')
+    const next = reconcileDailyAggregateWithRaw(existing, rawEvents, (events) =>
+      analyzeUsageEventProviderDailyStatus(events as Parameters<
+        typeof analyzeUsageEventProviderDailyStatus
+      >[0])
+    )
+    if (JSON.stringify(existing) !== JSON.stringify(next)) {
+      await writeJsonFile(path, next)
+    }
+  } catch {
+    // localDb 未初期化（単体テスト）ではスキップ
+  }
+}
+
+async function persist(event: UsageEvent, nowMs: number = Date.now()): Promise<void> {
+  try {
+    const { getLocalDbRoot, readJsonFile, writeJsonFile } = await loadLocalDb()
+    const path = usageEventsPath(getLocalDbRoot)
     const file = await readJsonFile<UsageFile>(path, { events: [] })
-    file.events = [...file.events, event].slice(-MAX_EVENTS)
+    const merged = [...(file.events ?? []), event]
+    const pruned = pruneUsageEventsForRetention(merged, nowMs, {
+      days: RAW_RETENTION_DAYS,
+      maxEvents: RAW_MAX_EVENTS
+    })
+    file.events = pruned
     await writeJsonFile(path, file)
+    await syncDailyAggregateFromRaw(pruned)
   } catch {
     // localDb 未初期化（単体テスト）ではメモリのみ
   }
@@ -112,9 +178,12 @@ export async function recordUsage(input: {
   credentialId?: string | null
   userId?: string | null
   failover?: UsageFailoverMeta | null
+  /** Test-only clock; production omits (Date.now). */
+  nowMs?: number
 }): Promise<UsageEvent> {
   const inputTokens = Math.max(0, Number(input.inputTokens) || 0)
   const outputTokens = Math.max(0, Number(input.outputTokens) || 0)
+  const nowMs = Number.isFinite(input.nowMs) ? Number(input.nowMs) : Date.now()
   const event: UsageEvent = {
     requestId: input.requestId || newRequestId(),
     provider: String(input.provider),
@@ -124,7 +193,9 @@ export async function recordUsage(input: {
     totalTokens: inputTokens + outputTokens,
     estimatedCost:
       input.estimatedCost ?? estimateCostUsd(String(input.provider), inputTokens, outputTokens),
-    timestamp: isoNow(),
+    timestamp: Number.isFinite(input.nowMs)
+      ? new Date(nowMs).toISOString()
+      : isoNow(),
     status: input.status ?? 'ok',
     sessionId: input.sessionId ?? null,
     billingMode: input.billingMode ?? null,
@@ -133,8 +204,13 @@ export async function recordUsage(input: {
     failover: input.failover ?? null
   }
   memoryEvents.push(event)
-  if (memoryEvents.length > MAX_EVENTS) memoryEvents.shift()
-  await persist(event)
+  const prunedMemory = pruneUsageEventsForRetention(memoryEvents, nowMs, {
+    days: RAW_RETENTION_DAYS,
+    maxEvents: RAW_MAX_EVENTS
+  })
+  memoryEvents.length = 0
+  memoryEvents.push(...prunedMemory)
+  await persist(event, nowMs)
   return event
 }
 
@@ -143,15 +219,46 @@ export function listUsageEvents(): UsageEvent[] {
 }
 
 /** Disk + in-memory events, newest first. Safe for Usage UI (credentials excluded). */
-export async function listPersistedUsageEvents(): Promise<UsageEvent[]> {
+export async function listPersistedUsageEvents(
+  nowMs: number = Date.now()
+): Promise<UsageEvent[]> {
   const byId = new Map<string, UsageEvent>()
+  let diskChanged = false
   try {
-    const { ensureLocalDbReady, getLocalDbRoot, readJsonFile } = await import('../localDb')
-    await ensureLocalDbReady()
-    const path = join(getLocalDbRoot(), 'usage-events.json')
+    const { getLocalDbRoot, readJsonFile, writeJsonFile } = await loadLocalDb()
+    const path = usageEventsPath(getLocalDbRoot)
     const file = await readJsonFile<UsageFile>(path, { events: [] })
-    for (const row of file.events ?? []) {
+    const rawList = Array.isArray(file.events) ? file.events : []
+    const pruned = pruneUsageEventsForRetention(rawList, nowMs, {
+      days: RAW_RETENTION_DAYS,
+      maxEvents: RAW_MAX_EVENTS
+    })
+    if (pruned.length !== rawList.length) {
+      file.events = pruned
+      await writeJsonFile(path, file)
+      diskChanged = true
+    } else {
+      // Detect reorder-equivalent identity set change (same length but pruned different ids)
+      const before = new Set(
+        rawList.map((e) => (e && typeof e.requestId === 'string' ? e.requestId : '')).filter(Boolean)
+      )
+      const after = new Set(
+        pruned.map((e) => (e && typeof e.requestId === 'string' ? e.requestId : '')).filter(Boolean)
+      )
+      if (before.size !== after.size || Array.from(before).some((id) => !after.has(id))) {
+        file.events = pruned
+        await writeJsonFile(path, file)
+        diskChanged = true
+      }
+    }
+    for (const row of pruned) {
       if (row && typeof row.requestId === 'string') byId.set(row.requestId, row)
+    }
+    if (diskChanged) {
+      await syncDailyAggregateFromRaw(pruned)
+    } else {
+      // Ensure Aggregate exists / Raw-window reconciled at least once on read.
+      await syncDailyAggregateFromRaw(pruned)
     }
   } catch {
     // localDb 未初期化時はメモリのみ
@@ -160,6 +267,20 @@ export async function listPersistedUsageEvents(): Promise<UsageEvent[]> {
     byId.set(row.requestId, row)
   }
   return Array.from(byId.values()).sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
+}
+
+/** Read persisted Daily Aggregate (long-term facts). Does not mix Failover analysis. */
+export async function listPersistedUsageDailyAggregate(): Promise<UsageEventProviderDailyRetained> {
+  try {
+    const { getLocalDbRoot, readJsonFile } = await loadLocalDb()
+    const file = await readJsonFile<UsageDailyAggregateFile>(
+      usageDailyPath(getLocalDbRoot),
+      emptyUsageDailyAggregateFile()
+    )
+    return summarizeDailyAggregateRetained(file)
+  } catch {
+    return summarizeDailyAggregateRetained(emptyUsageDailyAggregateFile())
+  }
 }
 
 export function resetUsageForTests(): void {

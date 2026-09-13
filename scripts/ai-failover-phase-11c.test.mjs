@@ -271,7 +271,8 @@ test('11c T9: existing sibling fields / dailyBuckets unchanged wiring', async ()
   assert.doesNotMatch(fnBody, /windowStart|windowComplete|possiblyIncomplete/)
 
   const usage = await read('electron/main/ai/usage.ts')
-  assert.match(usage, /export const MAX_EVENTS\s*=\s*500\b/)
+  assert.match(usage, /RAW_MAX_EVENTS/)
+  assert.doesNotMatch(usage, /export const MAX_EVENTS\s*=\s*500\b/)
 })
 
 test('11c T10: UI direct display of usage_event_provider_hourly', async () => {
@@ -308,7 +309,7 @@ test('11c T12: Forbidden / evaluation labels absent; exports registered', async 
   assert.doesNotMatch(block, /Healthy|Unhealthy|Critical|Warning/)
   assert.doesNotMatch(block, /問題Provider|問題 Provider/)
   assert.doesNotMatch(block, /windowComplete|Rolling|Date\.now/)
-  assert.match(block, /最大 500/)
+  assert.match(block, /最大 10,000/)
   assert.match(block, /完全な時間履歴ではありません/)
   assert.match(block, /Completeness/)
 
