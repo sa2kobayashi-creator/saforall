@@ -524,6 +524,31 @@
   word-break: break-all;
 }
 
+/* Phase 12-C: All UsageEvent Provider Rolling */
+.usage-event-rolling {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-event-rolling-note {
+  margin: 0;
+}
+
+.usage-event-rolling-window {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.usage-event-rolling-table th:nth-child(n + 2),
+.usage-event-rolling-table td:nth-child(n + 2) {
+  text-align: right;
+}
+
 .usage-failover-analysis-sub {
   margin: 4px 0 0;
   font-size: 11px;

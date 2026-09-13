@@ -250,6 +250,34 @@ type UsageEventCompletenessView = {
   possiblyTruncated: boolean
 }
 
+/**
+ * Phase 12-C: Rolling 1h / 24h window facts (display only).
+ * Raw retained data based — not Health/Risk / not completeness guarantee.
+ */
+type UsageEventRollingProviderStatusRow = {
+  provider: string
+  ok: number
+  error: number
+  total: number
+}
+
+type UsageEventRollingWindowView = {
+  windowStart: number
+  windowEnd: number
+  eventCount: number
+  ok: number
+  error: number
+  total: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+  byProvider?: UsageEventRollingProviderStatusRow[]
+}
+
+type UsageEventProviderRollingView = {
+  '1h': UsageEventRollingWindowView
+  '24h': UsageEventRollingWindowView
+}
+
 type RouterInsight = {
   total: number
   fallbacks: number
@@ -285,6 +313,11 @@ type RouterInsight = {
    * Sibling field — never recompute possiblyTruncated in panel.
    */
   usage_event_completeness?: UsageEventCompletenessView | null
+  /**
+   * Phase 12-C: Rolling 1h / 24h from Core (allEvents Raw).
+   * Sibling field — never recompute windows in panel.
+   */
+  usage_event_provider_rolling?: UsageEventProviderRollingView | null
   by_engine: RouteEngineStat[]
   by_task: RouteTaskStat[]
   recent: RouteRecent[]
@@ -713,6 +746,15 @@ export function UsagePanel({
     data?.router?.usage_event_completeness &&
     typeof data.router.usage_event_completeness === 'object'
       ? data.router.usage_event_completeness
+      : null
+
+  /** Phase 12-C: Core Rolling 1h/24h — display only (Raw retained data based). */
+  const usageEventProviderRolling =
+    data?.router?.usage_event_provider_rolling &&
+    typeof data.router.usage_event_provider_rolling === 'object' &&
+    data.router.usage_event_provider_rolling['1h'] &&
+    data.router.usage_event_provider_rolling['24h']
+      ? data.router.usage_event_provider_rolling
       : null
 
   // Phase 4-A display-only maxima for relative bars (not Chain re-aggregation).
@@ -1778,6 +1820,93 @@ export function UsagePanel({
                         </dd>
                       </div>
                     </dl>
+                  </div>
+                )}
+
+                {usageEventProviderRolling != null && (
+                  <div className="usage-event-rolling">
+                    <h4 className="usage-subhead">All UsageEvent Provider Rolling</h4>
+                    <p className="usage-muted usage-event-rolling-note">
+                      Raw retained data based · 現在保持されている UsageEvent の時間窓集計です
+                      · 実発生全イベント数を保証しません · Daily / Hourly / Completeness
+                      とは別集計です · 自動判定ラベルではありません
+                    </p>
+                    {(
+                      [
+                        ['1h', 'Rolling 1h'] as const,
+                        ['24h', 'Rolling 24h'] as const
+                      ] as const
+                    ).map(([key, title]) => {
+                      const win = usageEventProviderRolling[key]
+                      const providers = Array.isArray(win.byProvider) ? win.byProvider : []
+                      return (
+                        <div key={key} className="usage-event-rolling-window">
+                          <h5 className="usage-failover-analysis-sub">{title}</h5>
+                          <dl className="usage-event-completeness-stats">
+                            <div>
+                              <dt>Event Count</dt>
+                              <dd>{win.eventCount}</dd>
+                            </div>
+                            <div>
+                              <dt>OK</dt>
+                              <dd>{win.ok}</dd>
+                            </div>
+                            <div>
+                              <dt>Error</dt>
+                              <dd>{win.error}</dd>
+                            </div>
+                            <div>
+                              <dt>Total</dt>
+                              <dd>{win.total}</dd>
+                            </div>
+                            <div>
+                              <dt>Window</dt>
+                              <dd className="usage-model-id">
+                                {win.windowStart} – {win.windowEnd}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Oldest</dt>
+                              <dd className="usage-model-id">
+                                {win.oldestTimestamp ?? '—'}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Newest</dt>
+                              <dd className="usage-model-id">
+                                {win.newestTimestamp ?? '—'}
+                              </dd>
+                            </div>
+                          </dl>
+                          {providers.length > 0 && (
+                            <table className="usage-table usage-event-rolling-table">
+                              <thead>
+                                <tr>
+                                  <th>Provider</th>
+                                  <th>OK</th>
+                                  <th>Error</th>
+                                  <th>Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {providers.map((row) => (
+                                  <tr key={`rolling-${key}-${row.provider}`}>
+                                    <td>
+                                      {ENGINE_LABELS[
+                                        row.provider as keyof typeof ENGINE_LABELS
+                                      ] ?? row.provider}
+                                    </td>
+                                    <td>{row.ok}</td>
+                                    <td>{row.error}</td>
+                                    <td>{row.total}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
 

@@ -1110,6 +1110,120 @@ export function enrichRecentWithBillingMode<T extends { engine: string; created_
   })
 }
 
+export const ROLLING_WINDOW_1H_MS = 60 * 60 * 1000
+export const ROLLING_WINDOW_24H_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Phase 12-C: Rolling window facts over All UsageEvent Raw (not Health/Risk).
+ * Population: input list as given (API must pass allEvents, not month-filtered).
+ */
+export type UsageEventRollingProviderStatus = {
+  provider: string
+  ok: number
+  error: number
+  total: number
+}
+
+export type UsageEventRollingWindow = {
+  windowStart: number
+  windowEnd: number
+  eventCount: number
+  ok: number
+  error: number
+  total: number
+  oldestTimestamp: string | null
+  newestTimestamp: string | null
+  byProvider: UsageEventRollingProviderStatus[]
+}
+
+export type UsageEventProviderRolling = {
+  '1h': UsageEventRollingWindow
+  '24h': UsageEventRollingWindow
+}
+
+/**
+ * Aggregate UsageEvents in [nowMs - windowMs, nowMs] (inclusive).
+ * Invalid / unparseable timestamps excluded. Future (ms > nowMs) excluded by windowEnd.
+ * Does not call Chain / Hop / Final* helpers. Does not invent completeness guarantees.
+ */
+export function analyzeUsageEventRolling(
+  events: UsageEventLike[] | null | undefined,
+  windowMs: number,
+  nowMs: number
+): UsageEventRollingWindow {
+  const list = Array.isArray(events) ? events : []
+  const end = Number(nowMs)
+  const span = Number.isFinite(windowMs) ? Math.max(0, Math.floor(windowMs)) : 0
+  const start = end - span
+  const map = new Map<string, UsageEventRollingProviderStatus>()
+  let eventCount = 0
+  let ok = 0
+  let error = 0
+  let oldestTimestamp: string | null = null
+  let newestTimestamp: string | null = null
+  let oldestMs = Number.POSITIVE_INFINITY
+  let newestMs = Number.NEGATIVE_INFINITY
+
+  for (const event of list) {
+    if (!event || typeof event !== 'object') continue
+    const rawTs = String(event.timestamp ?? '').trim()
+    if (!rawTs) continue
+    const ms = Date.parse(normalizeTimestamp(rawTs))
+    if (!Number.isFinite(ms)) continue
+    if (ms < start || ms > end) continue
+
+    eventCount += 1
+    if (ms < oldestMs) {
+      oldestMs = ms
+      oldestTimestamp = rawTs
+    }
+    if (ms > newestMs) {
+      newestMs = ms
+      newestTimestamp = rawTs
+    }
+
+    const provider = String(event.provider ?? '').trim() || '?'
+    const cur = map.get(provider) ?? { provider, ok: 0, error: 0, total: 0 }
+    cur.total += 1
+    const status = String(event.status ?? '').trim()
+    if (status === 'ok') {
+      cur.ok += 1
+      ok += 1
+    } else if (status === 'error') {
+      cur.error += 1
+      error += 1
+    }
+    map.set(provider, cur)
+  }
+
+  const byProvider = Array.from(map.values()).sort((a, b) =>
+    a.provider.localeCompare(b.provider)
+  )
+
+  return {
+    windowStart: start,
+    windowEnd: end,
+    eventCount,
+    ok,
+    error,
+    total: eventCount,
+    oldestTimestamp,
+    newestTimestamp,
+    byProvider
+  }
+}
+
+/** Build Rolling 1h + 24h sibling facts from the same All UsageEvent list. */
+export function analyzeUsageEventProviderRolling(
+  events: UsageEventLike[] | null | undefined,
+  nowMs: number
+): UsageEventProviderRolling {
+  return {
+    '1h': analyzeUsageEventRolling(events, ROLLING_WINDOW_1H_MS, nowMs),
+    '24h': analyzeUsageEventRolling(events, ROLLING_WINDOW_24H_MS, nowMs)
+  }
+}
+
 function engineMatches(provider: string, engine: string): boolean {
   return provider.trim().toLowerCase() === engine.trim().toLowerCase()
 }

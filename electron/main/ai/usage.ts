@@ -43,6 +43,10 @@ export {
   analyzeUsageEventProviderDailyStatus,
   analyzeUsageEventCompleteness,
   analyzeUsageEventProviderHourlyStatus,
+  analyzeUsageEventRolling,
+  analyzeUsageEventProviderRolling,
+  ROLLING_WINDOW_1H_MS,
+  ROLLING_WINDOW_24H_MS,
   usageEventsToRecentRows,
   enrichRecentWithBillingMode,
   type UsageRecentRow,
@@ -59,7 +63,10 @@ export {
   type UsageEventProviderDailyAnalysis,
   type UsageEventCompleteness,
   type UsageEventProviderHourlyStatus,
-  type UsageEventProviderHourlyAnalysis
+  type UsageEventProviderHourlyAnalysis,
+  type UsageEventRollingProviderStatus,
+  type UsageEventRollingWindow,
+  type UsageEventProviderRolling
 } from './usageBillingUi'
 import { analyzeUsageEventProviderDailyStatus } from './usageBillingUi'
 
