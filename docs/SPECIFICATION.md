@@ -4,8 +4,8 @@
 | --- | --- |
 | 文書名 | ソフトウェア仕様書 |
 | 製品名 | saforall |
-| 版 | 0.3.0（実装追従） |
-| 最終更新 | 2026-09-05 |
+| 版 | 0.3.1（実装追従・正本化） |
+| 最終更新 | 2026-09-14 |
 | 関連文書 | [設計書](./DESIGN.md) / [アーキテクチャ概要](./ARCHITECTURE.md) / [IDE シェル](./IDE_SHELL.md) / [AI パイプライン](./PIPELINE.md) / [サーバーセットアップ](../server/README.md) |
 
 ---
@@ -27,7 +27,7 @@
 | デスクトップアプリ（Windows 優先） | 本番向けクラウド SaaS |
 | ローカルファイルの閲覧・編集・保存 | クラウド同期・共同編集（当面） |
 | AI チャット / コード編集支援 | 独自 LLM の学習・ホスティング |
-| XAMPP（Apache + MySQL）によるローカル API / 永続化 | VS Code 拡張互換マーケット |
+| 配布版の userData JSON 永続化、および開発時の XAMPP（Apache + MySQL）互換 API | VS Code 拡張互換マーケット |
 | ワークスペース単位のコンテキスト利用 | |
 
 ### 1.4 用語
@@ -62,19 +62,21 @@
 | --- | --- |
 | OS | Windows 10/11（優先） |
 | クライアント | Electron（Chromium + Node.js） |
-| バックエンド | XAMPP（Apache + PHP + MySQL） |
-| 既定 URL | `http://localhost/saforall/`（開発時、設定変更可） |
+| 永続化（配布） | Electron `userData` 配下の JSON（`local-db` / settings-cache / credentials-vault 等） |
+| バックエンド（開発任意） | XAMPP（Apache + PHP + MySQL）。配布必須ではない |
+| 既定 URL（開発時） | `http://localhost/saforall/`（設定変更可） |
 | ネットワーク | AI 機能利用時は外部 LLM API への接続が必要 |
-| 認証情報 | API キーは設定として保存（MySQL またはローカル設定。生値の扱い方針は設計書参照） |
+| 認証情報 | API キーは Main 側設定（配布: userData）または開発時 MySQL/環境変数。生値はレンダラへ渡さない |
 
 ### 2.4 システム役割分担
 
 | 層 | 技術 | 役割 |
 | --- | --- | --- |
-| クライアント | Electron + React + Monaco | 編集 UI、ローカルファイル操作、ユーザー操作 |
-| Web サーバ | Apache（XAMPP） | PHP API の配信 |
-| API | PHP | 設定・会話履歴・メタデータの CRUD、将来の AI プロキシ |
-| DB | MySQL（XAMPP） | 永続データの保存 |
+| クライアント | Electron + React + Monaco | 編集 UI、ローカルファイル操作、配布版の永続化・LLM 呼び出し |
+| 永続化（配布） | userData JSON | 設定・会話・workspaces・usage・vault |
+| Web サーバ（開発任意） | Apache（XAMPP） | PHP API の配信 |
+| API（開発任意） | PHP | 設定・会話履歴・メタデータの CRUD、互換 LLM プロキシ |
+| DB（開発任意） | MySQL（XAMPP） | 開発時の永続データ。配布必須正本ではない |
 
 ---
 
@@ -118,32 +120,34 @@
 | --- | --- | --- | --- |
 | AI-01 | チャットパネルの表示・非表示を切り替えられる | P0 | 実装済 |
 | AI-02 | ユーザーメッセージを送信し、会話履歴を表示する | P0 | 実装済 |
-| AI-03 | 外部 LLM API に接続し、実回答をストリーミング表示する | P0 | 実装済（PHP プロキシ） |
+| AI-03 | 外部 LLM API に接続し、実回答をストリーミング表示する | P0 | 実装済（配布: Main 直呼び / 開発: PHP プロキシ可） |
 | AI-04 | アクティブファイルをコンテキストに含めて質問できる | P0 | 実装済 |
 | AI-05 | プロバイダ（OpenAI 互換等）・モデル・API キーを設定できる | P0 | 実装済 |
 | AI-06 | 選択範囲・複数ファイルをコンテキストに含められる | P1 | 実装済（@mention / Composer） |
 | AI-07 | AI が提案したコード変更をファイルへ適用できる | P1 | 実装済（Apply Diff / Composer） |
 | AI-08 | ツール利用型エージェント（読取・検索・編集）を実行できる | P1 | 実装済（Agent モード） |
-| AI-09 | 会話履歴の永続化・再開（MySQL） | P1 | 実装済 |
+| AI-09 | 会話履歴の永続化・再開 | P1 | 実装済（配布: userData JSON / 開発: MySQL 可） |
 | AI-10 | ルールファイル（例: プロジェクト指示）をプロンプトに反映する | P2 | 実装済（Rules / Memories） |
 | AI-11 | AI エンジンを自動 / OpenAI / Cursor / Gemini から選べる | P1 | 実装済 |
 | AI-12 | 自動時は AI Router がタスク種別に応じてエンジンを決める | P1 | 実装済 |
 | AI-13 | Cursor は開発 Agent（SDK / Cloud Agent）として実行し、チャット補完としては扱わない | P1 | 実装済 |
 | AI-14 | エンジン別の概算使用量・月上限を記録し、上限超過時はフォールバックする | P1 | 実装済 |
 
-### 3.4 バックエンド（Apache / MySQL）
+### 3.4 バックエンド（Apache / MySQL）— 開発時の互換経路
+
+本節の要件は **開発時に利用可能な** XAMPP 互換バックエンド向け。配布版では PHP/MySQL は必須ではない（永続化正本は §7 の userData JSON）。
 
 | ID | 要件 | 優先度 | 現状 |
 | --- | --- | --- | --- |
-| BE-01 | XAMPP の Apache 上で PHP API が応答する | P0 | 実装済 |
-| BE-02 | MySQL にスキーマを作成し、接続できる | P0 | 実装済 |
+| BE-01 | XAMPP の Apache 上で PHP API が応答する | P0 | 実装済（開発） |
+| BE-02 | MySQL にスキーマを作成し、接続できる | P0 | 実装済（開発） |
 | BE-03 | ヘルスチェック API（DB 接続確認含む）を提供する | P0 | 実装済 |
-| BE-04 | 会話セッション・メッセージを MySQL に保存・取得できる | P1 | 実装済 |
-| BE-05 | アプリ設定（モデル名・エンドポイント等）を MySQL に保存できる | P1 | 実装済 |
-| BE-06 | 最近使ったワークスペースパスを MySQL に保存できる | P1 | 実装済 |
-| BE-07 | Electron からバックエンド API を呼び出せる | P1 | 実装済 |
+| BE-04 | 会話セッション・メッセージを MySQL に保存・取得できる | P1 | 実装済（開発）。配布は userData JSON |
+| BE-05 | アプリ設定（モデル名・エンドポイント等）を MySQL に保存できる | P1 | 実装済（開発）。配布は settings-cache 等 |
+| BE-06 | 最近使ったワークスペースパスを MySQL に保存できる | P1 | 実装済（開発）。配布は userData |
+| BE-07 | Electron からバックエンド API を呼び出せる | P1 | 実装済（開発時・任意） |
 | BE-08 | API は JSON を入出力し、CORS を開発用に許可する | P0 | 実装済 |
-| BE-09 | LLM 呼び出しを PHP 側プロキシ経由にできる（キーをサーバ側保持） | P1 | 実装済 |
+| BE-09 | LLM 呼び出しを PHP 側プロキシ経由にできる（キーをサーバ側保持） | P1 | 実装済（開発互換）。配布の主経路は Main 直呼び |
 
 ### 3.5 設定・セキュリティ
 
@@ -306,14 +310,14 @@
 
 詳細は [PIPELINE.md](./PIPELINE.md)。
 
-- **OpenAI / Gemini**: チャット補完。PHP プロキシ経由（キーはサーバ側）
-- **Cursor**: `@cursor/sdk` または Cloud Agents。実行は Electron メイン。PHP は振り分けと run / usage の記録
+- **OpenAI / Gemini / Claude**: チャット補完。配布版は Electron Main から直呼び。開発時は PHP プロキシ経由も可（キーは Main または PHP 側で保持し、レンダラへ生値を渡さない）
+- **Cursor**: `@cursor/sdk` または Cloud Agents。実行は Electron メイン。開発時 PHP は振り分けと run / usage の記録に関与しうる
 - Cursor を OpenAI 互換エンドポイントとして扱わない
-- キーは環境変数または MySQL。ソース直書き禁止。レンダラへ生値を渡さない
+- キーは環境変数、配布版 userData、または開発時 MySQL。ソース直書き禁止。レンダラへ生値を渡さない
 
-### 6.3 MySQL
+### 6.3 MySQL（開発時）
 
-- XAMPP 付属の MySQL / MariaDB
+- XAMPP 付属の MySQL / MariaDB（**配布必須ではない**）
 - データベース名（既定）: `saforall`
 - 接続ユーザー（開発既定）: `root`（パスワードはローカル設定）
 
@@ -330,15 +334,31 @@
 
 ## 7. データ要件
 
+配布版と開発環境で保存先が異なる。実装の要約は [ARCHITECTURE.md](./ARCHITECTURE.md) も参照。
+
+### 7.1 配布版（正本: Electron userData JSON）
+
 | データ | 保存場所 | 備考 |
 | --- | --- | --- |
 | 編集中バッファ | メモリ（レンダラ） | 保存操作でローカルディスクへ |
-| ソースコード本体 | ローカルファイルシステム | MySQL には保存しない |
-| アプリ設定 | MySQL `settings` | モデル名・base URL 等 |
+| ソースコード本体 | ローカルファイルシステム | DB / JSON メタには保存しない |
+| アプリ設定・API キー（マスク対象） | `userData/settings-cache.json`（Main のみ） | 生値は Renderer 非公開 |
+| BYOK Vault | `userData/credentials-vault.json` | AES-256-GCM + Electron `safeStorage` |
+| 会話履歴 | `userData/local-db/`（sessions / messages） | JSON（`localDb.ts` は SQLite ではない） |
+| 最近のワークスペース | `userData/local-db/workspaces.json` | パス文字列等 |
+| usage | `userData/local-db/usage-events.json` 等 | Raw / Daily Aggregate 等。詳細は実装・PIPELINE |
+
+### 7.2 開発環境（任意: XAMPP PHP/MySQL）
+
+| データ | 保存場所 | 備考 |
+| --- | --- | --- |
+| アプリ設定 | MySQL `settings` | 開発互換 |
 | LLM API キー | MySQL `settings`（暗号化推奨）またはサーバ設定ファイル | レンダラ非公開 |
-| 会話履歴 | MySQL `chat_sessions` / `chat_messages` | |
+| 会話履歴 | MySQL `chat_sessions` / `chat_messages` | 開発互換 |
 | 最近のワークスペース | MySQL `workspaces` | パス文字列のみ |
 | DB 接続情報 | `server/config/database.php` | Git 管理外 |
+
+MySQL は配布版の必須正本ではない。削除する仕様変更ではなく、**役割を開発互換に限定して記述する**。
 
 ---
 
@@ -347,9 +367,9 @@
 1. 商用 LLM の利用料金・利用規約はユーザー責任とする
 2. バイナリファイルの編集は対象外（テキスト前提）
 3. 巨大リポジトリ（数万ファイル超）の全件インデックスは P2 以降
-4. **Apache / MySQL が停止していても**、ローカル編集機能は利用可能とする（OT-03）
-5. バックエンドは当面 **localhost 専用**（XAMPP 開発環境）とする
-6. ソースコードの実体は常にローカルディスク上にあり、DB はメタデータと会話のみを持つ
+4. **Apache / MySQL が停止していても**、ローカル編集機能は利用可能とする（OT-03）。配布版では AI もローカル設定キーがあれば PHP なしで利用可能
+5. 開発用バックエンドは当面 **localhost 専用**（XAMPP）とする
+6. ソースコードの実体は常にローカルディスク上にあり、メタデータと会話は userData JSON（配布）または MySQL（開発）に置く
 
 ---
 
@@ -396,3 +416,4 @@
 | 0.1.0 | 2026-07-04 | 初版作成 |
 | 0.2.0 | 2026-07-04 | XAMPP（Apache / MySQL）をバックエンドとして追加 |
 | 0.3.0 | 2026-09-05 | 実装現状に合わせて要件ステータス・画面構成・ショートカットを更新 |
+| 0.3.1 | 2026-09-14 | 配布版 userData JSON 正本と開発用 MySQL の役割を分離して記載 |

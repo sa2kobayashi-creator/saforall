@@ -4,9 +4,9 @@
 | --- | --- |
 | 文書名 | ソフトウェア設計書 |
 | 製品名 | saforall |
-| 版 | 0.2.0（ドラフト） |
-| 最終更新 | 2026-07-04 |
-| 関連文書 | [仕様書](./SPECIFICATION.md) / [アーキテクチャ概要](./ARCHITECTURE.md) / [サーバーセットアップ](../server/README.md) |
+| 版 | 0.2.1（実装追従・正本化） |
+| 最終更新 | 2026-09-14 |
+| 関連文書 | [仕様書](./SPECIFICATION.md) / [アーキテクチャ概要](./ARCHITECTURE.md) / [サーバーセットアップ](../server/README.md) / [Packaging](./PACKAGING.md) |
 
 ---
 
@@ -20,9 +20,9 @@
 
 1. **プロセス分離**: OS・ローカル fs は Electron メイン、UI はレンダラ
 2. **最小権限 IPC**: レンダラが使える API は preload で明示したものだけ
-3. **永続化は MySQL**: 会話・設定・メタデータは XAMPP の MySQL に保存する
+3. **配布版の永続化正本は userData JSON**: 会話・設定・usage 等は Electron `userData` 配下の JSON に保存する（`localDb.ts` は SQLite ではなく JSON ファイル I/O）。XAMPP の MySQL は開発時の補助・互換バックエンドであり、配布版の必須正本ではない
 4. **コード本体はディスク**: ソースファイルは DB に入れずローカル fs のみ
-5. **API キーはサーバ側**: LLM 呼び出しは PHP 経由を基本とし、キーを保護する
+5. **秘密情報は Main のみ**: API キー等の生値は Renderer へ渡さない。配布版では Main の `settings-cache.json` / `credentials-vault.json`（Vault は AES-256-GCM + Electron `safeStorage`）に保持する。開発時は PHP/MySQL 経路も利用可能。LLM は配布版では Main 直呼びが主で、PHP プロキシは開発・互換用途
 6. **段階的拡張**: 骨格の上にツリー・AI・エージェントを載せる
 
 ### 1.3 技術スタック
@@ -33,9 +33,10 @@
 | UI | React + TypeScript | コンポーネント分割と型安全 |
 | エディタ | Monaco Editor | VS Code と同系統の編集体験 |
 | ビルド | electron-vite + Vite | 高速な開発体験 |
-| Web サーバ | Apache（XAMPP） | ローカル PHP 実行環境として標準的 |
-| API | PHP | XAMPP と相性が良く導入が容易 |
-| DB | MySQL（XAMPP） | 会話・設定の永続化 |
+| 永続化（配布） | userData JSON（`local-db` 等） | XAMPP なしで完結 |
+| Web サーバ（開発任意） | Apache（XAMPP） | ローカル PHP 実行環境 |
+| API（開発任意） | PHP | 互換 REST / LLM プロキシ |
+| DB（開発任意） | MySQL（XAMPP） | 開発時の設定・会話永続化 |
 | クライアント言語 | TypeScript（strict） | IPC・API 境界の型安全 |
 
 ---
@@ -52,31 +53,31 @@
                             │ window.saforall (preload)
 ┌───────────────────────────▼──────────────────────────────────┐
 │                   Electron Main Process                      │
-│  Window │ Dialog │ ローカル fs I/O │ HTTP クライアント        │
-└─────────┬─────────────────────────────┬──────────────────────┘
-          │                             │ HTTP (localhost)
-          ▼                             ▼
-   ローカルファイルシステム    ┌─────────────────────────────┐
-                               │ Apache (XAMPP) + PHP API    │
-                               │  server/public → /saforall  │
-                               └──────────────┬──────────────┘
-                                              │ PDO
-                                              ▼
-                                       MySQL (XAMPP)
-                               settings / chat / workspaces
-                                              │
-                               PHP AI Proxy ──┼──► 外部 LLM API
+│  Window │ Dialog │ ローカル fs │ localApi │ LLM 直呼び / HTTP │
+└───┬───────────────┬─────────────────────────┬────────────────┘
+    │               │                         │（開発時・任意）
+    ▼               ▼                         ▼ HTTP (localhost)
+ ローカル fs   userData JSON           Apache (XAMPP) + PHP API
+               local-db /              server/public → /saforall
+               settings-cache.json            │
+               credentials-vault.json         │ PDO
+                      │                       ▼
+                      │                MySQL（開発互換）
+                      ▼
+               外部 LLM API / Cursor SDK
 ```
+
+配布版の正本は左側（userData JSON + Main からの LLM 直呼び）。PHP/MySQL は右側の開発・互換経路であり、配布必須ではない。
 
 ### 2.2 責務分担
 
 | コンポーネント | 責務 | 持たないもの |
 | --- | --- | --- |
-| Electron Renderer | UI、編集バッファ、チャット表示 | Node API、DB 直結、API キー |
-| Electron Main | ウィンドウ、ダイアログ、ローカル fs、バックエンド HTTP 呼び出し | UI 描画、SQL 直実行 |
+| Electron Renderer | UI、編集バッファ、チャット表示 | Node API、DB 直結、API キー生値 |
+| Electron Main | ウィンドウ、ダイアログ、ローカル fs、userData 永続化、localApi、LLM 直呼び、（任意）PHP HTTP | UI 描画、SQL 直実行 |
 | Preload | 限定 API の公開 | ビジネスロジック |
-| Apache + PHP | REST API、設定/会話の永続化、LLM プロキシ | ソースコードの実体管理 |
-| MySQL | メタデータ・会話・設定の保存 | プロジェクトファイル本体 |
+| Apache + PHP（開発任意） | 互換 REST、設定/会話の永続化、LLM プロキシ | ソースコードの実体管理 |
+| MySQL（開発任意） | 開発時のメタデータ・会話・設定 | プロジェクトファイル本体 / 配布必須正本 |
 
 ---
 
@@ -243,7 +244,7 @@ root = path.resolve(workspaceRoot)
 allow = resolved === root || resolved.startsWith(root + path.sep)
 ```
 
-シンボリックリンクや `..` による脱出を拒否する。実装は `electron/main/fs` に集約する。
+シンボリックリンクや `..` による脱出を拒否する。実装は `electron/main/workspaceTools.ts` 等に集約済み（Agent / ワークスペース操作）。
 
 ### 5.4 セキュリティ設定
 
@@ -260,7 +261,9 @@ webPreferences: {
 
 ---
 
-## 6. バックエンド設計（Apache / PHP / MySQL）
+## 6. バックエンド設計（Apache / PHP / MySQL）— 開発時の互換経路
+
+本節は **開発時に利用可能な** XAMPP 互換バックエンドを記述する。配布版の必須正本ではない（配布正本は §1.2 / §2 の userData JSON）。
 
 ### 6.1 XAMPP 配置
 
@@ -323,13 +326,23 @@ chat_messages (id, session_id, role, content, created_at)
 
 ### 6.6 Electron からの呼び出し方針
 
+配布版（ローカル正本）:
+
+```
+Renderer → preload → Main localApi / settings / chatStore 等 → userData JSON
+Renderer → preload → Main → 外部 LLM API / Cursor SDK（直呼び）
+```
+
+開発時（任意・互換）:
+
 ```
 Renderer → preload api.* → Main HTTP client → Apache/PHP → MySQL
+（LLM は PHP プロキシ経由も可）
 ```
 
 - CORS: 開発時は許可（Electron はメイン経由なら CORS 不要だが、将来のデバッグ用に付与）
 - タイムアウト: 接続 3 秒、LLM 系は長め（60 秒〜）
-- バックエンド停止時: `api.health` 失敗を StatusBar に表示し、編集機能は継続
+- バックエンド停止時: `api.health` 失敗を StatusBar に表示し、編集機能は継続。配布版では PHP 未起動でもローカルモードで動作可能
 
 ---
 
@@ -340,23 +353,20 @@ Renderer → preload api.* → Main HTTP client → Apache/PHP → MySQL
 ### 7.1 コンポーネント
 
 ```
-Renderer ChatPanel  （engine: auto | openai | cursor | gemini）
+Renderer ChatPanel  （engine: auto | openai | cursor | gemini | …）
     │
     ▼
 Electron Main
-    │  POST /api/ai/chat
-    │  Cursor のとき @cursor/sdk を実行（local.cwd = ワークスペース）
-    ▼
-PHP AI Router
-    │  分類・月次上限・会話保存・usage
-    ├─ OpenAI Chat Completions
-    ├─ Gemini 生成 API
-    └─ Cursor は queued run を返し、実体は Main が実行
+    ├─ 配布・ローカル: Router / Failover / LLM 直呼び / toolAgent / Cursor SDK
+    │                 usage → userData（usage-events.json 等）
+    └─ 開発任意: POST → PHP AI Router（分類・永続化・プロキシ）
+                  ├─ OpenAI / Gemini / Claude
+                  └─ Cursor は queued run を返し、実体は Main が実行
 ```
 
 Cursor は OpenAI 互換の chat completions ではない。リポジトリを触る Agent として扱う。
 
-### 7.2 プロバイダ設定（MySQL `settings` / 環境変数）
+### 7.2 プロバイダ設定（userData / 環境変数 / 開発時 MySQL）
 
 | key / 環境変数 | 意味 |
 | --- | --- |
@@ -367,7 +377,7 @@ Cursor は OpenAI 互換の chat completions ではない。リポジトリを�
 | `CURSOR_API_KEY` / `llm.cursor.api_key` | Cursor SDK / Cloud Agent |
 | `cost.*.monthly_usd` | エンジン別月上限（Cursor は自動振り分けに必須） |
 
-既存の `llm.api_key` / `llm.base_url` / `llm.model` は OpenAI レーンへ移行する。Workers AI（`llm.simple.*`）は本線から外す。
+配布版では設定キーは Main の `settings-cache.json` 等に保持する。開発時は MySQL `settings` も利用可能。既存の `llm.api_key` / `llm.base_url` / `llm.model` は OpenAI レーンへ移行する。Workers AI（`llm.simple.*`）は本線から外す。
 ### 7.3 コンテキスト組み立て
 
 優先度の高い順にトークン予算内へ収める。
@@ -376,7 +386,7 @@ Cursor は OpenAI 互換の chat completions ではない。リポジトリを�
 2. アクティブファイル（パス + 内容、大きすぎる場合は抜粋）
 3. 選択範囲
 4. 関連ファイル（ユーザー指定 or 簡易ヒューリスティック）
-5. 会話履歴（直近 N ターン、MySQL から取得）
+5. 会話履歴（直近 N ターン。配布版は userData、開発時は MySQL からも取得可）
 
 ### 7.4 コード適用フロー（v0.3 以降）
 
@@ -503,13 +513,16 @@ sequenceDiagram
 
 ## 10. 設定・秘密情報
 
-| 種類 | 保存場所 |
+| 種類 | 保存場所（実装事実） |
 | --- | --- |
-| MySQL 接続 | `server/config/database.php`（gitignore） |
-| LLM API キー | MySQL `settings`（PHP のみ参照）または `server/config` |
-| バックエンド URL | Electron 側設定（既定 localhost） |
+| 配布: アプリ設定・API キー（マスク対象） | Electron `userData/settings-cache.json`（Main のみ） |
+| 配布: BYOK Vault | Electron `userData/credentials-vault.json`（AES-256-GCM + `safeStorage`） |
+| 配布: 会話・workspaces・usage 等 | Electron `userData/local-db/`（JSON。`localDb.ts` は SQLite ではない） |
+| 開発: MySQL 接続 | `server/config/database.php`（gitignore） |
+| 開発: LLM API キー（PHP 経路） | MySQL `settings` または `server/config`（PHP のみ参照） |
+| バックエンド URL | Electron 側設定 / 環境変数（既定 localhost。配布版は PHP 非必須） |
 
-レンダラは「設定済みかどうか」「モデル名」など非秘密情報のみ参照する。
+レンダラは「設定済みかどうか」「fingerprint / マスク」「モデル名」など非秘密情報のみ参照する。生の secret は Renderer へ公開しない。
 
 ---
 
@@ -520,12 +533,11 @@ sequenceDiagram
 | `npm run dev` | 開発サーバ + Electron |
 | `npm run build` | `out/main`, `out/preload`, `out/renderer` |
 | `npm run typecheck` | `tsconfig.web` / `tsconfig.node` |
+| `npm run pack` / `npm run dist` | electron-builder（詳細は [PACKAGING.md](./PACKAGING.md)） |
 
-バックエンドは XAMPP の Apache / MySQL を起動して利用する（ビルド不要）。
+開発時は任意で XAMPP の Apache / MySQL を起動して利用できる（ビルド不要）。配布版インストーラでは XAMPP は不要。
 
 `package.json` の `main` は `./out/main/index.js`。
-
-配布（v1.0 目標）は electron-builder 等でインストーラを生成する想定。サーバは別途デプロイ設計が必要。
 
 ---
 
@@ -534,9 +546,9 @@ sequenceDiagram
 | 種類 | 対象 | 時期 |
 | --- | --- | --- |
 | 手動確認 | 起動・開く・編集・保存・チャット UI | MVP |
-| 手動確認 | `/api/health`、phpMyAdmin でのテーブル確認 | v0.1.1 |
+| 手動確認 | `/api/health`、phpMyAdmin でのテーブル確認（開発時） | v0.1.1 |
 | 単体テスト | パス検証、言語判定、プロンプト組み立て | v0.2〜 |
-| 結合テスト | IPC ハンドラ、PHP API + MySQL | v0.2〜 |
+| 結合テスト | IPC ハンドラ、PHP API + MySQL（開発経路）、local JSON | v0.2〜 |
 
 ---
 
@@ -550,6 +562,8 @@ sequenceDiagram
 | v0.4 | ツール実行ループ、パス検証強化、確認ダイアログ |
 | v1.0 | ターミナル、設定 UI、配布パイプライン |
 
+（上記は歴史的ロードマップ。現行の実装状況の要約は §14。）
+
 ---
 
 ## 14. 現状実装との対応
@@ -557,13 +571,15 @@ sequenceDiagram
 | 設計要素 | 現状 |
 | --- | --- |
 | Electron 3 プロセス構成 | 実装済 |
-| IPC 基本 5 API（fs / dialog） | 実装済 |
-| UI 4 ペイン + StatusBar | 実装済 |
-| PHP API 骨格 + health | 追加済 |
-| MySQL スキーマ | 追加済 |
-| Electron ↔ PHP 接続 | 未実装 |
-| AI Proxy | 未実装 |
-| パス検証 | 未実装 |
+| IPC（fs / dialog / api 等） | 実装済 |
+| UI シェル + StatusBar | 実装済 |
+| 配布版 userData JSON 永続化 | 実装済（`local-db` / settings-cache / credentials-vault） |
+| PHP API 骨格 + health | 実装済（開発互換） |
+| MySQL スキーマ | 実装済（開発互換） |
+| Electron ↔ PHP 接続 | 実装済（開発時・任意。配布版では非必須） |
+| AI Proxy（PHP） | 実装済（開発互換）。配布版の主経路は Main 直呼び |
+| パス検証（workspaceTools） | 実装済 |
+| AI Router / Failover / Agent | 実装済（詳細は PIPELINE.md） |
 
 ---
 
@@ -573,3 +589,4 @@ sequenceDiagram
 | --- | --- | --- |
 | 0.1.0 | 2026-07-04 | 初版作成 |
 | 0.2.0 | 2026-07-04 | XAMPP（Apache / MySQL / PHP）バックエンド設計を追加 |
+| 0.2.1 | 2026-09-14 | 配布版 userData JSON 正本・Main 直呼び・実装済項目を実装事実に合わせて修正 |
