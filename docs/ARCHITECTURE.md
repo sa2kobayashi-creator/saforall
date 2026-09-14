@@ -18,11 +18,14 @@ Electron パッケージアプリが本体。設定・会話・usage は **userD
 ```
 Electron（UI + ローカル fs + LLM 直呼び / Cursor SDK）
         │
-        ├─► userData/local-db（sessions / messages / usage）
+        ├─► userData/local-db（sessions / messages / usage 等・JSON）
         ├─► userData/settings-cache.json（API キー含む・Main のみ）
+        ├─► userData/credentials-vault.json（BYOK / Credential・Main のみ）
         │
         └─（任意）XAMPP PHP/MySQL ── 開発用の互換バックエンド
 ```
+
+`local-db` の読み書きは `localDb.ts` による **JSON ファイル I/O**（SQLite ではない）。
 
 ## 役割分担
 
@@ -30,7 +33,7 @@ Electron（UI + ローカル fs + LLM 直呼び / Cursor SDK）
 | --- | --- | --- |
 | クライアント | Electron + React + Monaco | 編集 UI、ソース読み書き、ローカル永続化、LLM 呼び出し |
 | API（任意） | Apache + PHP（XAMPP） | 開発時の互換 REST |
-| 永続化（配布） | userData JSON | 設定・会話・usage |
+| 永続化（配布） | userData JSON | 設定・会話・usage・vault |
 
 ソースコード本体は **DB に保存しない**（常にローカルディスク）。
 
@@ -51,6 +54,6 @@ saforall/
 ## セキュリティの要点
 
 - Electron: `contextIsolation: true` / `nodeIntegration: false`
-- API キーは PHP / MySQL 側に置き、レンダラへ生値を渡さない
+- 配布版の API キー / Credential は Main の userData 配下（`settings-cache.json` / `credentials-vault.json`）で管理し、Renderer には生値を渡さない。開発時は PHP / MySQL 経路も利用可能
 - `server/config/database.php` と `.env` はコミットしない
 - バックエンドは当面 localhost 専用（配布時は Electron 内ローカル永続化が正本）
