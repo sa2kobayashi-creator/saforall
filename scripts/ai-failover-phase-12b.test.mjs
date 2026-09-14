@@ -380,8 +380,8 @@ test('12b T12: API sibling wiring + existing fields preserved', async () => {
 test('12b T13: UI direct display retained daily; no reaggregation', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
   assert.match(panel, /usage_event_provider_daily_retained\?:/)
-  assert.match(panel, /All UsageEvent Provider Daily Retained/)
-  const start = panel.indexOf('All UsageEvent Provider Daily Retained')
+  assert.match(panel, /UsageEvent Provider Daily Aggregate — Retained/)
+  const start = panel.indexOf('UsageEvent Provider Daily Aggregate — Retained')
   const end = panel.indexOf(
     '<h4 className="usage-subhead">All UsageEvent Data Completeness</h4>'
   )

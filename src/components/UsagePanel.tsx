@@ -2148,7 +2148,7 @@ export function UsagePanel({
                   usageEventProviderDailyRetainedRows.length > 0 && (
                     <div className="usage-event-provider-daily-retained">
                       <h4 className="usage-subhead">
-                        All UsageEvent Provider Daily Retained
+                        UsageEvent Provider Daily Aggregate — Retained
                       </h4>
                       <p className="usage-muted usage-event-provider-daily-retained-note">
                         長期保持の Daily Aggregate です · Raw（直近 7 日）由来の Daily

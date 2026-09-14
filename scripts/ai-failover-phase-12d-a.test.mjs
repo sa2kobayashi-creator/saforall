@@ -270,7 +270,7 @@ test('12d-a T15: no Health/Risk/Alert/complete evaluation on Status/Daily/Hourly
 
   const panel = await read('src/components/UsagePanel.tsx')
   const statusStart = panel.indexOf('UsageEvent Provider Status — Monthly Population')
-  const retainedStart = panel.indexOf('All UsageEvent Provider Daily Retained')
+  const retainedStart = panel.indexOf('UsageEvent Provider Daily Aggregate — Retained')
   const block = panel.slice(statusStart, retainedStart)
   assert.doesNotMatch(block, /windowComplete|fullyComplete|isComplete|possiblyIncomplete/)
   assert.doesNotMatch(block, /\bAlert\b|\bThreshold\b/)

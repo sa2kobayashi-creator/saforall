@@ -158,7 +158,7 @@ test('12e-c T9: UI shows Rolling Population Raw', async () => {
 
 test('12e-c T10: UI shows Daily Retained as Daily Aggregate', async () => {
   const panel = await read('src/components/UsagePanel.tsx')
-  const start = panel.indexOf('All UsageEvent Provider Daily Retained')
+  const start = panel.indexOf('UsageEvent Provider Daily Aggregate — Retained')
   const end = panel.indexOf('All UsageEvent Data Completeness')
   assert.ok(start >= 0 && end > start)
   const block = panel.slice(start, end)
