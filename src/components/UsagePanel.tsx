@@ -835,23 +835,42 @@ function summarizeAgentRun(run: AgentRunView): {
   tools: string
   checkpoints: number
   attempts: number
+  toolOk: number
+  toolFail: number
+  hasToolResults: boolean
 } {
   let lastPhase = '—'
   const toolNames: string[] = []
   let checkpoints = 0
   let attempts = 0
+  let toolOk = 0
+  let toolFail = 0
+  let hasToolResults = false
   for (const event of run.events) {
     if (event.kind === 'phase' && event.phase) lastPhase = event.phase
     if (event.kind === 'tool_call' && event.toolName) toolNames.push(event.toolName)
     if (event.kind === 'checkpoint') checkpoints += 1
     if (event.kind === 'provider_attempt') attempts += 1
+    if (event.kind === 'tool_result' && typeof event.toolOk === 'boolean') {
+      hasToolResults = true
+      if (event.toolOk) toolOk += 1
+      else toolFail += 1
+    }
   }
   return {
     lastPhase,
     tools: toolNames.length ? toolNames.join(' → ') : '—',
     checkpoints,
-    attempts
+    attempts,
+    toolOk,
+    toolFail,
+    hasToolResults
   }
+}
+
+function agentRunStatusLabel(status: AgentRunView['status']): string {
+  if (status === 'done') return '実行終了'
+  return status
 }
 
 export function UsagePanel({
@@ -1172,17 +1191,25 @@ export function UsagePanel({
                   <li key={run.runId} className="usage-agent-run">
                     <div className="usage-agent-run-head">
                       <span className={`usage-agent-run-status usage-agent-run-status--${run.status}`}>
-                        {run.status}
+                        {agentRunStatusLabel(run.status)}
                       </span>
                       <span>
                         {run.provider || run.engine}/{run.model || '—'}
                       </span>
                     </div>
+                    {run.status === 'done' && (
+                      <p className="usage-agent-run-note">
+                        ストリームが終了しました。作業の成功を保証するものではありません。
+                      </p>
+                    )}
                     <div className="usage-agent-run-meta">
                       {formatAgentRunClock(run.startedAt)} → {formatAgentRunClock(run.endedAt)}
                     </div>
                     <div className="usage-agent-run-meta">
-                      phase {summary.lastPhase}
+                      最終 phase {summary.lastPhase}
+                      {summary.hasToolResults
+                        ? ` · Tool：成功 ${summary.toolOk} / 失敗 ${summary.toolFail}`
+                        : null}
                       {' · '}
                       tools {summary.tools}
                       {' · '}

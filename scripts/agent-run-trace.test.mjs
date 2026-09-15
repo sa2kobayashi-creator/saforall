@@ -350,6 +350,71 @@ test('Agent Run Trace: Usage / Failover / Checkpoint files not redesigned', asyn
   assert.doesNotMatch(toolAgent, /beginAgentRun/)
 })
 
+test('Agent Run Trace: done UI is stream-end, not work success', async () => {
+  const panel = await read('src/components/UsagePanel.tsx')
+  assert.match(panel, /status === 'done'\) return '実行終了'/)
+  assert.match(panel, /ストリームが終了しました。作業の成功を保証するものではありません。/)
+  assert.match(panel, /run\.status === 'done'/)
+  assert.match(panel, /kind === 'tool_result'/)
+  assert.match(panel, /toolOk/)
+  assert.match(panel, /Tool：成功/)
+  assert.match(panel, /hasToolResults/)
+  assert.doesNotMatch(panel, /作業成功/)
+  assert.doesNotMatch(panel, /完了成功/)
+  const statusHelpers = panel.slice(
+    panel.indexOf('function summarizeAgentRun'),
+    panel.indexOf('export function UsagePanel')
+  )
+  assert.match(statusHelpers, /実行終了/)
+  assert.doesNotMatch(statusHelpers, /'success'/)
+  assert.doesNotMatch(statusHelpers, /'failed'/)
+  assert.doesNotMatch(statusHelpers, /'partial'/)
+  assert.doesNotMatch(statusHelpers, /outcomeDetail/)
+  assert.doesNotMatch(statusHelpers, /resultStatus/)
+  assert.doesNotMatch(panel, /outcomeDetail/)
+  assert.doesNotMatch(panel, /resultStatus/)
+
+  const css = await read('src/components/UsagePanel.css')
+  assert.match(css, /usage-agent-run-status--done/)
+  assert.match(css, /usage-agent-run-note/)
+
+  const events = [
+    { kind: 'phase', phase: 'verify' },
+    { kind: 'tool_result', toolOk: true },
+    { kind: 'tool_result', toolOk: true },
+    { kind: 'tool_result', toolOk: false }
+  ]
+  let toolOk = 0
+  let toolFail = 0
+  for (const event of events) {
+    if (event.kind === 'tool_result' && typeof event.toolOk === 'boolean') {
+      if (event.toolOk) toolOk += 1
+      else toolFail += 1
+    }
+  }
+  assert.equal(toolOk, 2)
+  assert.equal(toolFail, 1)
+
+  const traceSrc = await read('electron/main/ai/agentRunTrace.ts')
+  assert.match(traceSrc, /export type AgentRunStatus = 'running' \| 'done' \| 'error' \| 'cancelled'/)
+  assert.match(traceSrc, /event\.kind === 'run_end'/)
+  assert.match(traceSrc, /run\.status = 'done'/)
+  assert.doesNotMatch(traceSrc, /'success'/)
+  assert.doesNotMatch(traceSrc, /'partial'/)
+  assert.doesNotMatch(traceSrc, /'incomplete'/)
+  assert.doesNotMatch(traceSrc, /outcomeDetail/)
+  assert.doesNotMatch(traceSrc, /resultStatus/)
+
+  const usage = await read('electron/main/ai/usage.ts')
+  assert.match(usage, /export type UsageEventStatus = 'ok' \| 'error'/)
+  assert.doesNotMatch(usage, /AgentRunStatus/)
+
+  const chat = await read('src/components/ChatPanel.tsx')
+  assert.match(chat, /message\.id === streamAssistantId \? normalized : message/)
+  assert.doesNotMatch(chat, /実行終了/)
+  assert.doesNotMatch(chat, /onChatStreamEvent/)
+})
+
 test('Agent Run Trace: registered in run-all-tests', async () => {
   const runAll = await read('scripts/run-all-tests.mjs')
   assert.match(runAll, /agent-run-trace\.test\.mjs/)
