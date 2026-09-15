@@ -1,8 +1,8 @@
 # saforall AI パイプライン仕様（AI Router）
 
-実装の正本。
+実装の正本（AI Router / Provider / Usage の意味論）。永続化・秘密情報の配置は [ARCHITECTURE.md](./ARCHITECTURE.md) / [DESIGN.md](./DESIGN.md) も参照。
 
-関連: [設計書 §7](./DESIGN.md#7-ai-サブシステム設計目標) / [仕様書](./SPECIFICATION.md)
+関連: [設計書 §7](./DESIGN.md#7-ai-サブシステム設計目標) / [仕様書](./SPECIFICATION.md) / [アーキテクチャ概要](./ARCHITECTURE.md) / [Packaging](./PACKAGING.md)
 
 ---
 
@@ -66,12 +66,12 @@ Cursor Pro+ 契約は開発者向け。ユーザー向け API 費用として分
 
 ### 推定コスト事前判定
 
-実行前に `UsageService::estimateRequestUsd` で概算し、
+実行前に残予算と照合する（開発時の PHP 経路では `UsageService::estimateRequestUsd` 等）。足りなければ Auto は別 Provider へフォールバック、固定選択は `BUDGET_EXCEEDED` / `USER_BUDGET_EXCEEDED`。
+
+照合対象:
 
 - Provider 残予算
 - ユーザープラン残予算
-
-の両方と比較する。足りなければ Auto は別 Provider へフォールバック、固定選択は `BUDGET_EXCEEDED` / `USER_BUDGET_EXCEEDED`。
 
 ### ユーザープラン（販売時）
 
@@ -90,13 +90,30 @@ Provider 予算とユーザープランは別管理。
 
 ## 3. エンジン
 
-| エンジン | 用途 | 接続 |
+| エンジン | 用途 | 接続（概要） |
 | --- | --- | --- |
-| **OpenAI** | コード生成・通常の修正・Agent（tools） | PHP `LlmClient` |
-| **Gemini** | 簡単な質問・要約・別視点 | PHP `GeminiClient` |
-| **Claude** | 設計・大規模解析・レビュー | PHP `ClaudeClient`（Anthropic Messages） |
-| **Cursor** | 開発 Agent（明示選択） | Electron `@cursor/sdk` |
-| **Workers AI** | 極安補助（オプトイン） | PHP `LlmClient` + Cloudflare |
+| **OpenAI** | コード生成・通常の修正・Agent（tools） | 配布: Electron Main 直呼び / 開発任意: PHP `LlmClient` |
+| **Gemini** | 簡単な質問・要約・別視点（通常 LLM）。Agent/tool は未対応 | 配布: Main 直呼び / 開発任意: PHP `GeminiClient` |
+| **Claude** | 設計・大規模解析・レビュー・Agent（tools） | 配布: Main 直呼び / 開発任意: PHP `ClaudeClient`（Anthropic Messages） |
+| **Cursor** | 開発 Agent（明示選択） | Electron `@cursor/sdk`（Main） |
+| **Workers AI** | 極安補助（オプトイン・通常 LLM）。Agent/tool は未対応 | 配布: Main 経路 / 開発任意: PHP `LlmClient` + Cloudflare |
+
+### 3.1 実行経路（配布と開発）
+
+**配布版（必須経路）**
+
+- 実行主体は **Electron Main**（Router / Failover / LLM 直呼び / toolAgent / Cursor SDK）
+- Provider API へは Main から直接接続する（PHP 経由は必須ではない）
+- packaged インストールでは既定で PHP を probe しない（`shouldProbePhpBackend`）
+- XAMPP / PHP / MySQL は **配布必須ではない**
+
+**開発時（互換・任意）**
+
+- XAMPP（Apache + PHP + MySQL）による互換 REST / LLM プロキシが利用可能
+- `SAFORALL_API_BASE_URL` を明示した場合など、PHP 経路を使用できる
+- Electron 側の `localApi` によるローカル JSON 永続化も併用しうる
+
+PHP / MySQL を廃止したわけではない。**配布版の必須経路ではなく、開発・互換バックエンドとして存在する。**
 
 UI（固定選択）:
 
@@ -135,6 +152,7 @@ Auto 既定の有効リスト: `["openai","gemini","claude"]`
 | Agent（ツール実行） | **OpenAI または Claude**（Gemini / Workers 不可） |
 
 希望エンジンが無効・未設定・予算しきい値超過 → 有効な別エンジンへフォールバック。
+Agent の Failover 候補も **OpenAI / Claude** に限定する（`fallbacksForAgent`）。
 
 ---
 
@@ -142,28 +160,62 @@ Auto 既定の有効リスト: `["openai","gemini","claude"]`
 
 | キー | 意味 |
 | --- | --- |
-| `llm.claude.api_key` | Anthropic API Key（サーバーのみ。ブラウザへ返さない） |
+| `llm.claude.api_key` | Anthropic API Key（Main の設定 / Vault。Renderer へ生値を渡さない） |
 | `llm.claude.model` / `llm.claude.models` | 既定・候補 |
 | `llm.claude.base_url` | 既定 `https://api.anthropic.com` |
 | `cost.claude.monthly_usd` | 月上限（既定 10） |
 
-マイグレーション: `server/sql/migration_claude_router.sql`
+開発時 PHP 経路向けマイグレーション: `server/sql/migration_claude_router.sql`
 
 ---
 
 ## 6. 秘密情報
 
-API キーは `settings` に保存し、GET `/settings` では `_set` フラグのみ返す。  
-Electron メインプロセスのみ `X-Saforall-Client: electron-main` で route 時に provider 秘密を受け取る。
+- **配布:** API キー / Credential は Electron Main の `userData`（`settings-cache.json` / `credentials-vault.json`）で管理する。Renderer には生値を渡さない（マスク / `_set` / fingerprint 等）
+- **開発:** PHP / MySQL `settings` 経路も利用しうる。GET `/settings` では `_set` フラグのみ返す、などの既存境界を維持する
+- 開発時に PHP へ秘密を渡す場合も、Electron メインプロセス側の制御下で行い、Renderer に生値を公開しない
+
+詳細な配置は [ARCHITECTURE.md](./ARCHITECTURE.md) を正とする。暗号化方式の再設計は本節の対象外。
 
 ---
 
-## 7. 使用量記録
+## 7. 使用量記録（UsageEvent）
 
-`ai_usage` に engine / model / tokens / estimated_usd を記録。  
-`ai_route_log` に Router 判定（engine / task / fallback / 推定コスト）を記録。  
-Usage 画面でエンジン別・タスク別集計と **振り分けヒント** を表示する。  
-バーは 70% warn / 85%+ danger。ユーザープラン枠も表示。
+### 7.1 意味論
+
+**1 UsageEvent = 1 provider attempt**（1 回の provider 試行）。
+
+Failover 時も、各 attempt の UsageEvent 事実と、Chain / Hop / Final などの Failover Analysis は **同一概念として扱わない**。
+
+### 7.2 母集団（混同しない）
+
+| 母集団 | 概要 |
+| --- | --- |
+| **Month** | 月フィルタ後の UsageEvent（例: Provider Status / Daily / Hourly） |
+| **Raw** | 現在保持中の Raw UsageEvent（例: Completeness / Rolling / Provider×Model / Metrics / Billing Mode） |
+| **Daily Aggregate** | 長期の日次集計（`usage-daily.json`。Raw とは別） |
+| **Failover Analysis** | Chain / Hop / Final* などの Chain 単位分析（UsageEvent 事実表そのものではない） |
+
+**Month / Raw / Daily Aggregate / Failover Analysis は同一母集団ではない。**
+
+### 7.3 Raw retention
+
+- 保存: `userData/local-db/usage-events.json`（実装上の Raw）
+- 保持: **7 日** かつ最大 **10000** events（`RAW_RETENTION_DAYS` / `RAW_MAX_EVENTS`）
+- API 等で扱う `allEvents` は **現在保持されている Raw** であり、**全期間の完全履歴ではない**（`allEvents` ≠ 全期間の完全な Raw 履歴）
+
+### 7.4 Daily Aggregate
+
+- 保存: `userData/local-db/usage-daily.json`
+- Raw UsageEvent とは別の保存・集計母集団
+- Raw retention（7 日 / 10000）とは別に扱われる長期の日次集計
+
+### 7.5 UI
+
+Usage 画面ではエンジン別・タスク別などの表示や予算バー（70% warn / 85%+ danger）などがある。
+詳細な集計 API 一覧やアルゴリズムは本節では列挙しない（実装および関連テストを正とする）。
+
+開発時 PHP では `ai_usage` / `ai_route_log` などの記録経路もありうるが、配布版の正本的な attempt 記録は上記 UsageEvent / userData JSON である。
 
 ---
 
@@ -171,9 +223,9 @@ Usage 画面でエンジン別・タスク別集計と **振り分けヒント**
 
 | 段階 | 内容 | 状態 |
 | --- | --- | --- |
-| A | Claude でも Agent ツール実行（Anthropic `tool_use`） | **実装中〜完了** |
-| B | OpenAI Codex 系モデルを Coding 優先候補に | **実装中〜完了** |
-| C | ルート／Agent の運用ログで振り分け改善 | **Usage 画面に集計・ヒント実装** |
+| A | Claude でも Agent ツール実行（Anthropic `tool_use`） | **実装済** |
+| B | OpenAI Codex 系モデルを Coding 優先候補に | **実装済** |
+| C | ルート／Agent の運用ログで振り分け改善 | **Usage 画面に集計実装** |
 | D | マルチユーザー認証・販売課金 | 後続 |
 | E | Claude Code / Codex CLI 級の外部長時間 Agent 連携 | V2 |
 
@@ -182,5 +234,5 @@ Usage 画面でエンジン別・タスク別集計と **振り分けヒント**
 ## 9. V2 以降（外部 Agent）
 
 - Claude Code / Codex CLI を saforall から起動する「外部 Agent」連携
-- マルチユーザー認証とユーザ単位の `user_ai_usage` テーブル分離
+- マルチユーザー認証とユーザ単位の usage 分離
 - 毎日使いの品質は Usage / Agent ログを見て Router ルールを調整する
