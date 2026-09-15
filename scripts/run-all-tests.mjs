@@ -15,6 +15,7 @@ const tests = [
   'scripts/codebase-mentions.test.mjs',
   'scripts/agent-verify.test.mjs',
   'scripts/agent-mode.test.mjs',
+  'scripts/agent-run-trace.test.mjs',
   'scripts/gh-pr.test.mjs',
   'scripts/gh-auth.test.mjs',
   'scripts/apply-proposals.test.mjs',

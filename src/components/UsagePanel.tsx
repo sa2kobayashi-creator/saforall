@@ -783,6 +783,77 @@ function barClass(pct: number): string {
   return 'usage-bar-fill'
 }
 
+type AgentRunTraceKindView =
+  | 'run_start'
+  | 'phase'
+  | 'tool_call'
+  | 'tool_result'
+  | 'checkpoint'
+  | 'provider_attempt'
+  | 'run_end'
+  | 'run_error'
+  | 'run_cancelled'
+
+type AgentRunTraceEventView = {
+  at: string
+  kind: AgentRunTraceKindView
+  phase?: string
+  toolName?: string
+  toolOk?: boolean
+  checkpointStep?: number
+  provider?: string
+  model?: string
+  usageRequestId?: string
+  failoverId?: string | null
+  errorCode?: string
+}
+
+type AgentRunView = {
+  runId: string
+  sessionId: number | null
+  mode: 'agent'
+  engine: string
+  model: string
+  provider: string
+  startedAt: string
+  endedAt: string | null
+  status: 'running' | 'done' | 'error' | 'cancelled'
+  usageRequestIds: string[]
+  failoverIds: string[]
+  events: AgentRunTraceEventView[]
+}
+
+function formatAgentRunClock(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString('ja-JP', { hour12: false })
+}
+
+function summarizeAgentRun(run: AgentRunView): {
+  lastPhase: string
+  tools: string
+  checkpoints: number
+  attempts: number
+} {
+  let lastPhase = '—'
+  const toolNames: string[] = []
+  let checkpoints = 0
+  let attempts = 0
+  for (const event of run.events) {
+    if (event.kind === 'phase' && event.phase) lastPhase = event.phase
+    if (event.kind === 'tool_call' && event.toolName) toolNames.push(event.toolName)
+    if (event.kind === 'checkpoint') checkpoints += 1
+    if (event.kind === 'provider_attempt') attempts += 1
+  }
+  return {
+    lastPhase,
+    tools: toolNames.length ? toolNames.join(' → ') : '—',
+    checkpoints,
+    attempts
+  }
+}
+
 export function UsagePanel({
   open,
   backendConnected,
@@ -794,6 +865,7 @@ export function UsagePanel({
   const [data, setData] = useState<UsagePayload | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [agentRuns, setAgentRuns] = useState<AgentRunView[]>([])
   const [routerMonth, setRouterMonth] = useState(() => currentUsageMonth())
   const [recentVisible, setRecentVisible] = useState(RECENT_PAGE_SIZE)
   const usageMonth = data?.month?.slice(0, 7) || currentUsageMonth()
@@ -971,10 +1043,20 @@ export function UsagePanel({
     setLoading(true)
     setError(null)
     try {
-      const result = await window.saforall.request<UsagePayload>(
-        'GET',
-        `/ai/usage?month=${encodeURIComponent(routerMonth)}`
-      )
+      const [result, runsResult] = await Promise.all([
+        window.saforall.request<UsagePayload>(
+          'GET',
+          `/ai/usage?month=${encodeURIComponent(routerMonth)}`
+        ),
+        window.saforall
+          .request<{ runs?: AgentRunView[] }>('GET', '/ai/agent-runs')
+          .catch(() => ({ ok: false as const, data: undefined }))
+      ])
+      if (runsResult.ok && Array.isArray(runsResult.data?.runs)) {
+        setAgentRuns(runsResult.data.runs)
+      } else {
+        setAgentRuns([])
+      }
       if (!result.ok || !result.data) {
         setError(result.error?.message ?? '使用量の取得に失敗しました')
         setData(null)
@@ -1030,6 +1112,70 @@ export function UsagePanel({
           </p>
         )}
         {error && <p className="usage-error">{error}</p>}
+
+        <section className="usage-agent-runs" aria-label="Agent Run Trace">
+          <div className="usage-total-row">
+            <strong>Agent Run Trace</strong>
+            <span className="usage-muted">{agentRuns.length} 件</span>
+          </div>
+          <p className="usage-summary-line">
+            mode=agent の toolAgent 実行タイムライン（metadata のみ）。UsageEvent とは別です。
+          </p>
+          {agentRuns.length === 0 ? (
+            <p className="usage-muted">まだ Agent Run はありません。</p>
+          ) : (
+            <ul className="usage-agent-run-list">
+              {agentRuns.slice(0, 20).map((run) => {
+                const summary = summarizeAgentRun(run)
+                return (
+                  <li key={run.runId} className="usage-agent-run">
+                    <div className="usage-agent-run-head">
+                      <span className={`usage-agent-run-status usage-agent-run-status--${run.status}`}>
+                        {run.status}
+                      </span>
+                      <span>
+                        {run.provider || run.engine}/{run.model || '—'}
+                      </span>
+                    </div>
+                    <div className="usage-agent-run-meta">
+                      {formatAgentRunClock(run.startedAt)} → {formatAgentRunClock(run.endedAt)}
+                    </div>
+                    <div className="usage-agent-run-meta">
+                      phase {summary.lastPhase}
+                      {' · '}
+                      tools {summary.tools}
+                      {' · '}
+                      checkpoint {summary.checkpoints}
+                      {' · '}
+                      failover {run.failoverIds.length ? run.failoverIds.join(', ') : '—'}
+                      {' · '}
+                      attempts {summary.attempts || run.usageRequestIds.length}
+                    </div>
+                    <details className="usage-agent-run-details">
+                      <summary>ステップ</summary>
+                      <ol>
+                        {run.events.map((event, index) => (
+                          <li key={`${run.runId}-${index}`}>
+                            {event.kind}
+                            {event.phase ? ` · ${event.phase}` : ''}
+                            {event.toolName ? ` · ${event.toolName}` : ''}
+                            {typeof event.toolOk === 'boolean' ? (event.toolOk ? ' ok' : ' fail') : ''}
+                            {typeof event.checkpointStep === 'number'
+                              ? ` · cp#${event.checkpointStep}`
+                              : ''}
+                            {event.usageRequestId ? ` · usage ${event.usageRequestId}` : ''}
+                            {event.failoverId ? ` · failover ${event.failoverId}` : ''}
+                            {event.errorCode ? ` · ${event.errorCode}` : ''}
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
 
         {data && (
           <>

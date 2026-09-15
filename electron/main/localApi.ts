@@ -152,6 +152,15 @@ export async function localApiRequest<T = unknown>(
       }
     }
 
+    if (pathname === '/ai/agent-runs' && m === 'GET') {
+      const { listAgentRuns } = await import('./ai/agentRunTrace')
+      const runs = await listAgentRuns()
+      return ok({
+        runs,
+        note: 'Agent Run Trace（metadata-only）。UsageEvent とは別。retention は未固定。'
+      }) as ApiResponse<T>
+    }
+
     if (pathname === '/ai/usage' && m === 'GET') {
       const summary = await getLocalUsageSummary()
       const feedback = await getFeedbackSummary(7)

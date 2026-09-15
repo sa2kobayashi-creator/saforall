@@ -202,6 +202,11 @@ export async function apiRequest<T = unknown>(
   body?: unknown,
   options?: ApiRequestOptions
 ): Promise<ApiResponse<T>> {
+  const pathName = path.replace(/^\//, '').split('?')[0]
+  if (method.toUpperCase() === 'GET' && pathName === 'ai/agent-runs') {
+    const { localApiRequest } = await import('./localApi')
+    return localApiRequest<T>(method, path, body)
+  }
   if (phpOnline) {
     try {
       const result = await fetchJson<T>(method, path, body, options)
@@ -408,21 +413,64 @@ type RouteData = {
   } | null
 }
 
+type AgentTraceHooks = {
+  streamRequestId?: string
+  startAgentTrace: (meta: {
+    sessionId: number | null
+    engine: string
+    model: string
+    provider: string
+  }) => Promise<void>
+  wrapAgent: <T>(fn: () => Promise<T>) => Promise<T>
+}
+
 export async function streamChat(
   body: unknown,
   onEvent: (event: ChatStreamEvent) => void,
-  signal?: AbortSignal | null
+  signal?: AbortSignal | null,
+  streamRequestId?: string
 ): Promise<void> {
   const { isChatAbortError } = await import('./chatAbort')
   let terminal = false
+  let agentTraceActive = false
+  let observeChain: Promise<void> = Promise.resolve()
+  const runId = typeof streamRequestId === 'string' ? streamRequestId.trim() : ''
   const emit = (event: ChatStreamEvent): void => {
     if (event.type === 'done' || event.type === 'error' || event.type === 'cancelled') {
       terminal = true
     }
     onEvent(event)
+    if (agentTraceActive && runId) {
+      observeChain = observeChain
+        .then(async () => {
+          const { observeAgentStreamEvent } = await import('./ai/agentRunTrace')
+          await observeAgentStreamEvent(runId, event)
+        })
+        .catch(() => undefined)
+    }
+  }
+  const trace: AgentTraceHooks = {
+    streamRequestId: runId || undefined,
+    startAgentTrace: async (meta) => {
+      if (!runId) return
+      const { beginAgentRun } = await import('./ai/agentRunTrace')
+      await beginAgentRun({
+        runId,
+        sessionId: meta.sessionId,
+        engine: meta.engine,
+        model: meta.model,
+        provider: meta.provider
+      })
+      agentTraceActive = true
+    },
+    wrapAgent: async (fn) => {
+      if (!runId) return fn()
+      const { runInAgentRunContext } = await import('./ai/agentRunTrace')
+      return runInAgentRunContext(runId, fn)
+    }
   }
   try {
-    await streamChatInner(body, emit, signal)
+    await streamChatInner(body, emit, signal, trace)
   } catch (error) {
     if (isChatAbortError(error) || signal?.aborted) {
       if (!terminal) {
@@ -431,16 +479,13 @@ export async function streamChat(
           message: 'ユーザーが応答を取り消しました'
         })
       }
-      return
-    }
-    if (!terminal) {
+    } else if (!terminal) {
       emit({
         type: 'error',
         code: 'STREAM_FAILED',
         message: error instanceof Error ? error.message : String(error)
       })
     }
-    return
   }
   if (!terminal) {
     if (signal?.aborted) {
@@ -456,12 +501,22 @@ export async function streamChat(
       })
     }
   }
+  if (agentTraceActive && runId) {
+    await observeChain
+    try {
+      const { finalizeAgentRunIfOpen } = await import('./ai/agentRunTrace')
+      await finalizeAgentRunIfOpen(runId, signal?.aborted ? 'cancelled' : 'error')
+    } catch {
+      // ignore
+    }
+  }
 }
 
 async function streamChatInner(
   body: unknown,
   onEvent: (event: ChatStreamEvent) => void,
-  signal?: AbortSignal | null
+  signal?: AbortSignal | null,
+  trace?: AgentTraceHooks
 ): Promise<void> {
   const { throwIfChatAborted, isChatAbortError } = await import('./chatAbort')
   const requestBody =
@@ -604,37 +659,47 @@ async function streamChatInner(
       }
 
       if (canToolAgent && decided.provider) {
-        onEvent({
-          type: 'agent_phase',
-          phase: 'plan',
-          note: 'ツール Agent 起動（edit_file / run_shell）'
-        })
-        onEvent({
-          type: 'delta',
-          text: '🔧 ツール Agent を開始します。説明だけで終わらず、ツールで編集・検証します。\n'
-        })
-        const { runToolAgent } = await import('./toolAgent')
-        const agentCtx = extractAgentRuntimeContext(requestBody)
-        await runToolAgent({
-          workspacePath,
-          baseUrl: decided.provider.base_url,
-          model: decided.model,
-          extraHeaders: decided.provider.extra_headers ?? [],
-          messages: decided.provider.messages ?? [],
-          engine: decided.engine,
-          taskType: decided.task_type,
+        const provider = decided.provider
+        await trace?.startAgentTrace({
           sessionId: decided.session_id,
-          problems: agentCtx.problems,
-          anchorPaths: agentCtx.anchors,
-          signal: signal ?? undefined,
-          onEvent,
-          complete: async (content) =>
-            completeLocalRoute({
-              sessionId: decided.session_id,
-              content,
-              engine: decided.engine,
-              model: decided.model
-            })
+          engine: decided.engine,
+          model: decided.model,
+          provider: decided.engine
+        })
+        const wrapAgent = trace?.wrapAgent ?? (async <T>(fn: () => Promise<T>) => fn())
+        await wrapAgent(async () => {
+          onEvent({
+            type: 'agent_phase',
+            phase: 'plan',
+            note: 'ツール Agent 起動（edit_file / run_shell）'
+          })
+          onEvent({
+            type: 'delta',
+            text: '🔧 ツール Agent を開始します。説明だけで終わらず、ツールで編集・検証します。\n'
+          })
+          const { runToolAgent } = await import('./toolAgent')
+          const agentCtx = extractAgentRuntimeContext(requestBody)
+          await runToolAgent({
+            workspacePath,
+            baseUrl: provider.base_url,
+            model: decided.model,
+            extraHeaders: provider.extra_headers ?? [],
+            messages: provider.messages ?? [],
+            engine: decided.engine,
+            taskType: decided.task_type,
+            sessionId: decided.session_id,
+            problems: agentCtx.problems,
+            anchorPaths: agentCtx.anchors,
+            signal: signal ?? undefined,
+            onEvent,
+            complete: async (content) =>
+              completeLocalRoute({
+                sessionId: decided.session_id,
+                content,
+                engine: decided.engine,
+                model: decided.model
+              })
+          })
         })
         return
       }
@@ -851,6 +916,14 @@ async function streamChatInner(
   }
 
   if (canToolAgent && decided.provider) {
+    await trace?.startAgentTrace({
+      sessionId: decided.session_id,
+      engine: decided.engine,
+      model: decided.model,
+      provider: decided.engine
+    })
+    const wrapAgent = trace?.wrapAgent ?? (async <T>(fn: () => Promise<T>) => fn())
+    await wrapAgent(async () => {
     const requestedEngine =
       typeof requestBody.engine === 'string' ? requestBody.engine.trim().toLowerCase() : 'auto'
     const tryToolAgent = async (
@@ -990,6 +1063,7 @@ async function streamChatInner(
       type: 'error',
       code: 'TOOL_AGENT_FAILED',
       message: first.errorMessage ?? 'Tool Agent の実行に失敗しました'
+    })
     })
     return
   }

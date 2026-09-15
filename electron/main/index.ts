@@ -500,7 +500,8 @@ ipcMain.handle(
         (streamEvent) => {
           event.sender.send('api:chatStream:event', { requestId, event: streamEvent })
         },
-        signal
+        signal,
+        requestId
       )
       return true
     } finally {

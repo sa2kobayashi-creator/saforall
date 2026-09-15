@@ -360,7 +360,7 @@ export async function executeAiWithTools(
           status === 'ok' && lastOk
             ? lastOk.model
             : input.model || getProvider(providerId).availableModels()[0] || ''
-        await recordUsage({
+        const usageEvent = await recordUsage({
           provider: providerId,
           model,
           inputTokens: status === 'ok' && lastOk ? lastOk.usage.inputTokens : 0,
@@ -381,6 +381,18 @@ export async function executeAiWithTools(
             mode: 'agent'
           })
         })
+        try {
+          const { noteAgentRunProviderAttempt } = await import('./agentRunTrace')
+          await noteAgentRunProviderAttempt({
+            usageRequestId: usageEvent.requestId,
+            provider: String(providerId),
+            model,
+            status: usageEvent.status,
+            failoverId: usageEvent.failover?.failoverId ?? null
+          })
+        } catch {
+          // Trace must never break Usage recording
+        }
       }
     }
   )
