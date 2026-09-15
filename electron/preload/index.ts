@@ -707,6 +707,20 @@ const api = {
 
     return { requestId, done }
   },
+  onChatStreamEvent: (
+    callback: (payload: { requestId: string; event: ChatStreamEvent }) => void
+  ) => {
+    const listener = (
+      _event: unknown,
+      payload: { requestId: string; event: ChatStreamEvent }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('api:chatStream:event', listener)
+    return () => {
+      ipcRenderer.removeListener('api:chatStream:event', listener)
+    }
+  },
   beginChatStream: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke('api:chatStream:begin', requestId),
   cancelChatStream: (requestId: string): Promise<boolean> =>

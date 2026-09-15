@@ -293,6 +293,44 @@ test('Agent Run Trace: wiring stays inside mode=agent toolAgent', async () => {
   assert.match(panel, /\/ai\/agent-runs/)
 })
 
+test('Agent Run Trace: refresh after terminal stream events when panel is open', async () => {
+  const panel = await read('src/components/UsagePanel.tsx')
+  assert.match(panel, /loadAgentRuns/)
+  assert.match(panel, /onChatStreamEvent/)
+  const subStart = panel.indexOf('window.saforall.onChatStreamEvent')
+  assert.ok(subStart >= 0)
+  const sub = panel.slice(subStart, subStart + 900)
+  assert.match(sub, /'done'/)
+  assert.match(sub, /'error'/)
+  assert.match(sub, /'cancelled'/)
+  assert.match(sub, /refreshed\.has/)
+  assert.match(sub, /void loadAgentRuns\(\)/)
+  assert.doesNotMatch(panel, /setInterval/)
+  const closedGuard = panel.indexOf('if (!open) return')
+  const subscribeOpen = panel.indexOf('if (!open) return', closedGuard + 1)
+  assert.ok(closedGuard >= 0 && subscribeOpen > closedGuard)
+
+  const preload = await read('electron/preload/index.ts')
+  assert.match(preload, /onChatStreamEvent:/)
+  assert.match(preload, /api:chatStream:event/)
+
+  const api = await read('electron/main/api.ts')
+  const emitStart = api.indexOf('const emit = (event: ChatStreamEvent)')
+  assert.ok(emitStart >= 0)
+  const emit = api.slice(emitStart, emitStart + 1600)
+  const persistIdx = emit.indexOf('await observeAgentStreamEvent')
+  const terminalOnEvent = emit.indexOf('onEvent(event)', persistIdx)
+  assert.ok(persistIdx >= 0)
+  assert.ok(terminalOnEvent > persistIdx)
+
+  const chat = await read('src/components/ChatPanel.tsx')
+  assert.match(chat, /message\.id === streamAssistantId \? normalized : message/)
+  assert.doesNotMatch(chat, /onChatStreamEvent/)
+
+  const traceSrc = await read('electron/main/ai/agentRunTrace.ts')
+  assert.doesNotMatch(traceSrc, /outcomeDetail/)
+})
+
 test('Agent Run Trace: Usage / Failover / Checkpoint files not redesigned', async () => {
   const usage = await read('electron/main/ai/usage.ts')
   assert.match(usage, /export type UsageEventStatus = 'ok' \| 'error'/)

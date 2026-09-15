@@ -436,18 +436,38 @@ export async function streamChat(
   let observeChain: Promise<void> = Promise.resolve()
   const runId = typeof streamRequestId === 'string' ? streamRequestId.trim() : ''
   const emit = (event: ChatStreamEvent): void => {
-    if (event.type === 'done' || event.type === 'error' || event.type === 'cancelled') {
+    const isTerminal =
+      event.type === 'done' || event.type === 'error' || event.type === 'cancelled'
+    if (isTerminal) {
       terminal = true
     }
-    onEvent(event)
     if (agentTraceActive && runId) {
       observeChain = observeChain
         .then(async () => {
           const { observeAgentStreamEvent } = await import('./ai/agentRunTrace')
           await observeAgentStreamEvent(runId, event)
+          if (isTerminal) {
+            try {
+              const { finalizeAgentRunIfOpen } = await import('./ai/agentRunTrace')
+              await finalizeAgentRunIfOpen(
+                runId,
+                event.type === 'cancelled' ? 'cancelled' : 'error'
+              )
+            } catch {
+              // persist already attempted
+            }
+            onEvent(event)
+          }
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (isTerminal) onEvent(event)
+        })
+      if (!isTerminal) {
+        onEvent(event)
+      }
+      return
     }
+    onEvent(event)
   }
   const trace: AgentTraceHooks = {
     streamRequestId: runId || undefined,

@@ -1034,6 +1034,20 @@ export function UsagePanel({
     setDismissedHintCodes(dismissRouterHintCode(usageMonth, code))
   }
 
+  const loadAgentRuns = useCallback(async () => {
+    if (!open) return
+    try {
+      const runsResult = await window.saforall
+        .request<{ runs?: AgentRunView[] }>('GET', '/ai/agent-runs')
+        .catch(() => ({ ok: false as const, data: undefined }))
+      if (runsResult.ok && Array.isArray(runsResult.data?.runs)) {
+        setAgentRuns(runsResult.data.runs)
+      }
+    } catch {
+      // keep previously shown runs
+    }
+  }, [open])
+
   const load = useCallback(async () => {
     if (!backendConnected) {
       setError('接続がないため使用量を取得できません。ステータスバーから再確認してください')
@@ -1076,6 +1090,33 @@ export function UsagePanel({
     if (!open) return
     void load()
   }, [open, load])
+
+  useEffect(() => {
+    if (!open) return
+    if (typeof window.saforall.onChatStreamEvent !== 'function') return
+    const agentRequestIds = new Set<string>()
+    const refreshed = new Set<string>()
+    const unsubscribe = window.saforall.onChatStreamEvent((payload) => {
+      const event = payload.event
+      if (
+        event.type === 'agent_phase' ||
+        event.type === 'tool_call' ||
+        event.type === 'agent_checkpoint' ||
+        (event.type === 'route' && event.mode === 'agent')
+      ) {
+        agentRequestIds.add(payload.requestId)
+        return
+      }
+      if (event.type !== 'done' && event.type !== 'error' && event.type !== 'cancelled') {
+        return
+      }
+      if (!agentRequestIds.has(payload.requestId)) return
+      if (refreshed.has(payload.requestId)) return
+      refreshed.add(payload.requestId)
+      void loadAgentRuns()
+    })
+    return unsubscribe
+  }, [open, loadAgentRuns])
 
   if (!open) return null
 
