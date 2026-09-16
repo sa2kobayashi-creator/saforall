@@ -1748,20 +1748,29 @@ export function ChatPanel({
           if (event.type === 'error') {
             turnClosed = true
             streamFailed = event.message
+            const errorLine = `エラー: ${formatAiUserError(event.message)}`
             setError(formatAiUserError(event.message))
             setMessages((prev) => {
-              const withoutStream = prev.filter(
-                (message) => message.id !== streamAssistantId
-              )
+              const existing = prev.find((message) => message.id === streamAssistantId)
+              if (existing) {
+                if (existing.content.includes(errorLine)) return prev
+                const suffix = existing.content.trim() ? `\n\n${errorLine}` : errorLine
+                return prev.map((message) =>
+                  message.id === streamAssistantId
+                    ? { ...message, content: `${message.content.trimEnd()}${suffix}` }
+                    : message
+                )
+              }
               return [
-                ...withoutStream,
+                ...prev,
                 {
-                  id: crypto.randomUUID(),
+                  id: streamAssistantId,
                   role: 'assistant',
-                  content: `エラー: ${formatAiUserError(event.message)}`
+                  content: errorLine
                 }
               ]
             })
+            return
           }
         }
       },
@@ -1821,7 +1830,12 @@ export function ChatPanel({
       setError(message)
       setMessages((prev) => {
         const last = prev[prev.length - 1]
-        if (last?.role === 'assistant' && last.content.startsWith('エラー:')) return prev
+        if (
+          last?.role === 'assistant' &&
+          (last.content.startsWith('エラー:') || last.content.includes('\n\nエラー:'))
+        ) {
+          return prev
+        }
         return [
           ...prev,
           {

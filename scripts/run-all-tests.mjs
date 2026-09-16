@@ -51,6 +51,7 @@ const tests = [
   'scripts/router-classify-context.test.mjs',
   'scripts/router-categories.test.mjs',
   'scripts/chat-cancel.test.mjs',
+  'scripts/chat-error-stream.test.mjs',
   'scripts/chat-latency.test.mjs',
   'scripts/session-heal.test.mjs',
   'scripts/edit-guards.test.mjs',
