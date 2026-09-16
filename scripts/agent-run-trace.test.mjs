@@ -415,6 +415,60 @@ test('Agent Run Trace: done UI is stream-end, not work success', async () => {
   assert.doesNotMatch(chat, /onChatStreamEvent/)
 })
 
+function agentRunTraceViewState(loaded, runCount) {
+  if (!loaded) return 'loading'
+  return runCount > 0 ? 'list' : 'empty'
+}
+
+test('UsagePanel: Trace initial fetch is independent of /ai/usage', async () => {
+  assert.equal(agentRunTraceViewState(false, 0), 'loading')
+  assert.equal(agentRunTraceViewState(false, 7), 'loading')
+  assert.equal(agentRunTraceViewState(true, 7), 'list')
+  assert.equal(agentRunTraceViewState(true, 0), 'empty')
+
+  const panel = await read('src/components/UsagePanel.tsx')
+  assert.match(panel, /export function agentRunTraceViewState/)
+  assert.match(panel, /const \[agentRunsLoaded, setAgentRunsLoaded\]/)
+  assert.match(panel, /setAgentRunsLoaded\(true\)/)
+
+  const helper = panel.slice(
+    panel.indexOf('export function agentRunTraceViewState'),
+    panel.indexOf('export function UsagePanel')
+  )
+  assert.match(helper, /if \(!loaded\) return 'loading'/)
+  assert.match(helper, /runCount > 0 \? 'list' : 'empty'/)
+
+  const sectionStart = panel.indexOf('aria-label="Agent Run Trace"')
+  assert.ok(sectionStart >= 0)
+  const section = panel.slice(sectionStart, sectionStart + 1800)
+  assert.match(section, /traceView === 'loading'/)
+  assert.match(section, /読み込み中/)
+  assert.match(section, /traceView === 'empty'/)
+  assert.match(section, /まだ Agent Run はありません。/)
+  assert.doesNotMatch(section, /agentRuns\.length === 0 \?/)
+
+  const loadStart = panel.indexOf('const load = useCallback')
+  const loadEnd = panel.indexOf('}, [backendConnected, routerMonth])')
+  assert.ok(loadStart >= 0 && loadEnd > loadStart)
+  const loadFn = panel.slice(loadStart, loadEnd)
+  assert.match(loadFn, /\/ai\/usage/)
+  assert.doesNotMatch(loadFn, /Promise\.all/)
+  assert.doesNotMatch(loadFn, /\/ai\/agent-runs/)
+  assert.doesNotMatch(loadFn, /setAgentRuns/)
+
+  const openStart = panel.indexOf('void loadAgentRuns()')
+  const openSlice = panel.slice(openStart, openStart + 80)
+  assert.match(openSlice, /void loadAgentRuns\(\)/)
+  assert.match(openSlice, /void load\(\)/)
+
+  const streamStart = panel.indexOf('window.saforall.onChatStreamEvent')
+  const stream = panel.slice(streamStart, streamStart + 900)
+  assert.match(stream, /void loadAgentRuns\(\)/)
+  assert.match(stream, /'done'/)
+  assert.match(stream, /'error'/)
+  assert.match(stream, /'cancelled'/)
+})
+
 test('Agent Run Trace: registered in run-all-tests', async () => {
   const runAll = await read('scripts/run-all-tests.mjs')
   assert.match(runAll, /agent-run-trace\.test\.mjs/)

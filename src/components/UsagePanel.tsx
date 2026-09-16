@@ -873,6 +873,15 @@ function agentRunStatusLabel(status: AgentRunView['status']): string {
   return status
 }
 
+/** Renderer-only: unloaded [] is not the same as fetched empty. */
+export function agentRunTraceViewState(
+  loaded: boolean,
+  runCount: number
+): 'loading' | 'empty' | 'list' {
+  if (!loaded) return 'loading'
+  return runCount > 0 ? 'list' : 'empty'
+}
+
 export function UsagePanel({
   open,
   backendConnected,
@@ -885,6 +894,7 @@ export function UsagePanel({
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [agentRuns, setAgentRuns] = useState<AgentRunView[]>([])
+  const [agentRunsLoaded, setAgentRunsLoaded] = useState(false)
   const [routerMonth, setRouterMonth] = useState(() => currentUsageMonth())
   const [recentVisible, setRecentVisible] = useState(RECENT_PAGE_SIZE)
   const usageMonth = data?.month?.slice(0, 7) || currentUsageMonth()
@@ -1061,9 +1071,10 @@ export function UsagePanel({
         .catch(() => ({ ok: false as const, data: undefined }))
       if (runsResult.ok && Array.isArray(runsResult.data?.runs)) {
         setAgentRuns(runsResult.data.runs)
+        setAgentRunsLoaded(true)
       }
     } catch {
-      // keep previously shown runs
+      // keep previously shown runs; do not treat failure as empty
     }
   }, [open])
 
@@ -1076,20 +1087,10 @@ export function UsagePanel({
     setLoading(true)
     setError(null)
     try {
-      const [result, runsResult] = await Promise.all([
-        window.saforall.request<UsagePayload>(
-          'GET',
-          `/ai/usage?month=${encodeURIComponent(routerMonth)}`
-        ),
-        window.saforall
-          .request<{ runs?: AgentRunView[] }>('GET', '/ai/agent-runs')
-          .catch(() => ({ ok: false as const, data: undefined }))
-      ])
-      if (runsResult.ok && Array.isArray(runsResult.data?.runs)) {
-        setAgentRuns(runsResult.data.runs)
-      } else {
-        setAgentRuns([])
-      }
+      const result = await window.saforall.request<UsagePayload>(
+        'GET',
+        `/ai/usage?month=${encodeURIComponent(routerMonth)}`
+      )
       if (!result.ok || !result.data) {
         setError(result.error?.message ?? '使用量の取得に失敗しました')
         setData(null)
@@ -1107,8 +1108,9 @@ export function UsagePanel({
 
   useEffect(() => {
     if (!open) return
+    void loadAgentRuns()
     void load()
-  }, [open, load])
+  }, [open, loadAgentRuns, load])
 
   useEffect(() => {
     if (!open) return
@@ -1139,6 +1141,7 @@ export function UsagePanel({
 
   if (!open) return null
 
+  const traceView = agentRunTraceViewState(agentRunsLoaded, agentRuns.length)
   const totalSpent = data?.total.spent ?? 0
   const totalLimit = data?.total.limit ?? 0
   const totalPct = percent(totalSpent, totalLimit)
@@ -1157,7 +1160,14 @@ export function UsagePanel({
             </p>
           </div>
           <div className="usage-header-actions">
-            <button type="button" onClick={() => void load()} disabled={loading}>
+            <button
+              type="button"
+              onClick={() => {
+                void load()
+                void loadAgentRuns()
+              }}
+              disabled={loading}
+            >
               更新
             </button>
             <button type="button" onClick={onClose}>
@@ -1176,12 +1186,16 @@ export function UsagePanel({
         <section className="usage-agent-runs" aria-label="Agent Run Trace">
           <div className="usage-total-row">
             <strong>Agent Run Trace</strong>
-            <span className="usage-muted">{agentRuns.length} 件</span>
+            <span className="usage-muted">
+              {traceView === 'loading' ? '読み込み中' : `${agentRuns.length} 件`}
+            </span>
           </div>
           <p className="usage-summary-line">
             mode=agent の toolAgent 実行タイムライン（metadata のみ）。UsageEvent とは別です。
           </p>
-          {agentRuns.length === 0 ? (
+          {traceView === 'loading' ? (
+            <p className="usage-muted">Agent Run Trace を読み込み中…</p>
+          ) : traceView === 'empty' ? (
             <p className="usage-muted">まだ Agent Run はありません。</p>
           ) : (
             <ul className="usage-agent-run-list">
