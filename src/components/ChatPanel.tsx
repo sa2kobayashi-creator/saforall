@@ -2180,7 +2180,7 @@ export function ChatPanel({
                   : engine === 'cursor'
                     ? 'Cursor'
                     : engine === 'gemini'
-                      ? 'Gemini（ツール不可）'
+                      ? 'Gemini（ツール Agent 可）'
                       : engine === 'claude'
                         ? 'Claude（ツール Agent 可）'
                         : engine === 'workers'
