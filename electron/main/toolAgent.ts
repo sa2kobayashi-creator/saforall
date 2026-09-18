@@ -431,13 +431,16 @@ function isAgentPhase(value: string): value is AgentPhase {
 }
 
 export function isToolAgentCompatibleEndpoint(engine: string, baseUrl: string, model: string): boolean {
-  if (engine === 'workers' || engine === 'gemini' || engine === 'cursor') {
+  if (engine === 'workers' || engine === 'cursor') {
     return false
   }
   const id = (model || '').trim().toLowerCase()
   if (id.startsWith('@cf/')) return false
   const u = (baseUrl || '').trim().toLowerCase()
-  if (!u || u === 'gemini-native') return false
+  if (engine === 'gemini' || u === 'gemini-native') {
+    return true
+  }
+  if (!u) return false
   if (engine === 'claude' || u.includes('anthropic.com')) {
     return true
   }
@@ -452,6 +455,17 @@ export function isToolAgentCompatibleEndpoint(engine: string, baseUrl: string, m
 function isAnthropicEndpoint(engine: string, baseUrl: string): boolean {
   if (engine === 'claude') return true
   return (baseUrl || '').toLowerCase().includes('anthropic.com')
+}
+
+function isGeminiEndpoint(engine: string, baseUrl: string): boolean {
+  if (engine === 'gemini') return true
+  return (baseUrl || '').trim().toLowerCase() === 'gemini-native'
+}
+
+function agentLlmProvider(engine: string, baseUrl: string): 'openai' | 'claude' | 'gemini' {
+  if (isGeminiEndpoint(engine, baseUrl)) return 'gemini'
+  if (isAnthropicEndpoint(engine, baseUrl)) return 'claude'
+  return 'openai'
 }
 
 export function parseRetryAfterMs(message: string, attempt: number): number {
@@ -471,7 +485,7 @@ async function callAgentLlm(params: {
   sessionId?: number
 }): Promise<ChatCompletionResponse> {
   const { executeAiWithTools } = await import('./ai/router')
-  const provider = isAnthropicEndpoint(params.engine, params.baseUrl) ? 'claude' : 'openai'
+  const provider = agentLlmProvider(params.engine, params.baseUrl)
   return executeAiWithTools({
     provider,
     model: params.model,
@@ -1376,8 +1390,8 @@ export async function runToolAgent(params: ToolAgentParams): Promise<void> {
       type: 'error',
       code: 'AGENT_UNSUPPORTED',
       message:
-        'このエンドポイントはツール Agent 非対応です（Cloudflare Workers AI / Gemini など）。' +
-        '設定で OpenAI または Claude を選んで再実行してください。'
+        'このエンドポイントはツール Agent 非対応です（Cloudflare Workers AI など）。' +
+        '設定で OpenAI、Claude、または Gemini を選んで再実行してください。'
     })
     return
   }

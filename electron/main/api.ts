@@ -666,14 +666,14 @@ async function streamChatInner(
         workspacePath.trim() !== '' &&
         Boolean(decided.provider) &&
         hasUsableLlm(decided.engine) &&
-        (decided.engine === 'openai' || decided.engine === 'claude')
+        (decided.engine === 'openai' || decided.engine === 'claude' || decided.engine === 'gemini')
 
       if (mode === 'agent' && !canToolAgent) {
         onEvent({
           type: 'error',
           code: 'AGENT_TOOLS_UNAVAILABLE',
           message:
-            'ローカル Agent は OpenAI / Claude とワークスペースが必要です。Ask に切り替えるかキーを確認してください。'
+            'ローカル Agent は OpenAI / Claude / Gemini とワークスペースが必要です。Ask に切り替えるかキーを確認してください。'
         })
         return
       }
@@ -879,21 +879,23 @@ async function streamChatInner(
   const mode = typeof decided.mode === 'string' ? decided.mode : 'ask'
   const workspacePath =
     typeof requestBody.workspace_path === 'string' ? requestBody.workspace_path : ''
+  const geminiNative =
+    decided.engine === 'gemini' || decided.provider?.base_url === 'gemini-native'
   const providerOk = Boolean(
     decided.provider &&
       hasUsableLlm(decided.engine) &&
       decided.provider.base_url &&
-      decided.provider.base_url !== 'gemini-native'
+      (geminiNative || decided.provider.base_url !== 'gemini-native')
   )
   const endpointOk =
     providerOk &&
     decided.engine !== 'workers' &&
-    decided.engine !== 'gemini' &&
     !String(decided.model || '')
       .toLowerCase()
       .startsWith('@cf/') &&
     (() => {
       const u = String(decided.provider?.base_url || '').toLowerCase()
+      if (geminiNative) return true
       if (u.includes('cloudflare.com') || u.includes('workers.ai')) return false
       if (u.includes('/client/v4/accounts/') && u.includes('/ai/')) return false
       // Claude / Anthropic Messages API is supported by toolAgent
@@ -907,7 +909,6 @@ async function streamChatInner(
     if (!canToolAgent) {
       const reasons: string[] = []
       if (!workspacePath.trim()) reasons.push('ワークスペース未選択（フォルダを開く）')
-      if (decided.engine === 'gemini') reasons.push('Gemini はツール Agent 未対応')
       if (decided.engine === 'workers') {
         reasons.push('Workers AI は function calling 非対応（OpenAI または Claude を選択）')
       }
@@ -915,7 +916,10 @@ async function streamChatInner(
         reasons.push('provider 情報なし（アプリ再起動 / API 接続を確認）')
       } else {
         if (!hasUsableLlm(decided.engine)) reasons.push(`${decided.engine} の API キー未設定`)
-        if (!decided.provider.base_url || decided.provider.base_url === 'gemini-native') {
+        if (
+          !decided.provider.base_url ||
+          (decided.provider.base_url === 'gemini-native' && decided.engine !== 'gemini')
+        ) {
           reasons.push('ツール呼び出し可能な base_url が無い')
         }
         const u = decided.provider.base_url.toLowerCase()
@@ -928,7 +932,7 @@ async function streamChatInner(
         code: 'AGENT_TOOLS_UNAVAILABLE',
         message:
           `Agent（ツール実行）を開始できません: ${reasons.join(' / ') || '条件不足'}。` +
-          'OpenAI または Claude を選び、フォルダを開いて再実行してください。' +
+          'OpenAI または Claude、もしくは Gemini を選び、フォルダを開いて再実行してください。' +
           'Ask への自動フォールバックはしません（edit_file を文章で演じるのを防ぐため）。'
       })
       return

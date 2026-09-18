@@ -244,22 +244,238 @@ test('Claude Agent tool_use → tool execution → tool_result', async () => {
   assert.match(messages, /tool_result/)
 })
 
-test('Gemini / Workers Agent tool_use is AGENT_UNSUPPORTED', async () => {
+test('Workers Agent tool_use is AGENT_UNSUPPORTED; Gemini uses generateWithTools', async () => {
   const { throwAgentUnsupported, AIError } = await import('../electron/main/ai/errors.ts')
-  for (const id of ['gemini', 'workers']) {
-    try {
-      throwAgentUnsupported(id)
-      assert.fail('expected throw')
-    } catch (error) {
-      assert.equal(error instanceof AIError, true)
-      assert.equal(error.code, 'AGENT_UNSUPPORTED')
-      assert.equal(error.providerId, id)
-    }
+  try {
+    throwAgentUnsupported('workers')
+    assert.fail('expected throw')
+  } catch (error) {
+    assert.equal(error instanceof AIError, true)
+    assert.equal(error.code, 'AGENT_UNSUPPORTED')
+    assert.equal(error.providerId, 'workers')
   }
   const gemini = await read('electron/main/ai/adapters/gemini.ts')
   const workers = await read('electron/main/ai/adapters/workers.ts')
-  assert.match(gemini, /throwAgentUnsupported\('gemini'\)/)
+  assert.match(gemini, /geminiGenerateContentWithTools/)
+  assert.doesNotMatch(gemini, /throwAgentUnsupported\('gemini'\)/)
   assert.match(workers, /throwAgentUnsupported\('workers'\)/)
+  const router = await read('electron/main/ai/router.ts')
+  const withTools = router.slice(router.indexOf('export async function executeAiWithTools'))
+  assert.match(withTools, /parsed === 'workers'/)
+  assert.match(withTools, /parsed === 'gemini' \? \[\]/)
+  assert.doesNotMatch(withTools.slice(0, 400), /parsed === 'gemini' \|\| parsed === 'workers'/)
+})
+
+function sampleEditTool() {
+  return {
+    type: 'function',
+    function: {
+      name: 'edit_file',
+      description: 'Edit a file',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string' }, content: { type: 'string' } },
+        required: ['path']
+      }
+    }
+  }
+}
+
+test('Gemini adapter converts functionDeclarations / functionCall / functionResponse', async () => {
+  const esbuild = await import('esbuild')
+  const bundled = await esbuild.build({
+    entryPoints: [join(root, 'electron/main/ai/adapters/geminiTools.ts')],
+    bundle: true,
+    write: false,
+    format: 'esm',
+    platform: 'node',
+    packages: 'external'
+  })
+  const dataUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(bundled.outputFiles[0].text)}`
+  const {
+    toGeminiTools,
+    toGeminiContents,
+    geminiCandidateToCompletion,
+    mapGeminiFinishReason
+  } = await import(dataUrl)
+
+  const tools = toGeminiTools([sampleEditTool()])
+  assert.equal(tools[0].functionDeclarations[0].name, 'edit_file')
+  assert.equal(tools[0].functionDeclarations[0].parameters.type, 'object')
+  assert.ok(tools[0].functionDeclarations[0].parameters.properties.path)
+
+  const mcpish = toGeminiTools([
+    {
+      type: 'function',
+      function: {
+        name: 'call_mcp_tool',
+        description: 'Call MCP',
+        parameters: {
+          type: 'object',
+          properties: {
+            tool: { type: 'string' },
+            arguments: {
+              type: 'object',
+              additionalProperties: true
+            }
+          },
+          required: ['tool']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'get_mcp_prompt',
+        description: 'Prompt',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            arguments: {
+              type: 'object',
+              additionalProperties: { type: 'string' }
+            }
+          }
+        }
+      }
+    }
+  ])
+  assert.equal(
+    mcpish[0].functionDeclarations[0].parameters.properties.arguments.additionalProperties,
+    undefined
+  )
+  assert.equal(
+    mcpish[0].functionDeclarations[1].parameters.properties.arguments.additionalProperties,
+    undefined
+  )
+  assert.equal(mcpish[0].functionDeclarations[0].parameters.properties.arguments.type, 'object')
+
+  const emptyText = geminiCandidateToCompletion({
+    candidate: {
+      content: {
+        parts: [{ functionCall: { name: 'edit_file', args: { path: 'a.ts', content: 'x' } } }]
+      },
+      finishReason: 'STOP'
+    },
+    messages: [{ role: 'user', content: 'edit a.ts' }]
+  })
+  assert.equal(emptyText.choices[0].finish_reason, 'tool_calls')
+  assert.equal(emptyText.choices[0].message.content, null)
+  const call = emptyText.choices[0].message.tool_calls[0]
+  assert.equal(call.function.name, 'edit_file')
+  assert.equal(JSON.parse(call.function.arguments).path, 'a.ts')
+  assert.match(call.id, /^gemini-call-0-0$/)
+
+  const multi = geminiCandidateToCompletion({
+    candidate: {
+      content: {
+        parts: [
+          { functionCall: { name: 'read_file', args: { path: 'a.ts' } } },
+          { functionCall: { name: 'list_dir', args: { path: 'src' } } }
+        ]
+      },
+      finishReason: 'STOP'
+    },
+    messages: [{ role: 'user', content: 'inspect' }]
+  })
+  const ids = multi.choices[0].message.tool_calls.map((row) => row.id)
+  assert.deepEqual(
+    multi.choices[0].message.tool_calls.map((row) => row.function.name),
+    ['read_file', 'list_dir']
+  )
+  assert.equal(new Set(ids).size, 2)
+
+  const textOnly = geminiCandidateToCompletion({
+    candidate: { content: { parts: [{ text: 'hello from gemini' }] }, finishReason: 'STOP' },
+    messages: [{ role: 'user', content: 'hi' }]
+  })
+  assert.equal(textOnly.choices[0].message.content, 'hello from gemini')
+  assert.equal(textOnly.choices[0].finish_reason, 'stop')
+  assert.equal(textOnly.choices[0].message.tool_calls, undefined)
+  assert.equal(mapGeminiFinishReason('STOP', false), 'stop')
+  assert.equal(mapGeminiFinishReason('STOP', true), 'tool_calls')
+
+  const withSig = geminiCandidateToCompletion({
+    candidate: {
+      content: {
+        parts: [
+          { thought: true, text: 'planning' },
+          {
+            functionCall: { name: 'read_file', args: { path: 'a.ts' } },
+            thoughtSignature: 'sig-1'
+          }
+        ]
+      },
+      finishReason: 'STOP'
+    },
+    messages: [{ role: 'user', content: 'read' }]
+  })
+  const signed = toGeminiContents([
+    { role: 'user', content: 'read' },
+    {
+      role: 'assistant',
+      content: null,
+      tool_calls: withSig.choices[0].message.tool_calls
+    }
+  ])
+  const signedModel = signed.contents.find((row) => row.role === 'model')
+  assert.equal(signedModel.parts.some((part) => part.thought === true), true)
+  assert.equal(
+    signedModel.parts.find((part) => part.functionCall)?.thoughtSignature,
+    'sig-1'
+  )
+
+  const history = [
+    { role: 'user', content: 'edit a.ts' },
+    {
+      role: 'assistant',
+      content: null,
+      tool_calls: [call]
+    },
+    { role: 'tool', tool_call_id: call.id, content: '{"ok":true}' }
+  ]
+  const shaped = toGeminiContents(history)
+  const last = shaped.contents[shaped.contents.length - 1]
+  assert.equal(last.role, 'user')
+  assert.equal(last.parts[0].functionResponse.name, 'edit_file')
+  assert.equal(last.parts[0].functionResponse.response.ok, true)
+  const modelTurn = shaped.contents.find((row) => row.role === 'model')
+  assert.equal(modelTurn.parts.some((part) => part.functionCall?.name === 'edit_file'), true)
+  assert.equal(typeof modelTurn.parts.find((part) => part.functionCall)?.functionCall.args, 'object')
+
+  try {
+    geminiCandidateToCompletion({
+      candidate: { content: { parts: [{ text: 'blocked' }] }, finishReason: 'SAFETY' },
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+    assert.fail('expected SAFETY to throw')
+  } catch (error) {
+    assert.equal(error.code, 'PROVIDER_ERROR')
+    assert.match(error.message, /SAFETY/)
+  }
+  try {
+    geminiCandidateToCompletion({
+      candidate: { content: { parts: [] }, finishReason: 'MALFORMED_FUNCTION_CALL' },
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+    assert.fail('expected malformed to throw')
+  } catch (error) {
+    assert.match(error.message, /MALFORMED_FUNCTION_CALL/)
+    assert.equal(error.code, 'PROVIDER_ERROR')
+  }
+
+  const geminiSrc = await read('electron/main/ai/adapters/gemini.ts')
+  const generate = geminiSrc.slice(
+    geminiSrc.indexOf('async generate(request'),
+    geminiSrc.indexOf('async generateWithTools')
+  )
+  assert.match(generate, /Gemini から本文を取得できませんでした/)
+  const withTools = geminiSrc.slice(geminiSrc.indexOf('async generateWithTools'))
+  assert.doesNotMatch(withTools, /Gemini から本文を取得できませんでした/)
+  const toolsSrc = await read('electron/main/ai/adapters/geminiTools.ts')
+  assert.doesNotMatch(toolsSrc, /recordUsage/)
+  assert.match(toolsSrc, /thoughtSignature/)
 })
 
 test('Cursor stays on @cursor/sdk; Ask still uses executeAi', async () => {

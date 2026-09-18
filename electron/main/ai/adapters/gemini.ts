@@ -1,5 +1,5 @@
 import { getLocalSetting } from '../../settingsStore'
-import { aiErrorFromHttp, AIError, redactLooksLikeSecret, throwAgentUnsupported } from '../errors'
+import { aiErrorFromHttp, AIError, redactLooksLikeSecret } from '../errors'
 import { newRequestId, tokensFromText, type AIRequest, type AIResponse, type Credential } from '../types'
 import { parseSettingModels, type AIProviderAdapter } from './types'
 
@@ -89,8 +89,30 @@ export const geminiAdapter: AIProviderAdapter = {
     }
   },
 
-  async generateWithTools() {
-    throwAgentUnsupported('gemini')
+  async generateWithTools(request, credential, options) {
+    const model = request.model || getLocalSetting('llm.gemini.model', DEFAULT_MODEL)
+    const { geminiGenerateContentWithTools } = await import('./geminiTools')
+    const completion = await geminiGenerateContentWithTools({
+      secret: credential.secret,
+      model,
+      messages: options.messages,
+      tools: options.tools,
+      toolChoice: options.toolChoice,
+      timeoutMs: options.timeoutMs,
+      signal: options.signal
+    })
+    const inputTokens = Number(completion.usage?.input_tokens) || 0
+    const outputTokens = Number(completion.usage?.output_tokens) || 0
+    return {
+      completion,
+      usage: {
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens
+      },
+      requestId: newRequestId(),
+      model
+    }
   },
 
   async healthCheck(credential: Credential) {

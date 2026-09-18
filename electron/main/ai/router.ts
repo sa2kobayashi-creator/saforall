@@ -282,6 +282,7 @@ export type ExecuteAiWithToolsInput = {
 
 /**
  * Agent tool_use path with Phase 2-C-2 Failover (openai/claude fallbacks only).
+ * Gemini is primary-only: no Agent Failover hop.
  * Phase 2-C-5: Usage via onAttempt with failoverId/path/mode=agent.
  */
 export async function executeAiWithTools(
@@ -291,7 +292,7 @@ export async function executeAiWithTools(
   if (!parsed || !isLlmProviderId(parsed)) {
     throw new AIError('PROVIDER_ERROR', `未知の LLM Provider: ${input.provider}`)
   }
-  if (parsed === 'gemini' || parsed === 'workers') {
+  if (parsed === 'workers') {
     throwAgentUnsupported(parsed)
   }
 
@@ -308,11 +309,11 @@ export async function executeAiWithTools(
     {
       enabled: isRouterFailoverEnabled(),
       primaryProvider,
-      fallbackProviders: fallbacksForAgent(primaryProvider),
+      fallbackProviders: parsed === 'gemini' ? [] : fallbacksForAgent(primaryProvider),
       maxFailoverAttempts: routerMaxFailoverAttempts('agent')
     },
     async ({ providerId, credential }) => {
-      if (providerId === 'gemini' || providerId === 'workers') {
+      if (providerId === 'workers') {
         throwAgentUnsupported(providerId)
       }
       const adapter = getProvider(providerId)

@@ -406,11 +406,11 @@ export async function streamChatDirect(
         })
         return true
       }
-      if (resolved.engine !== 'openai' && resolved.engine !== 'claude') {
+      if (resolved.engine !== 'openai' && resolved.engine !== 'claude' && resolved.engine !== 'gemini') {
         onEvent({
           type: 'error',
           code: 'AGENT_TOOLS_UNAVAILABLE',
-          message: 'オフライン Agent は OpenAI または Claude のみ対応です'
+          message: 'オフライン Agent は OpenAI、Claude、または Gemini のみ対応です'
         })
         return true
       }
@@ -426,7 +426,9 @@ export async function streamChatDirect(
         baseUrl:
           resolved.engine === 'claude'
             ? 'https://api.anthropic.com'
-            : resolved.baseUrl || 'https://api.openai.com/v1',
+            : resolved.engine === 'gemini'
+              ? 'gemini-native'
+              : resolved.baseUrl || 'https://api.openai.com/v1',
         model: resolved.model,
         extraHeaders: [],
         messages,
