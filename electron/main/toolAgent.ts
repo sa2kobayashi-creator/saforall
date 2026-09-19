@@ -36,6 +36,7 @@ import {
   parseRetryAfterMs as parseRetryAfterMsImpl,
   repairToolArguments as repairToolArgumentsImpl
 } from './ai/agentMessages'
+import { AIError } from './ai/errors'
 import type { AgentChatCompletion, AgentProviderMessage, AgentToolCall, AgentToolSpec } from './ai/toolTypes'
 import { mkdir, writeFile } from 'fs/promises'
 import { join, relative, resolve } from 'path'
@@ -1660,6 +1661,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
       const message = error instanceof Error ? error.message : String(error)
       // Surface provider detail immediately (avoid opaque "LLM HTTP 400")
       if (step === 0) {
+        if (error instanceof AIError) throw error
         throw new Error(
           message.includes('LLM HTTP')
             ? message

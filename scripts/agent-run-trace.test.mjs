@@ -473,3 +473,20 @@ test('Agent Run Trace: registered in run-all-tests', async () => {
   const runAll = await read('scripts/run-all-tests.mjs')
   assert.match(runAll, /agent-run-trace\.test\.mjs/)
 })
+
+test('Agent Run Trace: stream error code becomes run_error.errorCode', async () => {
+  const { toAgentRunTraceEvent } = await loadTrace()
+  const cases = [
+    ['PROVIDER_ERROR', 'LLM HTTP 400: additionalProperties is not allowed'],
+    ['RATE_LIMIT', 'LLM HTTP 429: resource exhausted'],
+    ['MODEL_NOT_FOUND', 'LLM HTTP 404: model is no longer available to new users'],
+    ['NETWORK_ERROR', 'fetch failed']
+  ]
+  for (const [code, message] of cases) {
+    const event = toAgentRunTraceEvent({ type: 'error', code, message })
+    assert.equal(event.kind, 'run_error')
+    assert.equal(event.errorCode, code)
+    assert.equal('httpStatus' in event, false)
+    assert.equal('message' in event, false)
+  }
+})

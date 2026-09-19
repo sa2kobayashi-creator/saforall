@@ -1,5 +1,6 @@
 import { extractAgentRuntimeContext } from './lib/agentContext'
 import { resolveCredential } from './ai/credentials'
+import { AIError } from './ai/errors'
 import { parseProviderId } from './ai/types'
 
 function hasUsableLlm(engine: string): boolean {
@@ -502,7 +503,7 @@ export async function streamChat(
     } else if (!terminal) {
       emit({
         type: 'error',
-        code: 'STREAM_FAILED',
+        code: error instanceof AIError ? error.code : 'STREAM_FAILED',
         message: error instanceof Error ? error.message : String(error)
       })
     }

@@ -152,3 +152,49 @@ test('Trace / Usage / Failover semantics are untouched', async () => {
   const failover = await read('electron/main/ai/failover.ts')
   assert.match(failover, /executeWithFailover/)
 })
+
+test('streamChat preserves AIError.code instead of STREAM_FAILED', async () => {
+  const api = await read('electron/main/api.ts')
+  assert.match(api, /import \{ AIError \} from '\.\/ai\/errors'/)
+  assert.match(
+    api,
+    /code: error instanceof AIError \? error\.code : 'STREAM_FAILED'/
+  )
+
+  const agent = await read('electron/main/toolAgent.ts')
+  assert.match(agent, /import \{ AIError \} from '\.\/ai\/errors'/)
+  const step0 = agent.slice(agent.indexOf('if (step === 0)'), agent.indexOf('if (step === 0)') + 420)
+  assert.match(step0, /if \(error instanceof AIError\) throw error/)
+  assert.match(step0, /throw new Error\(/)
+
+  const chat = await read('src/components/ChatPanel.tsx')
+  assert.match(chat, /formatAiUserError\(event\.message\)/)
+  assert.doesNotMatch(
+    chat.slice(
+      chat.indexOf("if (event.type === 'error')"),
+      chat.indexOf("if (event.type === 'error')") + 500
+    ),
+    /formatAiUserError\(event\.code/
+  )
+})
+
+test('HTTP 400 stays PROVIDER_ERROR and is not NETWORK_ERROR', async () => {
+  const { AIError, aiErrorFromHttp, classifyProviderError } = await import(
+    '../electron/main/ai/errors.ts'
+  )
+  const err400 = aiErrorFromHttp('gemini', 400, '{"error":{"message":"additionalProperties"}}')
+  assert.equal(err400 instanceof AIError, true)
+  assert.equal(err400.code, 'PROVIDER_ERROR')
+  assert.equal(err400.httpStatus, 400)
+  assert.match(err400.message, /HTTP 400/)
+  assert.notEqual(err400.code, 'NETWORK_ERROR')
+
+  assert.equal(aiErrorFromHttp('gemini', 429, 'rate limit').code, 'RATE_LIMIT')
+  assert.equal(aiErrorFromHttp('gemini', 404, 'model is no longer available').code, 'MODEL_NOT_FOUND')
+  assert.equal(aiErrorFromHttp('gemini', 401, 'unauthorized').code, 'AUTH_ERROR')
+  assert.equal(aiErrorFromHttp('gemini', 503, 'unavailable').code, 'PROVIDER_ERROR')
+  assert.equal(classifyProviderError('fetch failed'), 'NETWORK_ERROR')
+
+  const agentMessages = await read('electron/main/ai/agentMessages.ts')
+  assert.match(agentMessages, /LLM HTTP \$\{status\}/)
+})
