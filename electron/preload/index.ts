@@ -673,7 +673,18 @@ const api = {
       ipcRenderer.on('api:chatStream:event', listener)
       void ipcRenderer.invoke('api:chatStream', requestId, body).then(
         () => {
-          if (!settled && !sawTerminal) {
+          if (settled || sawTerminal) {
+            settle()
+            return
+          }
+          // Main owns real terminal events (done / error / cancelled / STREAM_INCOMPLETE).
+          // Invoke success can beat an in-flight `send(done)` on the renderer; wait one
+          // macrotask before synthesizing incomplete.
+          setTimeout(() => {
+            if (settled || sawTerminal) {
+              settle()
+              return
+            }
             try {
               handlers.onEvent({
                 type: 'error',
@@ -684,8 +695,8 @@ const api = {
               // ignore
             }
             sawTerminal = true
-          }
-          settle()
+            settle()
+          }, 0)
         },
         (error: unknown) => {
           if (!settled && !sawTerminal) {

@@ -443,6 +443,9 @@ export async function streamChat(
       terminal = true
     }
     if (agentTraceActive && runId) {
+      // Persist Trace before renderer delivery so UsagePanel refresh on `done`
+      // sees run_end. Preload must not treat invoke() success as incomplete
+      // until this in-flight send can arrive.
       observeChain = observeChain
         .then(async () => {
           const { observeAgentStreamEvent } = await import('./ai/agentRunTrace')
