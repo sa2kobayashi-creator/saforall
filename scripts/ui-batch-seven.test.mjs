@@ -9,8 +9,9 @@ const read = (rel) => readFileSync(join(root, rel), 'utf8')
 test('ApplyDiff shows dialog for one item; composer for multi', () => {
   const app = read('src/App.tsx')
   assert.match(app, /forceDiffDialog/)
-  assert.match(app, /applyQueue\.length === 1 \|\| forceDiffDialog/)
+  assert.match(app, /currentProposal !== null && forceDiffDialog/)
   assert.match(app, /composerOpen && applyQueue\.length >= 1/)
+  assert.match(app, /onDismiss=\{\(\) => setForceDiffDialog\(false\)\}/)
 })
 
 test('Settings has tabs and export/import', () => {

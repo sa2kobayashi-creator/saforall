@@ -799,6 +799,7 @@ export default function App() {
       setApplyQueue([proposal])
       setReviewIndex(0)
       setComposerOpen(true)
+      setForceDiffDialog(true)
     },
     [showNotice]
   )
@@ -1193,8 +1194,10 @@ export default function App() {
     const proposal = applyQueue[idx]
     try {
       await commitProposal(proposal)
-      setApplyQueue((current) => current.filter((_, i) => i !== idx))
+      const remaining = applyQueue.filter((_, i) => i !== idx)
+      setApplyQueue(remaining)
       setReviewIndex(0)
+      if (remaining.length === 0) setForceDiffDialog(false)
     } catch (error) {
       showNotice(`適用失敗: ${String(error)}`)
     }
@@ -1203,9 +1206,11 @@ export default function App() {
   const rejectCurrentProposal = useCallback(() => {
     if (applyQueue.length === 0) return
     const idx = Math.min(Math.max(reviewIndex, 0), applyQueue.length - 1)
-    setApplyQueue((current) => current.filter((_, i) => i !== idx))
+    const remaining = applyQueue.filter((_, i) => i !== idx)
+    setApplyQueue(remaining)
     setReviewIndex(0)
-  }, [applyQueue.length, reviewIndex])
+    if (remaining.length === 0) setForceDiffDialog(false)
+  }, [applyQueue, reviewIndex])
 
   const acceptProposalAt = useCallback(
     async (index: number) => {
@@ -1213,8 +1218,10 @@ export default function App() {
       if (!proposal) return
       try {
         await commitProposal(proposal)
-        setApplyQueue((current) => current.filter((_, i) => i !== index))
+        const remaining = applyQueue.filter((_, i) => i !== index)
+        setApplyQueue(remaining)
         setReviewIndex(0)
+        if (remaining.length === 0) setForceDiffDialog(false)
       } catch (error) {
         showNotice(`適用失敗: ${String(error)}`)
       }
@@ -1223,9 +1230,11 @@ export default function App() {
   )
 
   const rejectProposalAt = useCallback((index: number) => {
-    setApplyQueue((current) => current.filter((_, i) => i !== index))
+    const remaining = applyQueue.filter((_, i) => i !== index)
+    setApplyQueue(remaining)
     setReviewIndex(0)
-  }, [])
+    if (remaining.length === 0) setForceDiffDialog(false)
+  }, [applyQueue])
 
   const acceptAllProposals = useCallback(async () => {
     const queue = [...applyQueue]
@@ -1802,10 +1811,11 @@ export default function App() {
                 currentPath={currentProposal?.targetPath ?? null}
                 onReview={() => {
                   setComposerOpen(true)
-                  setForceDiffDialog(true)
                   if (applyQueue.length === 0) {
                     showNotice('変更候補はありません')
+                    return
                   }
+                  setForceDiffDialog(true)
                 }}
                 onAcceptAll={() => {
                   void acceptAllProposals()
@@ -2127,6 +2137,7 @@ export default function App() {
                 onAgentNeedsReview={({ editCount, engine }) => {
                   if (editCount > 0) {
                     setComposerOpen(true)
+                    setForceDiffDialog(true)
                     showNotice({
                       message:
                         editCount === 1
@@ -2260,10 +2271,7 @@ export default function App() {
         }}
       />
       <ApplyDiffDialog
-        open={
-          currentProposal !== null &&
-          (applyQueue.length === 1 || forceDiffDialog)
-        }
+        open={currentProposal !== null && forceDiffDialog}
         proposal={currentProposal}
         queueCount={applyQueue.length}
         queueIndex={Math.min(reviewIndex, Math.max(0, applyQueue.length - 1))}
@@ -2272,6 +2280,7 @@ export default function App() {
           void acceptCurrentProposal()
         }}
         onReject={rejectCurrentProposal}
+        onDismiss={() => setForceDiffDialog(false)}
         onAcceptAll={applyQueue.length > 1 ? () => void acceptAllProposals() : undefined}
         onRejectAll={applyQueue.length > 1 ? rejectAllProposals : undefined}
       />

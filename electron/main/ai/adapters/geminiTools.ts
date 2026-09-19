@@ -96,6 +96,14 @@ function assistantToolTurnIndex(messages: AgentProviderMessage[]): number {
   return count
 }
 
+function assistantMessageIndex(messages: AgentProviderMessage[]): number {
+  return messages.filter((row) => row.role === 'assistant').length
+}
+
+function asstThoughtKey(index: number): string {
+  return `asst:${index}`
+}
+
 function parseArgsObject(raw: unknown): Record<string, unknown> {
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     return raw as Record<string, unknown>
@@ -236,6 +244,7 @@ export function toGeminiContents(messages: AgentProviderMessage[]): {
   const systemParts: Array<{ text: string }> = []
   const contents: GeminiContent[] = []
   const pendingResponses: GeminiPart[] = []
+  let assistantSeen = 0
 
   const flushResponses = (): void => {
     if (pendingResponses.length === 0) return
@@ -269,7 +278,11 @@ export function toGeminiContents(messages: AgentProviderMessage[]): {
     const calls = normalizeToolCalls(row.tool_calls)
     const parts: GeminiPart[] = []
     const state = geminiThoughtState()
-    const extra = state.extraThoughtPartsByTurn.get(turnKey(calls.map((call) => call.id)))
+    const extraFromCalls =
+      calls.length > 0 ? state.extraThoughtPartsByTurn.get(turnKey(calls.map((call) => call.id))) : null
+    const extraFromAsst = state.extraThoughtPartsByTurn.get(asstThoughtKey(assistantSeen))
+    assistantSeen += 1
+    const extra = extraFromCalls && extraFromCalls.length > 0 ? extraFromCalls : extraFromAsst
     if (extra && extra.length > 0) parts.push(...extra)
     const text = flattenMessageContent(row.content).trim()
     if (text) parts.push({ text })
@@ -330,6 +343,7 @@ export function geminiCandidateToCompletion(input: {
   const toolCalls: AgentToolCall[] = []
   const extraThought: GeminiPart[] = []
   const turn = assistantToolTurnIndex(input.messages)
+  const asstIndex = assistantMessageIndex(input.messages)
 
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index]
@@ -356,19 +370,20 @@ export function geminiCandidateToCompletion(input: {
     })
     rememberCall(id, name, signatureOfPart(part))
   }
-  if (toolCalls.length > 0 && extraThought.length > 0) {
-    geminiThoughtState().extraThoughtPartsByTurn.set(
-      turnKey(toolCalls.map((call) => call.id)),
-      extraThought
-    )
+  if (extraThought.length > 0) {
+    const state = geminiThoughtState()
+    state.extraThoughtPartsByTurn.set(asstThoughtKey(asstIndex), extraThought)
+    if (toolCalls.length > 0) {
+      state.extraThoughtPartsByTurn.set(
+        turnKey(toolCalls.map((call) => call.id)),
+        extraThought
+      )
+    }
   }
 
   const content = textParts.join('\n')
-  if (toolCalls.length === 0 && !content.trim()) {
-    throw new AIError('PROVIDER_ERROR', 'Gemini から本文を取得できませんでした', {
-      providerId: 'gemini'
-    })
-  }
+  // Thought-only / empty candidate: keep the Agent loop alive. Ask generate() still
+  // rejects empty visible text. Do not throw PROVIDER_ERROR here.
 
   return {
     choices: [

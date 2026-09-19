@@ -501,6 +501,17 @@ test('Gemini adapter converts functionDeclarations / functionCall / functionResp
       assert.match(error.message, /MALFORMED_FUNCTION_CALL/)
       assert.equal(error.code, 'PROVIDER_ERROR')
     }
+
+    const thoughtOnly = geminiCandidateToCompletion({
+      candidate: {
+        content: { parts: [{ thought: true, text: 'planning', thoughtSignature: 'sig-empty' }] },
+        finishReason: 'STOP'
+      },
+      messages: [{ role: 'user', content: 'continue' }]
+    })
+    assert.equal(thoughtOnly.choices[0].message.tool_calls, undefined)
+    assert.equal(thoughtOnly.choices[0].message.content, null)
+    assert.equal(thoughtOnly.choices[0].finish_reason, 'stop')
   })
 
   const geminiSrc = await read('electron/main/ai/adapters/gemini.ts')

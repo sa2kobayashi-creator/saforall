@@ -20,6 +20,7 @@ type Props = {
   acceptLabel?: string
   onAccept: () => void
   onReject: () => void
+  onDismiss?: () => void
   onAcceptAll?: () => void
   onRejectAll?: () => void
 }
@@ -39,15 +40,17 @@ export function ApplyDiffDialog({
   acceptLabel = '適用する',
   onAccept,
   onReject,
+  onDismiss,
   onAcceptAll,
   onRejectAll
 }: Props) {
   const monacoReady = useMonacoReady()
+  const closeWithoutReject = onDismiss ?? onReject
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onReject()
+        closeWithoutReject()
         return
       }
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -58,7 +61,7 @@ export function ApplyDiffDialog({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onReject, onAccept, onAcceptAll])
+  }, [open, closeWithoutReject, onReject, onAccept, onAcceptAll])
 
   if (!open || !proposal) return null
 
@@ -84,7 +87,7 @@ export function ApplyDiffDialog({
             </p>
             <p className="apply-diff-path">{proposal.targetPath}</p>
           </div>
-          <button type="button" className="apply-diff-close" onClick={onReject} title="閉じる">
+          <button type="button" className="apply-diff-close" onClick={closeWithoutReject} title="閉じる（候補は残す）">
             ×
           </button>
         </div>
@@ -130,7 +133,7 @@ export function ApplyDiffDialog({
             {acceptLabel}
           </button>
         </div>
-        <p className="apply-diff-hint">Ctrl/Cmd+Enter で適用 · Ctrl/Cmd+Shift+Enter ですべて適用 · Esc でスキップ</p>
+        <p className="apply-diff-hint">Ctrl/Cmd+Enter で適用 · Ctrl/Cmd+Shift+Enter ですべて適用 · Esc で閉じる（候補は残す）</p>
       </div>
     </div>
   )
