@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   aiErrorFromCaught,
   aiErrorFromLlmHttp,
@@ -38,24 +39,47 @@ const BLOCKING_FINISH = new Set([
   'IMAGE_SAFETY'
 ])
 
-/** Request-local call id → name / thoughtSignature. Not persisted. */
-const callNames = new Map<string, string>()
-const thoughtByCallId = new Map<string, string>()
-const extraThoughtPartsByTurn = new Map<string, GeminiPart[]>()
+type GeminiThoughtState = {
+  callNames: Map<string, string>
+  thoughtByCallId: Map<string, string>
+  extraThoughtPartsByTurn: Map<string, GeminiPart[]>
+}
 
-function trimMap(map: { size: number; keys: () => IterableIterator<string>; delete: (key: string) => boolean }, max = 400): void {
-  while (map.size > max) {
-    const first = map.keys().next().value
-    if (typeof first !== 'string') break
-    map.delete(first)
+/** Agent-run scoped. Not persisted. Not process-global. */
+const geminiThoughtAls = new AsyncLocalStorage<GeminiThoughtState>()
+
+function createGeminiThoughtState(): GeminiThoughtState {
+  return {
+    callNames: new Map(),
+    thoughtByCallId: new Map(),
+    extraThoughtPartsByTurn: new Map()
   }
 }
 
+function geminiThoughtState(): GeminiThoughtState {
+  return geminiThoughtAls.getStore() ?? createGeminiThoughtState()
+}
+
+/**
+ * Bind thought/signature maps to one Agent run. Clears on success, error, or cancel.
+ */
+export async function runWithGeminiThoughtState<T>(fn: () => Promise<T> | T): Promise<T> {
+  const state = createGeminiThoughtState()
+  return geminiThoughtAls.run(state, async () => {
+    try {
+      return await fn()
+    } finally {
+      state.callNames.clear()
+      state.thoughtByCallId.clear()
+      state.extraThoughtPartsByTurn.clear()
+    }
+  })
+}
+
 function rememberCall(id: string, name: string, signature?: string): void {
-  callNames.set(id, name)
-  if (signature) thoughtByCallId.set(id, signature)
-  trimMap(callNames)
-  trimMap(thoughtByCallId)
+  const state = geminiThoughtState()
+  state.callNames.set(id, name)
+  if (signature) state.thoughtByCallId.set(id, signature)
 }
 
 function turnKey(ids: string[]): string {
@@ -170,7 +194,7 @@ export function toGeminiTools(tools: AgentToolSpec[]): Array<{ functionDeclarati
 }
 
 function nameForCallId(messages: AgentProviderMessage[], id: string): string | null {
-  const remembered = callNames.get(id)
+  const remembered = geminiThoughtState().callNames.get(id)
   if (remembered) return remembered
   for (const row of messages) {
     if (row.role !== 'assistant' || !row.tool_calls) continue
@@ -244,7 +268,8 @@ export function toGeminiContents(messages: AgentProviderMessage[]): {
     flushResponses()
     const calls = normalizeToolCalls(row.tool_calls)
     const parts: GeminiPart[] = []
-    const extra = extraThoughtPartsByTurn.get(turnKey(calls.map((call) => call.id)))
+    const state = geminiThoughtState()
+    const extra = state.extraThoughtPartsByTurn.get(turnKey(calls.map((call) => call.id)))
     if (extra && extra.length > 0) parts.push(...extra)
     const text = flattenMessageContent(row.content).trim()
     if (text) parts.push({ text })
@@ -253,7 +278,7 @@ export function toGeminiContents(messages: AgentProviderMessage[]): {
       const functionCall: Record<string, unknown> = { name: call.function.name, args }
       if (call.id) functionCall.id = call.id
       const part: GeminiPart = { functionCall }
-      const signature = thoughtByCallId.get(call.id)
+      const signature = state.thoughtByCallId.get(call.id)
       if (signature) part.thoughtSignature = signature
       parts.push(part)
       rememberCall(call.id, call.function.name, signature)
@@ -332,8 +357,10 @@ export function geminiCandidateToCompletion(input: {
     rememberCall(id, name, signatureOfPart(part))
   }
   if (toolCalls.length > 0 && extraThought.length > 0) {
-    extraThoughtPartsByTurn.set(turnKey(toolCalls.map((call) => call.id)), extraThought)
-    trimMap(extraThoughtPartsByTurn)
+    geminiThoughtState().extraThoughtPartsByTurn.set(
+      turnKey(toolCalls.map((call) => call.id)),
+      extraThought
+    )
   }
 
   const content = textParts.join('\n')

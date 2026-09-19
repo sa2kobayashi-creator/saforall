@@ -1359,6 +1359,14 @@ async function runTool(
 }
 
 export async function runToolAgent(params: ToolAgentParams): Promise<void> {
+  if (isGeminiEndpoint(params.engine, params.baseUrl)) {
+    const { runWithGeminiThoughtState } = await import('./ai/adapters/geminiTools')
+    return runWithGeminiThoughtState(() => runToolAgentSession(params))
+  }
+  return runToolAgentSession(params)
+}
+
+async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
   const {
     workspacePath,
     baseUrl,
