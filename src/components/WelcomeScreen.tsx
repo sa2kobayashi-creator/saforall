@@ -7,6 +7,7 @@ import {
 } from '../lib/recentWorkspaces'
 import { formatXamppHealthUrl } from '../lib/backendGuide'
 import { useI18n } from '../i18n'
+import type { ModelApiStatus } from '../lib/modelApiStatus'
 import './WelcomeScreen.css'
 
 type Props = {
@@ -14,6 +15,7 @@ type Props = {
   backendMessage: string
   backendBaseUrl?: string
   backendMode?: 'php' | 'local'
+  modelApiStatus?: ModelApiStatus
   onOpenFolder: () => void
   onOpenRecent: (path: string) => void
   onClone: () => void
@@ -26,6 +28,7 @@ export function WelcomeScreen({
   backendMessage,
   backendBaseUrl = '',
   backendMode,
+  modelApiStatus = 'checking',
   onOpenFolder,
   onOpenRecent,
   onClone,
@@ -57,12 +60,14 @@ export function WelcomeScreen({
   }, [backendConnected, backendMode])
 
   const isLocal = backendMode === 'local' || (backendConnected && backendBaseUrl.startsWith('local://'))
-  const statusClass = !backendConnected ? 'ng' : isLocal ? 'local' : 'ok'
-  const statusLabel = !backendConnected
-    ? backendMessage || t('status.disconnected')
-    : isLocal
-      ? 'ローカルモード（XAMPP 不要）'
-      : t('status.connected')
+  const statusClass =
+    modelApiStatus === 'offline' ? 'ng' : modelApiStatus === 'online' ? 'ok' : 'ok'
+  const statusLabel =
+    modelApiStatus === 'checking'
+      ? t('status.checking')
+      : modelApiStatus === 'online'
+        ? t('status.modelApiOnline')
+        : t('status.modelApiOffline')
 
   return (
     <div className="welcome-screen" aria-label="スタート">
@@ -87,7 +92,7 @@ export function WelcomeScreen({
 
         {isLocal && (
           <div className="welcome-local" role="status">
-            <strong>ローカルモードで使えます</strong>
+            <strong>キーを保存すれば Model API に接続します</strong>
             <ol>
               <li>
                 <button type="button" className="welcome-inline-link" onClick={onOpenFolder}>
@@ -124,6 +129,7 @@ export function WelcomeScreen({
         {!backendConnected && !isLocal && (
           <div className="welcome-xampp" role="status">
             <strong>バックエンド起動手順（XAMPP・任意）</strong>
+            {backendMessage ? <p>{backendMessage}</p> : null}
             <ol>
               <li>XAMPP Control Panel を開く</li>
               <li>
@@ -136,7 +142,7 @@ export function WelcomeScreen({
               <li>この画面の「再確認」でステータスを更新</li>
             </ol>
             <p className="welcome-xampp-note">
-              配布版では XAMPP は不要です。ローカルモードで設定の API キーから直接使えます。
+              配布版では XAMPP は不要です。設定の API キーから Model API へ直接接続します。
               未署名インストーラでは SmartScreen が出ることがあります（詳細情報→実行）。
               Tab 補完（入力中の提案）と Ctrl+K も、キー保存後にローカルで利用できます。
             </p>

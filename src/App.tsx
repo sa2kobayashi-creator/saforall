@@ -37,6 +37,7 @@ import { loadAutoSaveDelayMs, loadAutoSaveEnabled } from './lib/autoSave'
 import { loadExtensionGrants, saveExtensionGrants } from './lib/extensionPermissions'
 import type { ExtensionPermission, WorkspaceExtension } from './types/extensions'
 import { WelcomeScreen } from './components/WelcomeScreen'
+import { resolveModelApiStatus } from './lib/modelApiStatus'
 import {
   AboutDialog,
   DocumentationDialog,
@@ -180,6 +181,10 @@ export default function App() {
   } | null>(null)
   const [status, setStatus] = useState('フォルダを開いて始めましょう')
   const [backend, setBackend] = useState<BackendStatus>(initialBackend)
+  const [hasModelKey, setHasModelKey] = useState(false)
+  const [networkOnline, setNetworkOnline] = useState(
+    () => typeof navigator === 'undefined' || navigator.onLine !== false
+  )
   const [sidebarWidth, setSidebarWidth] = useState(initialLayout.sidebarWidth)
   const [chatWidth, setChatWidth] = useState(initialLayout.chatWidth)
   const [usageWidth, setUsageWidth] = useState(initialLayout.usageWidth)
@@ -215,6 +220,18 @@ export default function App() {
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
 
+  const refreshModelKey = useCallback(async () => {
+    try {
+      if (typeof window.saforall.hasLocalLlm !== 'function') {
+        setHasModelKey(false)
+        return
+      }
+      setHasModelKey(Boolean(await window.saforall.hasLocalLlm()))
+    } catch {
+      setHasModelKey(false)
+    }
+  }, [])
+
   const checkBackend = useCallback(async () => {
     setBackend((current) => ({ ...current, checking: true }))
     try {
@@ -226,6 +243,7 @@ export default function App() {
         baseUrl: result.baseUrl,
         mode: result.mode
       })
+      await refreshModelKey()
       if (
         result.connected &&
         result.mode === 'php' &&
@@ -253,8 +271,9 @@ export default function App() {
         message: String(error),
         baseUrl: ''
       })
+      await refreshModelKey()
     }
-  }, [])
+  }, [refreshModelKey])
 
   useEffect(() => {
     void checkBackend()
@@ -263,6 +282,28 @@ export default function App() {
     }, 30_000)
     return () => window.clearInterval(timer)
   }, [checkBackend])
+
+  useEffect(() => {
+    void refreshModelKey()
+  }, [refreshModelKey, settingsRevision])
+
+  useEffect(() => {
+    const onOnline = () => setNetworkOnline(true)
+    const onOffline = () => setNetworkOnline(false)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [])
+
+  const modelApiStatus = resolveModelApiStatus({
+    checking: backend.checking && !backend.mode,
+    hasKey: hasModelKey,
+    networkOnline,
+    phpConnected: backend.mode === 'php' && backend.connected
+  })
 
   useEffect(() => {
     if (!backend.connected) return
@@ -1649,6 +1690,7 @@ export default function App() {
             backendMessage={backend.message}
             backendBaseUrl={backend.baseUrl}
             backendMode={backend.mode}
+            modelApiStatus={modelApiStatus}
             onOpenFolder={() => void openWorkspace()}
             onOpenRecent={(path) => void openWorkspaceAt(path)}
             onClone={() => setCloneOpen(true)}
@@ -2125,6 +2167,7 @@ export default function App() {
                 problems={problems}
                 backendConnected={backend.connected}
                 backendMode={backend.mode}
+                modelApiStatus={modelApiStatus}
                 settingsRevision={settingsRevision}
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
@@ -2202,6 +2245,7 @@ export default function App() {
         message={status}
         dirty={activeFile?.dirty ?? false}
         backend={backend}
+        modelApiStatus={modelApiStatus}
         onRecheckBackend={() => {
           void checkBackend()
         }}

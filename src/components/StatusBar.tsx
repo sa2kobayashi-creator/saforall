@@ -1,4 +1,5 @@
 import type { BackendStatus } from '../types'
+import type { ModelApiStatus } from '../lib/modelApiStatus'
 import { parseLocale, useI18n } from '../i18n'
 import './StatusBar.css'
 
@@ -6,25 +7,23 @@ type Props = {
   message: string
   dirty: boolean
   backend: BackendStatus
+  modelApiStatus: ModelApiStatus
   onRecheckBackend: () => void
 }
 
-export function StatusBar({ message, dirty, backend, onRecheckBackend }: Props) {
+export function StatusBar({ message, dirty, backend, modelApiStatus, onRecheckBackend }: Props) {
   const { t, locale, setLocale, locales, localeLabels } = useI18n()
-  const backendLabel = backend.checking
-    ? t('status.checking')
-    : backend.connected
-      ? backend.mode === 'local'
-        ? 'ローカル'
-        : t('status.connected')
-      : t('status.disconnectedHint')
+  const backendLabel =
+    modelApiStatus === 'checking'
+      ? t('status.checking')
+      : modelApiStatus === 'online'
+        ? t('status.modelApiOnline')
+        : t('status.modelApiOffline')
+  const barTone = modelApiStatus === 'checking' ? 'online' : modelApiStatus
+  const chipTone = modelApiStatus === 'online' ? 'ok' : modelApiStatus === 'checking' ? 'ok' : 'ng'
 
   return (
-    <footer
-      className={`status-bar ${
-        backend.connected ? (backend.mode === 'local' ? 'local' : 'online') : 'offline'
-      }`}
-    >
+    <footer className={`status-bar ${barTone}`}>
       <span className="status-message">{message}</span>
       <div className="status-meta">
         <label className="status-locale" title={t('status.locale')}>
@@ -43,10 +42,8 @@ export function StatusBar({ message, dirty, backend, onRecheckBackend }: Props) 
         </label>
         <button
           type="button"
-          className={`backend-status ${
-            backend.connected ? (backend.mode === 'local' ? 'local' : 'ok') : 'ng'
-          }`}
-          title={`${backend.message}\n${backend.baseUrl}\n${t('status.recheck')}`}
+          className={`backend-status ${chipTone}`}
+          title={`${backendLabel}\n${backend.message}\n${backend.baseUrl}\n${t('status.recheck')}`}
           onClick={onRecheckBackend}
         >
           {backendLabel}

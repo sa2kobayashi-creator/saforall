@@ -49,6 +49,8 @@ import {
 } from '../lib/chatImages'
 import { buildBackendOfflineMessage } from '../lib/backendGuide'
 import { formatAiUserError } from '../lib/aiErrorGuide'
+import { useI18n } from '../i18n'
+import type { ModelApiStatus } from '../lib/modelApiStatus'
 import './ChatPanel.css'
 
 type Props = {
@@ -58,6 +60,7 @@ type Props = {
   problems?: ProblemItem[]
   backendConnected: boolean
   backendMode?: 'php' | 'local'
+  modelApiStatus?: ModelApiStatus
   /** Bumped when Settings are saved so API key readiness refreshes. */
   settingsRevision?: number
   workspaceId: number | null
@@ -188,6 +191,7 @@ export function ChatPanel({
   problems = [],
   backendConnected,
   backendMode,
+  modelApiStatus = 'checking',
   settingsRevision = 0,
   workspaceId,
   workspacePath,
@@ -199,6 +203,7 @@ export function ChatPanel({
   onApplyCode,
   onAgentNeedsReview
 }: Props) {
+  const { t } = useI18n()
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage])
   const [sessionId, setSessionId] = useState<number | null>(null)
@@ -1278,7 +1283,7 @@ export function ChatPanel({
       return
     }
 
-    setBusy({ phase: 'thinking', detail: backendConnected ? 'AI に問い合わせ中…' : 'ローカル LLM に問い合わせ中…' })
+    setBusy({ phase: 'thinking', detail: backendConnected ? 'AI に問い合わせ中…' : 'Model API に問い合わせ中…' })
     setError(null)
     const submitGeneration = ++submitGenerationRef.current
     lastSubmittedTextRef.current = text
@@ -2142,18 +2147,14 @@ export function ChatPanel({
               </div>
               <span
                 className={`chat-backend ${
-                  isLocalMode || (!backendConnected && localLlmReady)
-                    ? 'local'
-                    : backendConnected
-                      ? 'ok'
-                      : 'ng'
+                  modelApiStatus === 'offline' ? 'ng' : 'ok'
                 }`}
               >
-                {isLocalMode || (!backendConnected && localLlmReady)
-                  ? 'ローカル'
-                  : backendConnected
-                    ? '接続'
-                    : '未接続'}
+                {modelApiStatus === 'checking'
+                  ? t('status.checking')
+                  : modelApiStatus === 'online'
+                    ? t('status.modelApiOnline')
+                    : t('status.modelApiOffline')}
               </span>
             </div>
             <div className="chat-context-line">{contextLabel}</div>
@@ -2215,7 +2216,7 @@ export function ChatPanel({
               <div className="chat-offline-banner-main">
                 <strong>API キー未設定</strong>
                 <span>
-                  ローカルモードです。Settings で API キーを保存するとチャットできます（XAMPP 不要）。
+                  Settings で API キーを保存すると Model API に接続できます（XAMPP 不要）。
                 </span>
               </div>
               {onOpenSettings && (
@@ -2246,7 +2247,7 @@ export function ChatPanel({
 
           {isLocalMode && localLlmReady && (
             <div className="chat-local-hint" role="status">
-              ローカルモード: 履歴はアプリ内に保存されます（XAMPP 不要）
+              履歴はアプリ内に保存されます。チャットは Model API へ接続します（XAMPP 不要）
             </div>
           )}
 
@@ -2642,9 +2643,9 @@ export function ChatPanel({
                     : !backendConnected && !localLlmReady
                       ? 'バックエンド未接続 — 編集は可能。Settings に API キーを保存するとローカル LLM が使えます'
                       : isLocalMode && localLlmReady
-                        ? 'ローカル: 質問する…（スクショ貼付可 · 履歴はアプリ内）'
+                        ? '質問する…（スクショ貼付可 · 履歴はアプリ内）'
                         : !backendConnected && localLlmReady
-                          ? 'ローカル LLM: 質問する…（スクショ貼付可）'
+                          ? '質問する…（スクショ貼付可）'
                           : busy
                             ? busyLabel ?? '実行中…'
                             : loading

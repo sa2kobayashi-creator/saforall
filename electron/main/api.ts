@@ -187,7 +187,7 @@ export async function checkHealth(): Promise<HealthResult> {
     connected: true,
     mode: 'local',
     baseUrl: 'local://userData',
-    message: 'ローカルモード（XAMPP 不要・パッケージ完結）',
+    message: 'アプリは端末内保存。チャットは Model API へ接続します（XAMPP 不要）',
     data: {
       service: 'saforall-local',
       status: 'ok',

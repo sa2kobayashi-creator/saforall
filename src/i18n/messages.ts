@@ -64,6 +64,8 @@ const ja = {
   'status.connected': 'API 接続済み',
   'status.disconnected': 'API 未接続',
   'status.disconnectedHint': 'API 未接続 — 再確認してください',
+  'status.modelApiOnline': 'Model API Online',
+  'status.modelApiOffline': 'Model API Offline',
   'status.dirty': '未保存',
   'status.clean': '保存済み',
   'status.recheck': 'クリックで再確認',
@@ -79,7 +81,7 @@ const ja = {
   'settings.backendWarning':
     '接続がありません。設定はアプリ内に保存できます。API キーを保存するとチャットが使えます（XAMPP 不要）。',
   'settings.localModeHint':
-    'ローカルモード: 設定・API キー・会話履歴はアプリ内に保存されます（XAMPP 不要）。',
+    '設定・API キー・会話履歴は端末内に保存されます。チャットは Model API へ接続します（XAMPP 不要）。',
   'settings.saved': '設定を保存しました',
   'settings.saveFailed': '保存に失敗しました',
   'settings.offlineSave': 'ローカル保存が利用できないため保存できません',
@@ -180,6 +182,8 @@ const en: Record<MessageKey, string> = {
   'status.connected': 'API connected',
   'status.disconnected': 'API offline',
   'status.disconnectedHint': 'API offline — click to recheck',
+  'status.modelApiOnline': 'Model API Online',
+  'status.modelApiOffline': 'Model API Offline',
   'status.dirty': 'Unsaved',
   'status.clean': 'Saved',
   'status.recheck': 'Click to recheck',
@@ -195,7 +199,7 @@ const en: Record<MessageKey, string> = {
   'settings.backendWarning':
     'Not connected. Settings can be saved in the app. Save an API key to use chat (XAMPP not required).',
   'settings.localModeHint':
-    'Local mode: settings, API keys, and chat history are stored in the app (XAMPP not required).',
+    'Settings, API keys, and chat history stay on this device. Chat connects to the Model API (XAMPP not required).',
   'settings.saved': 'Settings saved',
   'settings.saveFailed': 'Failed to save settings',
   'settings.offlineSave': 'Local save is unavailable',

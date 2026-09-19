@@ -68,8 +68,31 @@ test('ARCHITECTURE documents local-first packaging', async () => {
   assert.match(doc, /XAMPP なし/)
 })
 
-test('StatusBar shows local mode', async () => {
+test('StatusBar shows Model API Online/Offline, not local storage as the chip', async () => {
   const bar = await readFile(join(root, 'src/components/StatusBar.tsx'), 'utf8')
-  assert.match(bar, /mode === 'local'/)
-  assert.match(bar, /ローカル/)
+  assert.match(bar, /status\.modelApiOnline/)
+  assert.match(bar, /status\.modelApiOffline/)
+  assert.doesNotMatch(bar, /mode === 'local'/)
+  assert.doesNotMatch(bar, /'ローカル'/)
+})
+
+test('resolveModelApiStatus treats packaged local storage as Model API online when keyed', async () => {
+  const { resolveModelApiStatus } = await import('../src/lib/modelApiStatus.ts')
+  assert.equal(
+    resolveModelApiStatus({ hasKey: true, networkOnline: true }),
+    'online'
+  )
+  assert.equal(
+    resolveModelApiStatus({ hasKey: false, networkOnline: true }),
+    'offline'
+  )
+  assert.equal(
+    resolveModelApiStatus({ hasKey: true, networkOnline: false }),
+    'offline'
+  )
+  assert.equal(
+    resolveModelApiStatus({ hasKey: false, networkOnline: true, phpConnected: true }),
+    'online'
+  )
+  assert.equal(resolveModelApiStatus({ checking: true, hasKey: true, networkOnline: true }), 'checking')
 })

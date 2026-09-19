@@ -16,14 +16,7 @@ import {
   mergeLocalSettings,
   markLocalSettingsClean
 } from './settingsStore'
-
-const DEFAULT_MODELS: Record<string, string[]> = {
-  openai: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o'],
-  gemini: ['gemini-2.0-flash', 'gemini-2.5-pro'],
-  claude: ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
-  cursor: ['composer-2', 'composer-2.5'],
-  workers: ['@cf/meta/llama-3.1-8b-instruct']
-}
+import { listProviderModels } from './ai/modelCatalogFetch'
 
 function ok<T>(data: T): ApiResponse<T> {
   return { ok: true, data }
@@ -341,11 +334,12 @@ export async function localApiRequest<T = unknown>(
     }
 
     if (pathname === '/ai/models' && m === 'GET') {
-      const engine = query.get('engine') || 'openai'
-      const models = DEFAULT_MODELS[engine] ?? DEFAULT_MODELS.openai
+      const catalog = await listProviderModels(query.get('engine'))
       return ok({
-        engine,
-        models: models.map((id) => ({ id, label: id }))
+        engine: catalog.engine,
+        models: catalog.models,
+        source: catalog.source,
+        fetched_at: new Date().toISOString()
       }) as ApiResponse<T>
     }
 
