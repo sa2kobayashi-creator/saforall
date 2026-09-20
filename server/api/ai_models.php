@@ -25,15 +25,29 @@ try {
         'openai' => fetchOpenAiModels($settings),
         'claude' => fetchClaudeModels($settings),
         'workers' => fetchWorkersModels($settings),
-        'cursor' => fetchCursorModels(),
+        'cursor' => fetchCursorModels($settings),
     };
+    $source = 'live';
 } catch (Throwable $e) {
-    Response::error('MODEL_LIST_FAILED', $e->getMessage(), 502);
+    if ($engine === 'claude') {
+        $models = [
+            ['id' => 'claude-haiku-4-5-20251001', 'label' => 'Claude Haiku 4.5', 'tier' => 'cheap'],
+            ['id' => 'claude-sonnet-5', 'label' => 'Claude Sonnet 5', 'tier' => 'standard'],
+            ['id' => 'claude-opus-5', 'label' => 'Claude Opus 5', 'tier' => 'strong'],
+        ];
+        $source = 'builtin';
+    } elseif ($engine === 'cursor') {
+        $models = fetchCursorModels([]);
+        $source = 'builtin';
+    } else {
+        Response::error('MODEL_LIST_FAILED', $e->getMessage(), 502);
+    }
 }
 
 Response::ok([
     'engine' => $engine,
     'models' => $models,
+    'source' => $source,
     'fetched_at' => date('c'),
 ]);
 
@@ -209,22 +223,64 @@ function fetchWorkersModels(array $settings): array
  */
 function fetchClaudeModels(array $settings): array
 {
-    // Anthropic 公開の安定一覧 API が無いため、アプリ側カタログを返す
-    unset($settings);
-    return [
-        ['id' => 'claude-haiku-4-5-20251001', 'label' => 'Claude Haiku 4.5', 'tier' => 'cheap'],
-        ['id' => 'claude-sonnet-5', 'label' => 'Claude Sonnet 5', 'tier' => 'standard'],
-        ['id' => 'claude-opus-5', 'label' => 'Claude Opus 5', 'tier' => 'strong'],
-    ];
+    $apiKey = AppSettings::secret($settings, 'llm.claude.api_key', 'ANTHROPIC_API_KEY');
+    if ($apiKey === '') {
+        throw new RuntimeException('Claude API キーが未設定です');
+    }
+    $baseUrl = rtrim(AppSettings::str($settings, 'llm.claude.base_url', 'https://api.anthropic.com'), '/');
+    $out = [];
+    $afterId = '';
+    for ($page = 0; $page < 10; $page++) {
+        $url = $baseUrl . '/v1/models?limit=100';
+        if ($afterId !== '') {
+            $url .= '&after_id=' . rawurlencode($afterId);
+        }
+        $raw = httpGetJson($url, [
+            'x-api-key: ' . $apiKey,
+            'anthropic-version: 2023-06-01',
+        ]);
+        $list = $raw['data'] ?? [];
+        if (!is_array($list)) {
+            break;
+        }
+        foreach ($list as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $id = isset($row['id']) && is_string($row['id']) ? trim($row['id']) : '';
+            if ($id === '' || !str_starts_with(strtolower($id), 'claude')) {
+                continue;
+            }
+            $display = isset($row['display_name']) && is_string($row['display_name']) && trim($row['display_name']) !== ''
+                ? trim($row['display_name'])
+                : $id;
+            $out[] = [
+                'id' => $id,
+                'label' => $display,
+                'tier' => guessTier($id),
+            ];
+        }
+        $hasMore = !empty($raw['has_more']);
+        $afterId = isset($raw['last_id']) && is_string($raw['last_id']) ? trim($raw['last_id']) : '';
+        if (!$hasMore || $afterId === '') {
+            break;
+        }
+    }
+    if ($out === []) {
+        throw new RuntimeException('Claude モデル一覧が空でした');
+    }
+    usort($out, static fn (array $a, array $b): int => strcmp($a['id'], $b['id']));
+    return $out;
 }
 
 /**
+ * @param array<string, mixed> $settings
  * @return list<array{id:string,label:string,tier:string}>
  */
-function fetchCursorModels(): array
+function fetchCursorModels(array $settings = []): array
 {
-    // Cursor は公開のモデル一覧 API が無いため、アプリ側カタログを返す
-    $catalog = [
+    $apiKey = AppSettings::secret($settings, 'llm.cursor.api_key', 'CURSOR_API_KEY');
+    $builtin = [
         ['id' => 'auto', 'label' => 'Auto（サーバ側選択）', 'tier' => 'cheap'],
         ['id' => 'auto-smart', 'label' => 'Cursor Router auto-smart', 'tier' => 'cheap'],
         ['id' => 'composer-2.5', 'label' => 'Composer 2.5', 'tier' => 'standard'],
@@ -234,7 +290,49 @@ function fetchCursorModels(): array
         ['id' => 'claude-4.6-sonnet', 'label' => 'Claude Sonnet 4.6', 'tier' => 'standard'],
         ['id' => 'claude-opus-5', 'label' => 'Claude Opus 5', 'tier' => 'strong'],
     ];
-    return $catalog;
+    if ($apiKey === '') {
+        return $builtin;
+    }
+    $auth = base64_encode($apiKey . ':');
+    $raw = httpGetJson('https://api.cursor.com/v1/models', [
+        'Authorization: Basic ' . $auth,
+    ]);
+    $out = [];
+    $seen = [];
+    $items = $raw['items'] ?? ($raw['models'] ?? []);
+    if (!is_array($items)) {
+        return $builtin;
+    }
+    foreach ($items as $row) {
+        if (is_string($row)) {
+            $id = trim($row);
+            $label = $id;
+        } elseif (is_array($row)) {
+            $id = isset($row['id']) && is_string($row['id']) ? trim($row['id']) : '';
+            if ($id === '' && isset($row['name']) && is_string($row['name'])) {
+                $id = trim($row['name']);
+            }
+            $label = isset($row['display_name']) && is_string($row['display_name']) && trim($row['display_name']) !== ''
+                ? trim($row['display_name'])
+                : (isset($row['name']) && is_string($row['name']) && trim($row['name']) !== '' ? trim($row['name']) : $id);
+        } else {
+            continue;
+        }
+        if ($id === '' || isset($seen[$id])) {
+            continue;
+        }
+        $seen[$id] = true;
+        $out[] = [
+            'id' => $id,
+            'label' => $label !== '' ? $label : $id,
+            'tier' => guessTier($id),
+        ];
+    }
+    if ($out === []) {
+        return $builtin;
+    }
+    usort($out, static fn (array $a, array $b): int => strcmp($a['id'], $b['id']));
+    return $out;
 }
 
 function guessTier(string $id): string

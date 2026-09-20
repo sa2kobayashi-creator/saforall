@@ -1274,15 +1274,15 @@ export function SettingsPanel({
           </div>
           {renderTestResult('cursor')}
           <p className="settings-hint">
-            Grok 4.5/4.6・Claude Sonnet 4.5/4.6・Opus 5 などを候補にできます。アカウントで使える ID
-            は Cursor 側の一覧に依存します。無い ID は下のカスタム追加で入れてください。
+            「最新を取得」で Cursor API（Cloud Agents 向け）のモデル一覧を取り込みます。デスクトップ UI
+            の全候補とは一致しないことがあります。無い ID は下のカスタム追加で入れてください。
           </p>
           <ModelMultiSelect
             engine="cursor"
             enabled={cursorModels}
             onChange={setCursorModels}
             disabled={!backendConnected}
-            canFetchLatest={backendConnected}
+            canFetchLatest={backendConnected && (cursorKeySet || cursorKey.trim() !== '')}
           />
           <label>
             API Key {cursorKeySet ? '（設定済み）' : '（未設定）'}
@@ -1364,6 +1364,9 @@ export function SettingsPanel({
           {renderTestResult('claude')}
           <p className="settings-hint">
             設計・レビュー・難しい修正向け。Agent モードでは Anthropic tool_use で編集ツールを実行できます。
+          </p>
+          <p className="settings-hint">
+            「最新を取得」で Anthropic API（/v1/models）の利用可能モデルを取り込みます。
           </p>
           <ModelMultiSelect
             engine="claude"

@@ -56,8 +56,16 @@ export function pathsFromDataTransfer(
     }
   }
 
+  // Only treat plain text as an absolute filesystem path (Windows drive / UNC).
+  // Broad "/ or \" matching blocked normal clipboard paste (URLs, code like a/b).
+  // Unix absolute paths still arrive via File.path / text/uri-list / file://.
   const plain = (data.getData?.('text/plain') ?? '').trim()
-  if (plain && (plain.includes('\\') || plain.includes('/')) && !plain.includes('\n')) {
+  if (
+    plain &&
+    !plain.includes('\n') &&
+    !/\s/.test(plain) &&
+    (/^[A-Za-z]:[\\/]/.test(plain) || plain.startsWith('\\\\'))
+  ) {
     found.push(plain)
   }
 

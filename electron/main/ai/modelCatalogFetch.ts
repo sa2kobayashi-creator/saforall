@@ -214,6 +214,102 @@ async function listWorkers(credential: Credential, fetchImpl: FetchLike): Promis
   return sortModels(out).slice(0, 80)
 }
 
+async function listClaude(credential: Credential, fetchImpl: FetchLike): Promise<ListedModel[]> {
+  const baseUrl = (credential.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '')
+  const out: ListedModel[] = []
+  let afterId = ''
+  for (let page = 0; page < 10; page += 1) {
+    const url = new URL(`${baseUrl}/v1/models`)
+    url.searchParams.set('limit', '100')
+    if (afterId) url.searchParams.set('after_id', afterId)
+    const response = await fetchImpl(
+      url.toString(),
+      fetchInit({
+        'x-api-key': credential.secret,
+        'anthropic-version': '2023-06-01'
+      })
+    )
+    if (!response.ok) {
+      throw new Error(`Claude model list HTTP ${response.status}`)
+    }
+    const json = await readJson(response)
+    const list = Array.isArray(json.data) ? json.data : []
+    for (const row of list) {
+      if (!row || typeof row !== 'object') continue
+      const rec = row as { id?: unknown; display_name?: unknown; displayName?: unknown }
+      const id = typeof rec.id === 'string' ? rec.id.trim() : ''
+      if (!id || !id.toLowerCase().startsWith('claude')) continue
+      const display =
+        typeof rec.display_name === 'string' && rec.display_name.trim()
+          ? rec.display_name.trim()
+          : typeof rec.displayName === 'string' && rec.displayName.trim()
+            ? rec.displayName.trim()
+            : id
+      out.push({ id, label: display, tier: guessModelTier(id) })
+    }
+    const hasMore = json.has_more === true
+    afterId = typeof json.last_id === 'string' ? json.last_id.trim() : ''
+    if (!hasMore || !afterId) break
+  }
+  return sortModels(out)
+}
+
+async function listCursor(credential: Credential, fetchImpl: FetchLike): Promise<ListedModel[]> {
+  // Cloud Agents / SDK catalog (not the full IDE picker). Basic auth: apiKey:
+  const auth = Buffer.from(`${credential.secret}:`, 'utf8').toString('base64')
+  const response = await fetchImpl(
+    'https://api.cursor.com/v1/models',
+    fetchInit({ Authorization: `Basic ${auth}` })
+  )
+  if (!response.ok) {
+    throw new Error(`Cursor model list HTTP ${response.status}`)
+  }
+  const json = await readJson(response)
+  const out: ListedModel[] = []
+  const seen = new Set<string>()
+
+  const push = (idRaw: unknown, labelRaw?: unknown) => {
+    const id = typeof idRaw === 'string' ? idRaw.trim() : ''
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    const label =
+      typeof labelRaw === 'string' && labelRaw.trim() && labelRaw.trim() !== id
+        ? labelRaw.trim()
+        : id
+    out.push({ id, label, tier: guessModelTier(id) })
+  }
+
+  const items = Array.isArray(json.items) ? json.items : []
+  for (const row of items) {
+    if (!row || typeof row !== 'object') continue
+    const rec = row as {
+      id?: unknown
+      display_name?: unknown
+      displayName?: unknown
+      name?: unknown
+    }
+    push(rec.id, rec.display_name ?? rec.displayName ?? rec.name)
+  }
+
+  if (out.length === 0 && Array.isArray(json.models)) {
+    for (const row of json.models) {
+      if (typeof row === 'string') push(row)
+      else if (row && typeof row === 'object') {
+        const rec = row as {
+          id?: unknown
+          display_name?: unknown
+          displayName?: unknown
+          name?: unknown
+        }
+        push(rec.id ?? rec.name, rec.display_name ?? rec.displayName ?? rec.name)
+      }
+    }
+  }
+
+  return sortModels(out)
+}
+
+
 /**
  * Packaged / local GET /ai/models. Live provider lists when credentials exist;
  * otherwise the builtin chat catalog (never the old 2-id Gemini stub).
@@ -223,9 +319,6 @@ export async function listProviderModels(
   deps: ListProviderModelsDeps = {}
 ): Promise<ListedCatalog> {
   const engine = parseCatalogEngine(rawEngine)
-  if (engine === 'claude' || engine === 'cursor') {
-    return builtin(engine)
-  }
   const fetchImpl = deps.fetchImpl ?? fetch
   const credential =
     deps.credentialFor !== undefined
@@ -240,7 +333,11 @@ export async function listProviderModels(
         ? await listGemini(credential.secret, fetchImpl)
         : engine === 'openai'
           ? await listOpenAi(credential, fetchImpl)
-          : await listWorkers(credential, fetchImpl)
+          : engine === 'workers'
+            ? await listWorkers(credential, fetchImpl)
+            : engine === 'claude'
+              ? await listClaude(credential, fetchImpl)
+              : await listCursor(credential, fetchImpl)
     if (models.length === 0) return builtin(engine)
     return { engine, models, source: 'live' }
   } catch {

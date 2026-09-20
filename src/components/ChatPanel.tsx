@@ -2632,8 +2632,9 @@ export function ChatPanel({
                     return
                   }
                   const paths = pathsFromDataTransfer(event.clipboardData, { workspacePath })
+                  // Absolute path pastes (Explorer copy) become attachments.
+                  // Normal clipboard text keeps the browser default paste.
                   if (paths.length === 0) return
-                  // File drops into paste (Explorer copy) become attachments, not literal text.
                   event.preventDefault()
                   attachPaths(paths)
                 }}

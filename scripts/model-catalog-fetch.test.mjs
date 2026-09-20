@@ -233,25 +233,110 @@ test('Workers live list filters tasks and caps at 80', async () => {
   )
 })
 
-test('Claude and Cursor stay on builtin catalogs without fetching', async () => {
+test('Claude live list paginates Anthropic /v1/models', async () => {
   const { listProviderModels } = await import('../electron/main/ai/modelCatalogFetch.ts')
-  let fetches = 0
-  const deps = {
-    credentialFor: () => {
-      throw new Error('should not resolve credentials')
-    },
-    fetchImpl: async () => {
-      fetches += 1
-      return jsonResponse(200, {})
+  const urls = []
+  const catalog = await listProviderModels('claude', {
+    credentialFor: () => ({
+      id: 'test:claude',
+      providerId: 'claude',
+      ownerType: 'development',
+      billingMode: 'DEVELOPMENT',
+      source: 'settings',
+      secret: 'test-claude-secret',
+      baseUrl: 'https://api.anthropic.com',
+      extra: {}
+    }),
+    fetchImpl: async (input, init) => {
+      const url = String(input)
+      urls.push(url)
+      assert.match(url, /\/v1\/models/)
+      assert.equal(init?.headers?.['x-api-key'], 'test-claude-secret')
+      assert.equal(init?.headers?.['anthropic-version'], '2023-06-01')
+      const parsed = new URL(url)
+      if (!parsed.searchParams.get('after_id')) {
+        return jsonResponse(200, {
+          data: [
+            { id: 'claude-sonnet-4-20250514', display_name: 'Claude Sonnet 4' },
+            { id: 'claude-opus-4-20250514', display_name: 'Claude Opus 4' }
+          ],
+          has_more: true,
+          last_id: 'claude-opus-4-20250514'
+        })
+      }
+      assert.equal(parsed.searchParams.get('after_id'), 'claude-opus-4-20250514')
+      return jsonResponse(200, {
+        data: [{ id: 'claude-haiku-4-5-20251001', display_name: 'Claude Haiku 4.5' }],
+        has_more: false,
+        last_id: 'claude-haiku-4-5-20251001'
+      })
     }
-  }
-  const claude = await listProviderModels('claude', deps)
-  const cursor = await listProviderModels('cursor', deps)
-  assert.equal(fetches, 0)
-  assert.equal(claude.source, 'builtin')
-  assert.equal(cursor.source, 'builtin')
-  assert.ok(claude.models.some((row) => row.id === 'claude-sonnet-5'))
-  assert.ok(cursor.models.some((row) => row.id === 'grok-4.6'))
+  })
+  assert.equal(catalog.source, 'live')
+  assert.equal(urls.length, 2)
+  assert.deepEqual(
+    catalog.models.map((row) => row.id),
+    ['claude-haiku-4-5-20251001', 'claude-opus-4-20250514', 'claude-sonnet-4-20250514']
+  )
+})
+
+test('Cursor live list reads api.cursor.com /v1/models', async () => {
+  const { listProviderModels } = await import('../electron/main/ai/modelCatalogFetch.ts')
+  const catalog = await listProviderModels('cursor', {
+    credentialFor: () => ({
+      id: 'test:cursor',
+      providerId: 'cursor',
+      ownerType: 'development',
+      billingMode: 'DEVELOPMENT',
+      source: 'settings',
+      secret: 'test-cursor-secret',
+      baseUrl: 'cursor-sdk',
+      extra: {}
+    }),
+    fetchImpl: async (input, init) => {
+      assert.equal(String(input), 'https://api.cursor.com/v1/models')
+      const auth = init?.headers?.Authorization || ''
+      assert.match(auth, /^Basic /)
+      const decoded = Buffer.from(auth.slice(6), 'base64').toString('utf8')
+      assert.equal(decoded, 'test-cursor-secret:')
+      return jsonResponse(200, {
+        items: [
+          { id: 'composer-2', display_name: 'Composer 2' },
+          { id: 'claude-4.6-sonnet', display_name: 'Claude Sonnet 4.6' },
+          { id: 'grok-4.6', name: 'Grok 4.6' }
+        ]
+      })
+    }
+  })
+  assert.equal(catalog.source, 'live')
+  assert.ok(catalog.models.length >= 3)
+  assert.ok(catalog.models.some((row) => row.id === 'composer-2'))
+  assert.ok(catalog.models.some((row) => row.id === 'grok-4.6'))
+})
+
+test('Claude / Cursor without key or on API failure fall back to builtin', async () => {
+  const { listProviderModels } = await import('../electron/main/ai/modelCatalogFetch.ts')
+  const noKeyClaude = await listProviderModels('claude', { credentialFor: () => null })
+  const noKeyCursor = await listProviderModels('cursor', { credentialFor: () => null })
+  assert.equal(noKeyClaude.source, 'builtin')
+  assert.equal(noKeyCursor.source, 'builtin')
+  assert.ok(noKeyClaude.models.some((row) => row.id.includes('claude')))
+  assert.ok(noKeyCursor.models.some((row) => row.id === 'grok-4.6' || row.id === 'auto'))
+
+  const failed = await listProviderModels('claude', {
+    credentialFor: () => ({
+      id: 'test:claude',
+      providerId: 'claude',
+      ownerType: 'development',
+      billingMode: 'DEVELOPMENT',
+      source: 'settings',
+      secret: 'bad',
+      baseUrl: 'https://api.anthropic.com',
+      extra: {}
+    }),
+    fetchImpl: async () => jsonResponse(401, { error: { message: 'nope' } })
+  })
+  assert.equal(failed.source, 'builtin')
 })
 
 test('localApi GET /ai/models uses listProviderModels; stub DEFAULT_MODELS is gone', async () => {

@@ -59,9 +59,13 @@ export function initialCatalogOptions(engine: ProviderEngine): ModelOption[] {
 
 export async function fetchAndCacheCatalog(
   engine: ProviderEngine
-): Promise<{ ok: true; models: ModelOption[]; count: number } | { ok: false; message: string }> {
+): Promise<
+  | { ok: true; models: ModelOption[]; count: number; source: 'live' | 'builtin' }
+  | { ok: false; message: string }
+> {
   const result = await window.saforall.request<{
     models: Array<{ id: string; label?: string; tier?: string }>
+    source?: 'live' | 'builtin'
   }>('GET', `/ai/models?engine=${encodeURIComponent(engine)}`)
 
   if (!result.ok || !result.data?.models) {
@@ -79,9 +83,10 @@ export async function fetchAndCacheCatalog(
     return { ok: false, message: '取得結果が空でした（キーや権限を確認してください）' }
   }
 
+  const source = result.data.source === 'live' ? 'live' : 'builtin'
   const merged = mergeCatalogWithBuiltin(engine, next)
   saveCachedCatalog(engine, merged)
-  return { ok: true, models: merged, count: merged.length }
+  return { ok: true, models: merged, count: merged.length, source }
 }
 
 export async function prefetchAllModelCatalogs(): Promise<void> {

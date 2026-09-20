@@ -204,7 +204,12 @@ export async function apiRequest<T = unknown>(
   options?: ApiRequestOptions
 ): Promise<ApiResponse<T>> {
   const pathName = path.replace(/^\//, '').split('?')[0]
-  if (method.toUpperCase() === 'GET' && pathName === 'ai/agent-runs') {
+  // Model catalog live fetch lives in Electron (listProviderModels). Do not use the
+  // older PHP stub that hard-codes Claude/Cursor builtin lists when XAMPP is up.
+  if (
+    method.toUpperCase() === 'GET' &&
+    (pathName === 'ai/agent-runs' || pathName === 'ai/models')
+  ) {
     const { localApiRequest } = await import('./localApi')
     return localApiRequest<T>(method, path, body)
   }

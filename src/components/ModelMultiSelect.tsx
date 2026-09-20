@@ -119,7 +119,13 @@ export function ModelMultiSelect({
         return
       }
       setOptions(result.models)
-      setFetchMessage(`${result.count} 件のモデルを取得しました`)
+      if (result.source === 'live') {
+        setFetchMessage(`API から ${result.count} 件取得（一覧をスクロール可）`)
+      } else {
+        setFetchMessage(
+          `組み込み ${result.count} 件のまま（API 取得失敗。キー・権限・ネットを確認）`
+        )
+      }
       window.dispatchEvent(
         new CustomEvent('saforall-model-catalog-updated', { detail: { engine } })
       )
@@ -141,7 +147,9 @@ export function ModelMultiSelect({
         >
           {fetching ? '取得中…' : '最新を取得'}
         </button>
-        {fetchMessage && <span className="model-multi-fetch-msg">{fetchMessage}</span>}
+        <span className="model-multi-fetch-msg">
+          {fetchMessage ?? `カタログ ${displayRows.length} 件`}
+        </span>
       </div>
 
       <div className="model-multi-list">

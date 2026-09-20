@@ -49,13 +49,34 @@ test('pathsFromDataTransfer reads Electron File.path and file URIs', () => {
   }
   assert.deepEqual(pathsFromDataTransfer(uriDt), ['D:\\ws\\src\\main.ts'])
 
+  const absolute = {
+    files: { length: 0, item: () => null },
+    getData: (type) => (type === 'text/plain' ? 'D:\\ws\\src\\App.tsx' : '')
+  }
+  assert.deepEqual(pathsFromDataTransfer(absolute, { workspacePath: 'D:\\ws' }), [
+    'D:\\ws\\src\\App.tsx'
+  ])
+})
+
+test('pathsFromDataTransfer does not steal normal clipboard text paste', () => {
+  const prose = {
+    files: { length: 0, item: () => null },
+    getData: (type) =>
+      type === 'text/plain' ? 'Model API Online/Offline を確認してください' : ''
+  }
+  assert.deepEqual(pathsFromDataTransfer(prose, { workspacePath: 'D:\\ws' }), [])
+
   const relative = {
     files: { length: 0, item: () => null },
     getData: (type) => (type === 'text/plain' ? 'src/App.tsx' : '')
   }
-  assert.deepEqual(pathsFromDataTransfer(relative, { workspacePath: 'D:\\ws' }), [
-    'D:\\ws\\src/App.tsx'
-  ])
+  assert.deepEqual(pathsFromDataTransfer(relative, { workspacePath: 'D:\\ws' }), [])
+
+  const url = {
+    files: { length: 0, item: () => null },
+    getData: (type) => (type === 'text/plain' ? 'https://example.com/a/b' : '')
+  }
+  assert.deepEqual(pathsFromDataTransfer(url), [])
 })
 
 test('ChatPanel wires Cursor-style attach chips and drop zone', () => {

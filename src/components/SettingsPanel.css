@@ -350,7 +350,8 @@
 }
 
 .model-multi-list {
-  max-height: 150px; /* 約5件分 */
+  /* Was 150px (~5 rows): fetch looked unchanged */
+  max-height: min(420px, 48vh);
   overflow-y: auto;
   overflow-x: hidden;
   border: 1px solid var(--border);
