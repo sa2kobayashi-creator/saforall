@@ -1,9 +1,23 @@
 import { getLocalSetting } from '../../settingsStore'
+import { modelOmitsTemperature } from '../agentMessages'
 import { aiErrorFromHttp, AIError, redactLooksLikeSecret } from '../errors'
 import { newRequestId, tokensFromText, type AIRequest, type AIResponse, type Credential } from '../types'
 import { parseSettingModels, type AIProviderAdapter } from './types'
 
 const DEFAULT_MODELS = ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o']
+
+/** Ask Chat Completions body: omit temperature for models that Agent already omits. */
+function buildOpenAiAskBody(
+  model: string,
+  messages: AIRequest['messages'],
+  temperature?: number
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { model, messages }
+  if (!modelOmitsTemperature(model)) {
+    body.temperature = temperature ?? 0.2
+  }
+  return body
+}
 
 function extractContent(json: {
   choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>
@@ -48,11 +62,7 @@ export const openaiAdapter: AIProviderAdapter = {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${credential.secret}`
         },
-        body: JSON.stringify({
-          model,
-          messages: request.messages,
-          temperature: request.temperature ?? 0.2
-        })
+        body: JSON.stringify(buildOpenAiAskBody(model, request.messages, request.temperature))
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'network error'

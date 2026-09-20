@@ -53,6 +53,7 @@ const tests = [
   'scripts/chat-cancel.test.mjs',
   'scripts/chat-error-stream.test.mjs',
   'scripts/model-catalog-fetch.test.mjs',
+  'scripts/openai-ask-temperature.test.mjs',
   'scripts/chat-latency.test.mjs',
   'scripts/session-heal.test.mjs',
   'scripts/edit-guards.test.mjs',
