@@ -3,7 +3,15 @@ import { ConfirmDialog } from './ConfirmDialog'
 import { MessageContent } from './MessageContent'
 import { isShellLanguage, parseMessageParts } from '../lib/codeBlocks'
 import { languageFromPath } from '../lib/language'
-import { DEFAULT_COST_LIMITS, USAGE_ENGINE_KEYS, DEFAULT_ENABLED_MODELS, optionsForEngine, parseModelList, type ProviderEngine } from '../lib/llmModels'
+import {
+  DEFAULT_COST_LIMITS,
+  USAGE_ENGINE_KEYS,
+  DEFAULT_ENABLED_MODELS,
+  isAgentSupportedEngine,
+  optionsForEngine,
+  parseModelList,
+  type ProviderEngine
+} from '../lib/llmModels'
 import {
   DEFAULT_ENABLED_CATEGORIES,
   ROUTER_CATEGORIES,
@@ -276,6 +284,15 @@ export function ChatPanel({
   inputRef.current = input
   const lastSubmittedTextRef = useRef('')
 
+  // Restore: Agents must not stay on Workers (Ask still allows Workers).
+  useEffect(() => {
+    if (mode === 'agent' && !isAgentSupportedEngine(engine)) {
+      setEngine('auto')
+      window.localStorage.setItem('saforall-ai-engine', 'auto')
+      setModelChoice('auto-within-engine')
+    }
+  }, [mode, engine])
+
   // 幅を狭めたタイミングだけ履歴を自動で畳む
   useEffect(() => {
     if (width < 340 && prevChatWidthRef.current >= 340) {
@@ -381,6 +398,10 @@ export function ChatPanel({
   }, [backendConnected, settingsRevision])
 
   const changeEngine = (next: AiEngine) => {
+    if (mode === 'agent' && !isAgentSupportedEngine(next)) {
+      setError('Workers は Agent では利用できません。Ask に切り替えるか、別の AI を選んでください。')
+      return
+    }
     setEngine(next)
     window.localStorage.setItem('saforall-ai-engine', next)
     setModelChoice('auto-within-engine')
@@ -945,6 +966,12 @@ export function ChatPanel({
   )
 
   const changeMode = (next: ChatMode) => {
+    if (next === 'agent' && !isAgentSupportedEngine(engine)) {
+      // Keep Workers Ask usable; leave Agent by switching engine off Workers.
+      setEngine('auto')
+      window.localStorage.setItem('saforall-ai-engine', 'auto')
+      setModelChoice('auto-within-engine')
+    }
     setMode(next)
     window.localStorage.setItem('saforall-chat-mode', next)
   }
@@ -1277,6 +1304,11 @@ export function ChatPanel({
         ? options.userMessageId
         : undefined
     if ((!text && !hasImages) || busy || loading) return
+
+    if (mode === 'agent' && !isAgentSupportedEngine(engine)) {
+      setError('Workers は Agent では利用できません。Ask に切り替えるか、OpenAI / Claude / Gemini を選んでください。')
+      return
+    }
 
     if (!backendConnected && !localLlmReady) {
       setError(buildBackendOfflineMessage())
@@ -2076,7 +2108,13 @@ export function ChatPanel({
                   <option value="gemini">Gemini</option>
                   <option value="claude">Claude</option>
                   <option value="cursor">Cursor</option>
-                  <option value="workers">Workers</option>
+                  <option
+                    value="workers"
+                    disabled={mode === 'agent'}
+                    title="Workers は Agent では利用できません（Ask では利用可）"
+                  >
+                    Workers
+                  </option>
                 </select>
               </label>
               {engine === 'auto' && (
@@ -2185,7 +2223,7 @@ export function ChatPanel({
                       : engine === 'claude'
                         ? 'Claude（ツール Agent 可）'
                         : engine === 'workers'
-                          ? 'Workers（ツール不可）'
+                          ? 'Workers（Agentでは利用できません）'
                           : 'OpenAI'}
                 {routeLabel ? ` · ${routeLabel}` : ''}
               </span>

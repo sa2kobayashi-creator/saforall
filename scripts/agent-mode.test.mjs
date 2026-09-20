@@ -90,6 +90,27 @@ test('ChatService asks model to tolerate typos', async () => {
   assert.match(src, /大備考/)
 })
 
+test('Workers is Agent-unsupported; Ask engines stay selectable', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { dirname, join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const { isAgentSupportedEngine } = await import('../src/lib/llmModels.ts')
+  assert.equal(isAgentSupportedEngine('workers'), false)
+  assert.equal(isAgentSupportedEngine('openai'), true)
+  assert.equal(isAgentSupportedEngine('claude'), true)
+  assert.equal(isAgentSupportedEngine('gemini'), true)
+  assert.equal(isAgentSupportedEngine('cursor'), true)
+  assert.equal(isAgentSupportedEngine('auto'), true)
+  const chat = await readFile(join(root, 'src/components/ChatPanel.tsx'), 'utf8')
+  assert.match(chat, /isAgentSupportedEngine/)
+  assert.match(chat, /disabled=\{mode === 'agent'\}/)
+  assert.match(chat, /Agentでは利用できません/)
+  // Runtime defense must remain (UI + runtime double gate).
+  const workers = await readFile(join(root, 'electron/main/ai/adapters/workers.ts'), 'utf8')
+  assert.match(workers, /throwAgentUnsupported\('workers'\)/)
+})
+
 test('UI copy uses 変更候補 instead of Composer', async () => {
   const { readFile } = await import('node:fs/promises')
   const { dirname, join } = await import('node:path')

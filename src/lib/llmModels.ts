@@ -2,6 +2,11 @@ export type AiEngine = 'auto' | 'cursor' | 'openai' | 'gemini' | 'claude' | 'wor
 export type ProviderEngine = Exclude<AiEngine, 'auto'>
 export type ModelTier = 'cheap' | 'standard' | 'strong'
 
+/** UI: engines that may be selected while mode is Agent. Workers Ask stays available. */
+export function isAgentSupportedEngine(engine: string): boolean {
+  return engine !== 'workers'
+}
+
 export type ModelOption = {
   id: string
   label: string
