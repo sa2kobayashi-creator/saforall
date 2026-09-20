@@ -100,6 +100,37 @@ export function formatAiUserError(raw: string | null | undefined): string {
     return 'API キーが未設定です。Settings で OpenAI / Claude / Gemini などのキーを保存してください。'
   }
 
+  // OpenAI Agent: model may not work on the current Chat Completions + tools path.
+  // Do not assert absolute "unsupported" — keep API detail for diagnostics.
+  if (
+    lower.includes('tools is not supported') ||
+    lower.includes('tool_choice is not supported') ||
+    lower.includes('does not support tools') ||
+    lower.includes('does not support function') ||
+    text.includes('function calling 未対応')
+  ) {
+    return (
+      'OpenAI Agent をこのモデルで実行できませんでした。' +
+      'このモデルは現在の Agent 実行方式（Chat Completions + tools）に対応していない可能性があります。' +
+      ' Ask モードへ切り替えるか、gpt-4.1 / gpt-4o 系など別モデルを選んでください。' +
+      `\n詳細: ${text}`
+    )
+  }
+
+  if (
+    lower.includes('v1/responses') ||
+    lower.includes('not supported in the v1/chat/completions') ||
+    lower.includes('not a chat model') ||
+    (lower.includes('did you mean to use v1/completions') && lower.includes('chat/completions'))
+  ) {
+    return (
+      'OpenAI Agent をこのモデルで実行できませんでした。' +
+      'このモデルは現在の Agent 実行方式（Chat Completions）では利用できない可能性があります。' +
+      ' Ask で試すか、別の OpenAI モデルを選んでください。' +
+      `\n詳細: ${text}`
+    )
+  }
+
   // Already Japanese guidance — keep as-is
   if (/[ぁ-んァ-ン一-龥]/.test(text) && (text.includes('ください') || text.includes('確認'))) {
     return text

@@ -32,6 +32,40 @@ test('formatAiUserError guides rate limit / key / budget', async () => {
   assert.match(formatAiUserError(''), /再送/)
 })
 
+test('formatAiUserError clarifies OpenAI Agent model path failures', async () => {
+  const mod = await import(pathToFileURL(join(root, 'src/lib/aiErrorGuide.ts')).href)
+  const { formatAiUserError } = mod
+
+  const tools = formatAiUserError(
+    'LLM HTTP 404: tools is not supported in this model. — このモデル/プロバイダは function calling 未対応の可能性があります。'
+  )
+  assert.match(tools, /OpenAI Agent をこのモデルで実行できませんでした/)
+  assert.match(tools, /Chat Completions \+ tools/)
+  assert.match(tools, /Ask モード/)
+  assert.match(tools, /詳細:/)
+  assert.match(tools, /tools is not supported/)
+
+  const responses = formatAiUserError(
+    'LLM HTTP 404: This model is not supported in the v1/chat/completions endpoint. Use the v1/responses endpoint instead.'
+  )
+  assert.match(responses, /OpenAI Agent をこのモデルで実行できませんでした/)
+  assert.match(responses, /Chat Completions/)
+  assert.match(responses, /Ask で試す/)
+  assert.match(responses, /詳細:/)
+  assert.match(responses, /v1\/responses/)
+  assert.doesNotMatch(responses, /キー・モデルを確認してください。$/)
+
+  const realtime = formatAiUserError(
+    'LLM HTTP 404: This is not a chat model and thus not supported in the v1/chat/completions endpoint. Did you mean to use v1/completions?'
+  )
+  assert.match(realtime, /OpenAI Agent をこのモデルで実行できませんでした/)
+  assert.match(realtime, /詳細:/)
+  assert.match(realtime, /not a chat model/)
+
+  // General auth errors stay on the existing key guidance path.
+  assert.match(formatAiUserError('LLM HTTP 401: Incorrect API key provided'), /API キー/)
+})
+
 test('Settings save refreshes Chat LLM readiness', () => {
   const app = readFileSync(join(root, 'src/App.tsx'), 'utf8')
   const chat = readFileSync(join(root, 'src/components/ChatPanel.tsx'), 'utf8')
