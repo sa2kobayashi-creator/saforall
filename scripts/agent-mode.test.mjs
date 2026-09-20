@@ -126,3 +126,79 @@ test('UI copy uses 変更候補 instead of Composer', async () => {
   assert.match(agent, /変更候補バーまたは一覧/)
   assert.doesNotMatch(agent, /Composer で「すべて適用」/)
 })
+
+/** Mirrors electron/main/toolAgent.ts buildAgentProseExhaustionFinalText */
+function buildAgentProseExhaustionFinalText(input) {
+  if (input.anyToolCall && input.editedPathCount === 0 && !input.fakingTools) {
+    return (
+      'Agent はツールを実行しましたが、今回の実行では編集候補が作成されませんでした。' +
+      '変更候補が必要な場合は、編集対象と変更内容を明示して再試行してください。' +
+      '（編集候補が出るまで Agent の編集成功条件は満たしていません。）'
+    )
+  }
+  return (
+    'Agent がツールを正しく呼び出せませんでした（文章での「手順: edit_file」などは無効です）。' +
+    'モデルを OpenAI にし、フォルダを開いた状態で再試行してください。変更候補に差分が出るまで成功ではありません。'
+  )
+}
+
+test('prose exhaustion finalText: no-edit vs tool-none vs fake prose', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { dirname, join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const src = await readFile(join(root, 'electron/main/toolAgent.ts'), 'utf8')
+
+  assert.match(src, /export function buildAgentProseExhaustionFinalText/)
+  assert.match(src, /buildAgentProseExhaustionFinalText\(\{/)
+  assert.match(src, /editedPathCount: editedPaths\.size/)
+  // Success gate must remain — do not treat no-edit as edit success.
+  assert.match(src, /if \(!anyToolCall \|\| editedPaths\.size === 0 \|\| fakingTools\)/)
+  assert.match(src, /editedPaths\.size > 0/)
+
+  const noEdit = buildAgentProseExhaustionFinalText({
+    anyToolCall: true,
+    editedPathCount: 0,
+    fakingTools: false
+  })
+  assert.match(noEdit, /編集候補が作成されませんでした/)
+  assert.match(noEdit, /編集成功条件は満たしていません/)
+  assert.doesNotMatch(noEdit, /ツールを正しく呼び出せませんでした/)
+  assert.doesNotMatch(noEdit, /モデルを OpenAI に/)
+
+  const noTool = buildAgentProseExhaustionFinalText({
+    anyToolCall: false,
+    editedPathCount: 0,
+    fakingTools: false
+  })
+  assert.match(noTool, /ツールを正しく呼び出せませんでした/)
+  assert.match(noTool, /モデルを OpenAI に/)
+
+  const fake = buildAgentProseExhaustionFinalText({
+    anyToolCall: true,
+    editedPathCount: 0,
+    fakingTools: true
+  })
+  assert.match(fake, /ツールを正しく呼び出せませんでした/)
+  assert.match(fake, /モデルを OpenAI に/)
+
+  // With edits present, exhaustion helper is not the edit-success path; keep failure wording if faking.
+  const fakeWithEdits = buildAgentProseExhaustionFinalText({
+    anyToolCall: true,
+    editedPathCount: 2,
+    fakingTools: true
+  })
+  assert.match(fakeWithEdits, /ツールを正しく呼び出せませんでした/)
+
+  // Source still contains edit-success / verify messaging unchanged.
+  assert.match(src, /シェル検証は成功しています。変更候補バーまたは一覧/)
+  assert.match(src, /outcomeDetail = 'no_edits'/)
+  assert.match(src, /outcomeDetail = 'verify_pass'/)
+
+  // Unsupported model / tools error paths stay outside this helper.
+  assert.match(src, /AGENT_UNSUPPORTED/)
+  assert.match(src, /ツール Agent 非対応/)
+  const guide = await readFile(join(root, 'src/lib/aiErrorGuide.ts'), 'utf8')
+  assert.match(guide, /OpenAI Agent をこのモデルで実行できませんでした/)
+  assert.match(guide, /詳細:/)
+})

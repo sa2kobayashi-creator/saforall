@@ -353,6 +353,28 @@ export function normalizeAgentPath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
 }
 
+/**
+ * User-facing final text when prose-only / no-edit exhaustion ends the loop.
+ * Does not change Agent success criteria (edits still required for edit success).
+ */
+export function buildAgentProseExhaustionFinalText(input: {
+  anyToolCall: boolean
+  editedPathCount: number
+  fakingTools: boolean
+}): string {
+  if (input.anyToolCall && input.editedPathCount === 0 && !input.fakingTools) {
+    return (
+      'Agent はツールを実行しましたが、今回の実行では編集候補が作成されませんでした。' +
+      '変更候補が必要な場合は、編集対象と変更内容を明示して再試行してください。' +
+      '（編集候補が出るまで Agent の編集成功条件は満たしていません。）'
+    )
+  }
+  return (
+    'Agent がツールを正しく呼び出せませんでした（文章での「手順: edit_file」などは無効です）。' +
+    'モデルを OpenAI にし、フォルダを開いた状態で再試行してください。変更候補に差分が出るまで成功ではありません。'
+  )
+}
+
 /** Detect when the model roleplays tools in markdown instead of calling them. */
 export function looksLikeFakeToolProse(text: string): boolean {
   const raw = (text || '').trim()
@@ -2073,9 +2095,11 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
         })
         continue
       }
-      finalText =
-        'Agent がツールを正しく呼び出せませんでした（文章での「手順: edit_file」などは無効です）。' +
-        'モデルを OpenAI にし、フォルダを開いた状態で再試行してください。変更候補に差分が出るまで成功ではありません。'
+      finalText = buildAgentProseExhaustionFinalText({
+        anyToolCall,
+        editedPathCount: editedPaths.size,
+        fakingTools
+      })
       break
     }
 
