@@ -188,40 +188,46 @@ test('no key / API fail / empty live list fall back to builtin Gemini catalog', 
   assert.equal(empty.source, 'builtin')
 })
 
-test('OpenAI live list keeps chat ids and drops image/audio', async () => {
+test('OpenAI live list keeps chat ids and drops image/tts/audio/transcribe', async () => {
   const { listProviderModels, isChatOpenAiModel } = await import(
     '../electron/main/ai/modelCatalogFetch.ts'
   )
+  // Keep chat candidates (live /v1/models ids).
   assert.equal(isChatOpenAiModel('gpt-4.1'), true)
+  assert.equal(isChatOpenAiModel('gpt-5-chat-latest'), true)
+  assert.equal(isChatOpenAiModel('gpt-4o-mini'), true)
   assert.equal(isChatOpenAiModel('o3-mini'), true)
+  assert.equal(isChatOpenAiModel('o4-mini'), true)
+  // Outside allow prefix.
   assert.equal(isChatOpenAiModel('dall-e-3'), false)
+  assert.equal(isChatOpenAiModel('whisper-1'), false)
+  assert.equal(isChatOpenAiModel('tts-1'), false)
+  assert.equal(isChatOpenAiModel('text-embedding-3-small'), false)
+  // Allow-prefix but clearly non-chat (live ids).
+  assert.equal(isChatOpenAiModel('chatgpt-image-latest'), false)
+  assert.equal(isChatOpenAiModel('gpt-image-1'), false)
+  assert.equal(isChatOpenAiModel('gpt-4o-mini-tts'), false)
+  assert.equal(isChatOpenAiModel('gpt-audio'), false)
+  assert.equal(isChatOpenAiModel('gpt-audio-mini'), false)
+  assert.equal(isChatOpenAiModel('gpt-4o-mini-transcribe'), false)
+  assert.equal(isChatOpenAiModel('gpt-realtime-whisper'), false)
+
   const catalog = await listProviderModels('openai', {
     credentialFor: () => openaiCredential(),
     fetchImpl: async (input) => {
       assert.match(String(input), /\/models$/)
       return jsonResponse(200, {
-        data: [{ id: 'gpt-4.1' }, { id: 'dall-e-3' }, { id: 'whisper-1' }, { id: 'o3-mini' }]
-      })
-    }
-  })
-  assert.equal(catalog.source, 'live')
-  assert.deepEqual(
-    catalog.models.map((row) => row.id),
-    ['gpt-4.1', 'o3-mini']
-  )
-})
-
-test('Workers live list filters tasks and caps at 80', async () => {
-  const { listProviderModels } = await import('../electron/main/ai/modelCatalogFetch.ts')
-  const catalog = await listProviderModels('workers', {
-    credentialFor: () => workersCredential(),
-    fetchImpl: async (input) => {
-      assert.match(String(input), /accounts\/acct-1\/ai\/models\/search/)
-      return jsonResponse(200, {
-        result: [
-          { name: '@cf/meta/llama-3.1-8b-instruct', task: { name: 'Text Generation' } },
-          { name: 'no-slash', task: { name: 'text' } },
-          { name: '@cf/cf/resnet', task: { name: 'Image Classification' } }
+        data: [
+          { id: 'gpt-4.1' },
+          { id: 'gpt-5-chat-latest' },
+          { id: 'o3-mini' },
+          { id: 'chatgpt-image-latest' },
+          { id: 'gpt-4o-mini-tts' },
+          { id: 'gpt-audio-mini' },
+          { id: 'gpt-image-1' },
+          { id: 'gpt-4o-transcribe' },
+          { id: 'dall-e-3' },
+          { id: 'whisper-1' }
         ]
       })
     }
@@ -229,8 +235,108 @@ test('Workers live list filters tasks and caps at 80', async () => {
   assert.equal(catalog.source, 'live')
   assert.deepEqual(
     catalog.models.map((row) => row.id),
-    ['@cf/meta/llama-3.1-8b-instruct']
+    ['gpt-4.1', 'gpt-5-chat-latest', 'o3-mini']
   )
+})
+
+test('OpenAI live success but filter-empty falls back to builtin', async () => {
+  const { listProviderModels } = await import('../electron/main/ai/modelCatalogFetch.ts')
+  const catalog = await listProviderModels('openai', {
+    credentialFor: () => openaiCredential(),
+    fetchImpl: async () =>
+      jsonResponse(200, {
+        data: [
+          { id: 'chatgpt-image-latest' },
+          { id: 'gpt-4o-mini-tts' },
+          { id: 'gpt-audio' },
+          { id: 'dall-e-3' }
+        ]
+      })
+  })
+  assert.equal(catalog.source, 'builtin')
+  assert.ok(catalog.models.some((row) => row.id === 'gpt-4.1-mini'))
+})
+
+test('Workers live list keeps Text Generation and drops embedding/TTS/image', async () => {
+  const { listProviderModels, isWorkersChatCatalogModel } = await import(
+    '../electron/main/ai/modelCatalogFetch.ts'
+  )
+  assert.equal(
+    isWorkersChatCatalogModel('@cf/meta/llama-3.1-8b-instruct', 'Text Generation'),
+    true
+  )
+  assert.equal(isWorkersChatCatalogModel('@cf/baai/bge-m3', 'Text Embeddings'), false)
+  assert.equal(isWorkersChatCatalogModel('@cf/myshell-ai/melotts', 'Text-to-Speech'), false)
+  assert.equal(
+    isWorkersChatCatalogModel('@cf/black-forest-labs/flux-1-schnell', 'Text-to-Image'),
+    false
+  )
+  assert.equal(
+    isWorkersChatCatalogModel('@cf/openai/whisper', 'Automatic Speech Recognition'),
+    false
+  )
+  // Empty task: pass-through unless id is obviously non-chat.
+  assert.equal(isWorkersChatCatalogModel('@cf/meta/llama-3.3-70b-instruct-fp8-fast', ''), true)
+  assert.equal(isWorkersChatCatalogModel('@cf/baai/bge-base-en-v1.5', ''), false)
+
+  const catalog = await listProviderModels('workers', {
+    credentialFor: () => workersCredential(),
+    fetchImpl: async (input) => {
+      assert.match(String(input), /accounts\/acct-1\/ai\/models\/search/)
+      return jsonResponse(200, {
+        result: [
+          { name: '@cf/meta/llama-3.1-8b-instruct', task: { name: 'Text Generation' } },
+          { name: '@cf/qwen/qwen2.5-coder-32b-instruct', task: { name: 'Text Generation' } },
+          { name: '@cf/baai/bge-m3', task: { name: 'Text Embeddings' } },
+          { name: '@cf/myshell-ai/melotts', task: { name: 'Text-to-Speech' } },
+          { name: '@cf/black-forest-labs/flux-1-schnell', task: { name: 'Text-to-Image' } },
+          { name: '@cf/openai/whisper', task: { name: 'Automatic Speech Recognition' } },
+          { name: 'no-slash', task: { name: 'Text Generation' } },
+          { name: '@cf/microsoft/resnet-50', task: { name: 'Image Classification' } }
+        ]
+      })
+    }
+  })
+  assert.equal(catalog.source, 'live')
+  assert.deepEqual(
+    catalog.models.map((row) => row.id),
+    ['@cf/meta/llama-3.1-8b-instruct', '@cf/qwen/qwen2.5-coder-32b-instruct']
+  )
+})
+
+test('Workers live success but filter-empty falls back to builtin', async () => {
+  const { listProviderModels } = await import('../electron/main/ai/modelCatalogFetch.ts')
+  const catalog = await listProviderModels('workers', {
+    credentialFor: () => workersCredential(),
+    fetchImpl: async () =>
+      jsonResponse(200, {
+        result: [
+          { name: '@cf/baai/bge-m3', task: { name: 'Text Embeddings' } },
+          { name: '@cf/myshell-ai/melotts', task: { name: 'Text-to-Speech' } }
+        ]
+      })
+  })
+  assert.equal(catalog.source, 'builtin')
+  assert.ok(catalog.models.some((row) => row.id.includes('instruct')))
+})
+
+test('OpenAI / Workers no-key and API fail fall back to builtin', async () => {
+  const { listProviderModels } = await import('../electron/main/ai/modelCatalogFetch.ts')
+  const noKeyOpenAi = await listProviderModels('openai', { credentialFor: () => null })
+  const noKeyWorkers = await listProviderModels('workers', { credentialFor: () => null })
+  assert.equal(noKeyOpenAi.source, 'builtin')
+  assert.equal(noKeyWorkers.source, 'builtin')
+
+  const failOpenAi = await listProviderModels('openai', {
+    credentialFor: () => openaiCredential(),
+    fetchImpl: async () => jsonResponse(500, { error: { message: 'boom' } })
+  })
+  const failWorkers = await listProviderModels('workers', {
+    credentialFor: () => workersCredential(),
+    fetchImpl: async () => jsonResponse(503, { errors: [{ message: 'down' }] })
+  })
+  assert.equal(failOpenAi.source, 'builtin')
+  assert.equal(failWorkers.source, 'builtin')
 })
 
 test('Claude live list paginates Anthropic /v1/models', async () => {

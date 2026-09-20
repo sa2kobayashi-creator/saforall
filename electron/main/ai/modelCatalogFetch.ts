@@ -81,8 +81,53 @@ export function isNonChatGeminiModel(id: string): boolean {
   return /image|imagen|embedding|embed-content|tts|audio|lyria|robotics|aqa|computer-use/i.test(id)
 }
 
+/**
+ * OpenAI /v1/models exposes little modality metadata, so keep the existing
+ * chat-ish allow prefix and deny known non-chat ids that still match it
+ * (live ids include chatgpt-image-latest, gpt-*-tts, gpt-audio*, gpt-image-*).
+ */
 export function isChatOpenAiModel(id: string): boolean {
-  return /^(gpt-|o[0-9]|chatgpt-|ft:)/i.test(id)
+  if (!/^(gpt-|o[0-9]|chatgpt-|ft:)/i.test(id)) return false
+  // Explicit non-chat modalities (do not blanket-deny every future "audio" chat model name
+  // without a separator — require token boundaries / known prefixes from live catalog).
+  if (/^gpt-audio\b/i.test(id) || /^gpt-image\b/i.test(id) || /^chatgpt-image\b/i.test(id)) {
+    return false
+  }
+  if (/(^|[-_/])(image|tts|transcribe|whisper|audio)([-_/]|$)/i.test(id)) {
+    return false
+  }
+  return true
+}
+
+/**
+ * Cloudflare Workers AI `task.name` values (live sample): "Text Generation",
+ * "Text Embeddings", "Text-to-Speech", "Text-to-Image", etc. Do not treat bare
+ * "text" as chat — embeddings/TTS also contain "Text".
+ */
+export function isWorkersChatCatalogModel(id: string, taskName: string): boolean {
+  if (!id.includes('/')) return false
+  const task = taskName.trim()
+  if (task) {
+    // Deny non-chat tasks first (real CF task.name strings).
+    if (
+      /embedding|text-to-speech|text-to-image|speech recognition|classification|translation|dumb pipe|image-to-text|image classification/i.test(
+        task
+      )
+    ) {
+      return false
+    }
+    // Allow Text Generation / chat / instruct-style tasks only.
+    return /text generation|chat|instruct/i.test(task)
+  }
+  // Empty task: keep prior pass-through, but drop obvious non-chat model ids.
+  if (
+    /embed|whisper|tts|melotts|aura-|resnet|stable-diffusion|flux-|bge-|reranker|speech|asr/i.test(
+      id
+    )
+  ) {
+    return false
+  }
+  return true
 }
 
 type GeminiListRow = {
@@ -208,7 +253,7 @@ async function listWorkers(credential: Credential, fetchImpl: FetchLike): Promis
           : ''
     if (!id || !id.includes('/')) continue
     const task = typeof rec.task?.name === 'string' ? rec.task.name : ''
-    if (task && !/text|chat|instruct|generation/i.test(task)) continue
+    if (!isWorkersChatCatalogModel(id, task)) continue
     out.push({ id, label: id, tier: guessModelTier(id) })
   }
   return sortModels(out).slice(0, 80)
