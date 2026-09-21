@@ -62,8 +62,23 @@ test('formatAiUserError clarifies OpenAI Agent model path failures', async () =>
   assert.match(realtime, /詳細:/)
   assert.match(realtime, /not a chat model/)
 
-  // General auth errors stay on the existing key guidance path.
-  assert.match(formatAiUserError('LLM HTTP 401: Incorrect API key provided'), /API キー/)
+  // General auth errors stay on the existing key guidance path, with original detail.
+  const auth = formatAiUserError('LLM HTTP 401: Incorrect API key provided')
+  assert.match(auth, /API キー/)
+  assert.match(auth, /詳細:/)
+  assert.match(auth, /Incorrect API key/)
+
+  // Tool / Chat Completions signals win over incidental "api key" text.
+  const toolsOverKey = formatAiUserError(
+    'HTTP 404: tools is not supported in this model. Please check your api key docs.'
+  )
+  assert.match(toolsOverKey, /Chat Completions \+ tools/)
+  assert.doesNotMatch(toolsOverKey, /^API キーを確認してください/)
+
+  const toolExec = formatAiUserError('Tool read_file failed: ENOENT: no such file')
+  assert.match(toolExec, /ツール実行に失敗/)
+  assert.match(toolExec, /詳細:/)
+  assert.doesNotMatch(toolExec, /API キーを確認してください/)
 })
 
 test('Settings save refreshes Chat LLM readiness', () => {

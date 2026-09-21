@@ -14,7 +14,8 @@ export function formatAiUserError(raw: string | null | undefined): string {
     text.includes('レート制限')
   ) {
     return (
-      'レート制限（429）です。1〜2 分待って再送するか、Settings で軽いモデルに切り替えてください。'
+      'レート制限（429）です。1〜2 分待って再送するか、Settings で軽いモデルに切り替えてください。' +
+      `\n詳細: ${text}`
     )
   }
 
@@ -34,7 +35,8 @@ export function formatAiUserError(raw: string | null | undefined): string {
       'API クレジット／残高が不足しています。' +
       ' エンジンが「自動」の場合は代替エンジンへ切り替えを試します。' +
       ' 続く場合は Settings で OpenAI / Gemini のキーを確認するか、' +
-      'Anthropic は console.anthropic.com の Plans & Billing でチャージしてください。'
+      'Anthropic は console.anthropic.com の Plans & Billing でチャージしてください。' +
+      `\n詳細: ${text}`
     )
   }
 
@@ -62,46 +64,8 @@ export function formatAiUserError(raw: string | null | undefined): string {
     )
   }
 
-  if (
-    lower.includes('api key') ||
-    lower.includes('api_key') ||
-    lower.includes('unauthorized') ||
-    /\b401\b/.test(text) ||
-    text.includes('キー未設定') ||
-    text.includes('API キー')
-  ) {
-    return 'API キーを確認してください。Settings でキーを保存してから再送してください。'
-  }
-
-  if (
-    lower.includes('budget') ||
-    text.includes('BUDGET') ||
-    text.includes('予算') ||
-    text.includes('月額上限')
-  ) {
-    return '予算上限に達しています。Settings の月額上限を見直すか、別エンジンを選んでください。'
-  }
-
-  if (
-    lower.includes('timeout') ||
-    lower.includes('etimedout') ||
-    text.includes('タイムアウト') ||
-    lower.includes('network') ||
-    lower.includes('fetch failed')
-  ) {
-    return '通信がタイムアウトまたは失敗しました。ネット接続を確認し、もう一度送ってください。'
-  }
-
-  if (/\b500\b/.test(text) || /\b502\b/.test(text) || /\b503\b/.test(text)) {
-    return `${text} — 相手側サーバーの一時障害の可能性があります。しばらく待って再送してください。`
-  }
-
-  if (text.includes('LLM_NOT_CONFIGURED') || text.includes('ローカルモード: Settings')) {
-    return 'API キーが未設定です。Settings で OpenAI / Claude / Gemini などのキーを保存してください。'
-  }
-
-  // OpenAI Agent: model may not work on the current Chat Completions + tools path.
-  // Do not assert absolute "unsupported" — keep API detail for diagnostics.
+  // Agent path failures first — before generic API-key matching — so tool /
+  // Chat Completions messages that also mention credentials stay correctly classified.
   if (
     lower.includes('tools is not supported') ||
     lower.includes('tool_choice is not supported') ||
@@ -129,6 +93,56 @@ export function formatAiUserError(raw: string | null | undefined): string {
       ' Ask で試すか、別の OpenAI モデルを選んでください。' +
       `\n詳細: ${text}`
     )
+  }
+
+  // Tool runtime failure (after LLM accepted tools) — do not suggest API key.
+  if (
+    /^tool\s+\w+\s+failed\b/i.test(text) ||
+    lower.includes('tool execution failed') ||
+    lower.includes('tool_result error')
+  ) {
+    return `ツール実行に失敗しました（Provider API エラーではありません）。\n詳細: ${text}`
+  }
+
+  if (
+    lower.includes('api key') ||
+    lower.includes('api_key') ||
+    lower.includes('unauthorized') ||
+    /\b401\b/.test(text) ||
+    text.includes('キー未設定') ||
+    text.includes('API キー')
+  ) {
+    return (
+      'API キーを確認してください。Settings でキーを保存してから再送してください。' +
+      `\n詳細: ${text}`
+    )
+  }
+
+  if (
+    lower.includes('budget') ||
+    text.includes('BUDGET') ||
+    text.includes('予算') ||
+    text.includes('月額上限')
+  ) {
+    return '予算上限に達しています。Settings の月額上限を見直すか、別エンジンを選んでください。'
+  }
+
+  if (
+    lower.includes('timeout') ||
+    lower.includes('etimedout') ||
+    text.includes('タイムアウト') ||
+    lower.includes('network') ||
+    lower.includes('fetch failed')
+  ) {
+    return '通信がタイムアウトまたは失敗しました。ネット接続を確認し、もう一度送ってください。'
+  }
+
+  if (/\b500\b/.test(text) || /\b502\b/.test(text) || /\b503\b/.test(text)) {
+    return `${text} — 相手側サーバーの一時障害の可能性があります。しばらく待って再送してください。`
+  }
+
+  if (text.includes('LLM_NOT_CONFIGURED') || text.includes('ローカルモード: Settings')) {
+    return 'API キーが未設定です。Settings で OpenAI / Claude / Gemini などのキーを保存してください。'
   }
 
   // Already Japanese guidance — keep as-is
