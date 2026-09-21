@@ -110,8 +110,7 @@ export const openaiAdapter: AIProviderAdapter = {
       /\/$/,
       ''
     )
-    const { openaiChatCompletionsWithTools } = await import('./openaiTools')
-    const completion = await openaiChatCompletionsWithTools({
+    const callParams = {
       secret: credential.secret,
       baseUrl,
       model,
@@ -121,7 +120,13 @@ export const openaiAdapter: AIProviderAdapter = {
       toolChoice: options.toolChoice,
       timeoutMs: options.timeoutMs,
       signal: options.signal
-    })
+    }
+    const { isOpenAiResponsesToolsModel, openaiResponsesWithTools } = await import(
+      './openaiResponsesTools'
+    )
+    const completion = isOpenAiResponsesToolsModel(model)
+      ? await openaiResponsesWithTools(callParams)
+      : await (await import('./openaiTools')).openaiChatCompletionsWithTools(callParams)
     const inputTokens = Number(completion.usage?.prompt_tokens) || 0
     const outputTokens = Number(completion.usage?.completion_tokens) || 0
     return {

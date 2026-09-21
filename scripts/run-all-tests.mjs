@@ -55,6 +55,7 @@ const tests = [
   'scripts/chat-error-stream.test.mjs',
   'scripts/model-catalog-fetch.test.mjs',
   'scripts/openai-ask-temperature.test.mjs',
+  'scripts/openai-responses-tools-92016.test.mjs',
   'scripts/chat-latency.test.mjs',
   'scripts/session-heal.test.mjs',
   'scripts/edit-guards.test.mjs',
