@@ -93,7 +93,9 @@ export function isChatOpenAiModel(id: string): boolean {
   if (/^gpt-audio\b/i.test(id) || /^gpt-image\b/i.test(id) || /^chatgpt-image\b/i.test(id)) {
     return false
   }
-  if (/(^|[-_/])(image|tts|transcribe|whisper|audio)([-_/]|$)/i.test(id)) {
+  // Realtime / Completions-instruct are not Chat Completions chat-UI candidates
+  // (token boundaries — do not treat as Agent/tool capability denylist).
+  if (/(^|[-_/])(image|tts|transcribe|whisper|audio|realtime|instruct)([-_/]|$)/i.test(id)) {
     return false
   }
   return true

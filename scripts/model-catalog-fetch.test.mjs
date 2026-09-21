@@ -194,6 +194,9 @@ test('OpenAI live list keeps chat ids and drops image/tts/audio/transcribe', asy
   )
   // Keep chat candidates (live /v1/models ids).
   assert.equal(isChatOpenAiModel('gpt-4.1'), true)
+  assert.equal(isChatOpenAiModel('gpt-4.1-mini'), true)
+  assert.equal(isChatOpenAiModel('gpt-5'), true)
+  assert.equal(isChatOpenAiModel('gpt-5-mini'), true)
   assert.equal(isChatOpenAiModel('gpt-5-chat-latest'), true)
   assert.equal(isChatOpenAiModel('gpt-4o-mini'), true)
   assert.equal(isChatOpenAiModel('o3-mini'), true)
@@ -211,6 +214,10 @@ test('OpenAI live list keeps chat ids and drops image/tts/audio/transcribe', asy
   assert.equal(isChatOpenAiModel('gpt-audio-mini'), false)
   assert.equal(isChatOpenAiModel('gpt-4o-mini-transcribe'), false)
   assert.equal(isChatOpenAiModel('gpt-realtime-whisper'), false)
+  // Obvious non-chat Completions / Realtime (not Agent capability denylist).
+  assert.equal(isChatOpenAiModel('gpt-realtime'), false)
+  assert.equal(isChatOpenAiModel('gpt-realtime-mini'), false)
+  assert.equal(isChatOpenAiModel('gpt-3.5-turbo-instruct'), false)
 
   const catalog = await listProviderModels('openai', {
     credentialFor: () => openaiCredential(),
@@ -219,8 +226,15 @@ test('OpenAI live list keeps chat ids and drops image/tts/audio/transcribe', asy
       return jsonResponse(200, {
         data: [
           { id: 'gpt-4.1' },
+          { id: 'gpt-4.1-mini' },
+          { id: 'gpt-5' },
+          { id: 'gpt-5-mini' },
           { id: 'gpt-5-chat-latest' },
           { id: 'o3-mini' },
+          { id: 'o4-mini' },
+          { id: 'gpt-realtime' },
+          { id: 'gpt-realtime-mini' },
+          { id: 'gpt-3.5-turbo-instruct' },
           { id: 'chatgpt-image-latest' },
           { id: 'gpt-4o-mini-tts' },
           { id: 'gpt-audio-mini' },
@@ -235,7 +249,7 @@ test('OpenAI live list keeps chat ids and drops image/tts/audio/transcribe', asy
   assert.equal(catalog.source, 'live')
   assert.deepEqual(
     catalog.models.map((row) => row.id),
-    ['gpt-4.1', 'gpt-5-chat-latest', 'o3-mini']
+    ['gpt-4.1', 'gpt-4.1-mini', 'gpt-5', 'gpt-5-chat-latest', 'gpt-5-mini', 'o3-mini', 'o4-mini']
   )
 })
 
@@ -249,6 +263,8 @@ test('OpenAI live success but filter-empty falls back to builtin', async () => {
           { id: 'chatgpt-image-latest' },
           { id: 'gpt-4o-mini-tts' },
           { id: 'gpt-audio' },
+          { id: 'gpt-realtime' },
+          { id: 'gpt-3.5-turbo-instruct' },
           { id: 'dall-e-3' }
         ]
       })
