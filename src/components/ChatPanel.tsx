@@ -84,6 +84,11 @@ type Props = {
     language?: string,
     options?: ApplyCodeOptions
   ) => void | Promise<void>
+  /**
+   * Agent turn 開始時・失敗時に PendingEdits を捨てる。
+   * Close では呼ばない（候補保持）。次 Run の混入と error 残存を防ぐ。
+   */
+  onPendingEditsReset?: () => void
   /** Agent finished with Composer proposals that still need accept. */
   onAgentNeedsReview?: (info: { editCount: number; engine: string }) => void
 }
@@ -209,6 +214,7 @@ export function ChatPanel({
   onRecheckBackend,
   onOpenSettings,
   onApplyCode,
+  onPendingEditsReset,
   onAgentNeedsReview
 }: Props) {
   const { t } = useI18n()
@@ -1315,6 +1321,11 @@ export function ChatPanel({
       return
     }
 
+    // New Agent run must not inherit Close-kept candidates from a prior run.
+    if (mode === 'agent') {
+      onPendingEditsReset?.()
+    }
+
     setBusy({ phase: 'thinking', detail: backendConnected ? 'AI に問い合わせ中…' : 'Model API に問い合わせ中…' })
     setError(null)
     const submitGeneration = ++submitGenerationRef.current
@@ -1831,6 +1842,10 @@ export function ChatPanel({
       }
 
       if (streamCancelled) {
+        // Drop mid-run proposals so a cancelled Agent turn cannot leave stale review state.
+        if (modeRef.current === 'agent' && editProposalCount > 0) {
+          onPendingEditsReset?.()
+        }
         void refreshSessions()
         return
       }
@@ -1838,7 +1853,12 @@ export function ChatPanel({
       if (finalAssistantId && finalAssistantContent && usedEngine !== 'cursor' && !usedTools) {
         await runAgentActions(finalAssistantId, finalAssistantContent)
       }
-      if (editProposalCount > 0) {
+      if (streamFailed) {
+        // Failed Agent turns must not open Review Dialog or keep partial candidates.
+        if (modeRef.current === 'agent' && editProposalCount > 0) {
+          onPendingEditsReset?.()
+        }
+      } else if (editProposalCount > 0) {
         onAgentNeedsReview?.({ editCount: editProposalCount, engine: usedEngine })
       } else if (usedEngine === 'cursor' && modeRef.current === 'agent') {
         onAgentNeedsReview?.({ editCount: 0, engine: usedEngine })
@@ -1861,6 +1881,9 @@ export function ChatPanel({
         })
       }
     } catch (error) {
+      if (modeRef.current === 'agent') {
+        onPendingEditsReset?.()
+      }
       const message = formatAiUserError(
         error instanceof Error ? error.message : String(error)
       )

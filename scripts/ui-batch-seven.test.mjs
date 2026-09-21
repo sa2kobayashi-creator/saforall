@@ -14,6 +14,19 @@ test('ApplyDiff shows dialog for one item; composer for multi', () => {
   assert.match(app, /onDismiss=\{\(\) => setForceDiffDialog\(false\)\}/)
 })
 
+test('PendingEdits reset on Agent turn start/fail; Close keeps via dismiss only', () => {
+  const app = read('src/App.tsx')
+  const chat = read('src/components/ChatPanel.tsx')
+  const dialog = read('src/components/ApplyDiffDialog.tsx')
+  assert.match(app, /onPendingEditsReset=\{\(\) => \{/)
+  assert.match(app, /setForceDiffDialog\(false\)/)
+  assert.match(chat, /onPendingEditsReset\?\.\(\)/)
+  assert.match(chat, /if \(mode === 'agent'\) \{\s*onPendingEditsReset\?\.\(\)/)
+  assert.match(chat, /if \(streamFailed\)/)
+  assert.match(dialog, /closeWithoutReject = onDismiss \?\? onReject/)
+  assert.match(dialog, /Esc で閉じる（候補は残す）/)
+})
+
 test('Settings has tabs and export/import', () => {
   const settings = read('src/components/SettingsPanel.tsx')
   const main = read('electron/main/index.ts')

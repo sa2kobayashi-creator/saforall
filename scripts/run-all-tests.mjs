@@ -46,6 +46,7 @@ const tests = [
   'scripts/local-settings-ux.test.mjs',
   'scripts/ux-polish-batch.test.mjs',
   'scripts/ui-batch-seven.test.mjs',
+  'scripts/pending-edits-ux-92011.test.mjs',
   'scripts/agent-context-attach.test.mjs',
   'scripts/feedback-loop.test.mjs',
   'scripts/router-classify-context.test.mjs',

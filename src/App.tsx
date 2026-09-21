@@ -2177,6 +2177,11 @@ export default function App() {
                 onRecheckBackend={() => void checkBackend()}
                 onOpenSettings={() => setSettingsOpen(true)}
                 onApplyCode={applyCode}
+                onPendingEditsReset={() => {
+                  setApplyQueue([])
+                  setReviewIndex(0)
+                  setForceDiffDialog(false)
+                }}
                 onAgentNeedsReview={({ editCount, engine }) => {
                   if (editCount > 0) {
                     setComposerOpen(true)
