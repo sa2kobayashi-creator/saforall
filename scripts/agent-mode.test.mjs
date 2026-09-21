@@ -8,11 +8,11 @@ test('agent mode banner copy distinguishes tool execution', () => {
   assert.match(agent, /変更候補/)
 })
 
-test('prose-only block message requires edit_file', () => {
+test('prose-only block message requires tools; edit only when editing', () => {
   const msg =
-    'システム: Agent モードでは説明や markdown コード提示だけでは終了できません。必ずツールを呼び出してください（set_phase → read_file/search_code → edit_file）。edit_file なしの「修正案の説明」は無効です。'
-  assert.match(msg, /edit_file/)
-  assert.match(msg, /ツール/)
+    'システム: Agent モードでは説明や markdown コード提示だけでは終了できません。必ずツールを呼び出してください（set_phase → read_file/search_code）。修正依頼のときだけ edit_file が必要です。調査のみなら read/search のあと最終回答して構いません。'
+  assert.match(msg, /read_file\/search_code/)
+  assert.match(msg, /調査のみ/)
 })
 
 /** Mirrors electron/main/toolAgent.ts looksLikeFakeToolProse */
@@ -153,7 +153,12 @@ test('prose exhaustion finalText: no-edit vs tool-none vs fake prose', async () 
   assert.match(src, /buildAgentProseExhaustionFinalText\(\{/)
   assert.match(src, /editedPathCount: editedPaths\.size/)
   // Success gate must remain — do not treat no-edit as edit success.
-  assert.match(src, /if \(!anyToolCall \|\| editedPaths\.size === 0 \|\| fakingTools\)/)
+  // Read-only investigation may finalize via shouldAcceptAgentFinal; edit still requires verify.
+  assert.match(src, /shouldAcceptAgentFinal\(/)
+  assert.match(
+    src,
+    /if \(!mayAcceptFinal && \(!anyToolCall \|\| editedPaths\.size === 0 \|\| fakingTools\)\)/
+  )
   assert.match(src, /editedPaths\.size > 0/)
 
   const noEdit = buildAgentProseExhaustionFinalText({

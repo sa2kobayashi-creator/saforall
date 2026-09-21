@@ -31,6 +31,18 @@ import {
 import { buildAgentSuccessMemoryNote } from './lib/agentMemory'
 import { classifyTask, shouldAnswerWithoutTools } from './lib/taskClassify'
 import {
+  buildPostVerifySuccessFinal,
+  isInvestigationComplete,
+  isInvestigationTool,
+  isRedundantPostVerifyBatch,
+  isVerifyComplete,
+  shouldAcceptAgentFinal,
+  shouldPreferRequiredTools,
+  shouldRetryEmptyToolCalls,
+  shouldSkipDuplicateToolCall,
+  successfulToolKey
+} from './lib/agentRoundPolicy'
+import {
   modelAllowsRequiredToolChoice,
   normalizeToolCalls as normalizeToolCallsImpl,
   parseRetryAfterMs as parseRetryAfterMsImpl,
@@ -1545,7 +1557,9 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
     'verify: 編集ファイルを read_file で確認し、run_shell（typecheck/test/lint など終わるコマンド）と get_problems で検証する。失敗したら errorExcerpt / Problems を読んで edit に戻り、修正後に再実行。',
     '禁止: verify で npm start / npm run dev / vite / serve / watch など起動しっぱなしのコマンドを使わない（タイムアウトになる）。',
     '重要: 修正内容を markdown のコードブロックで説明するだけでは終了しない。必ず edit_file ツールで変更候補に載せる。',
-    '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）と、依頼が修正なら edit_file + run_shell を行う。',
+    '重要: ツール呼び出しなしの最終回答は禁止。少なくとも調査（read/search）を行う。依頼が修正のときだけ edit_file + run_shell を行う。',
+    '重要: 調査のみの依頼（読取・検索・説明）で編集が不要なら、read/search のあと追加の edit/verify に進まず最終回答してよい。',
+    '重要: verify（read + run_shell）成功後は、同じツールの再実行や余分な set_phase をせず、すぐに最終回答する。',
     '重要: 「適用して」「反映して」「差分を適用」は編集依頼。edit_file で変更を変更候補に載せ、verify する。「編集できない」と断るのは禁止。',
     '重要: ユーザーが verify 警告文を引用して適用を求めたら、直前の作業内容を再開し edit_file で再提案する。警告文そのものを説明して終わりにしない。',
     '重要: 既存ファイルへの edit_file は read_file 済みパスのみ許可。未読なら read_required で拒否される。',
@@ -1621,6 +1635,9 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
   let consecutiveToolFailures = 0
   const recentFailures: string[] = []
   const recentSignatures: string[] = []
+  const successfulToolKeys = new Set<string>()
+  let investigated = false
+  let verifyFinalNudgeSent = false
   const progressNotes: string[] = []
   const editedPaths = new Set<string>()
   const verifiedPaths = new Set<string>()
@@ -1658,11 +1675,28 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
 
   for (let step = 0; step < maxSteps; step += 1) {
     throwIfChatAborted(signal)
-    const preferRequiredTools =
-      modelAllowsRequiredToolChoice(model) &&
-      (!anyToolCall ||
-        (editedPaths.size === 0 && step < 10) ||
-        (editedPaths.size > 0 && !shellState.passed && shellState.editRecoveries < MAX_EDIT_RECOVERIES && step < 40))
+    const pendingUnverified = unverifiedEditPaths(editedPaths, verifiedPaths)
+    const verifyComplete = isVerifyComplete({
+      editedCount: editedPaths.size,
+      pendingUnverifiedCount: pendingUnverified.length,
+      shellPassed: shellState.passed
+    })
+    const investigationComplete = isInvestigationComplete({
+      anyToolCall,
+      editedCount: editedPaths.size,
+      investigated
+    })
+    const preferRequiredTools = shouldPreferRequiredTools({
+      modelAllowsRequired: modelAllowsRequiredToolChoice(model),
+      anyToolCall,
+      editedCount: editedPaths.size,
+      shellPassed: shellState.passed,
+      editRecoveries: shellState.editRecoveries,
+      maxEditRecoveries: MAX_EDIT_RECOVERIES,
+      step,
+      verifyComplete,
+      investigationComplete
+    })
 
     let completion: ChatCompletionResponse
     try {
@@ -1722,6 +1756,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
     const toolCalls = normalizeToolCalls(message.tool_calls)
     if (toolCalls.length > 0) {
       anyToolCall = true
+      const verifyFinalNudgeSentBeforeBatch = verifyFinalNudgeSent
       messages.push({
         role: 'assistant',
         content: message.content ?? null,
@@ -1756,7 +1791,15 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
             next.function.name,
             repairToolArguments(next.function.arguments)
           )
-          if (recentSignatures.includes(sig)) {
+          if (
+            shouldSkipDuplicateToolCall({
+              name: next.function.name,
+              signature: sig,
+              phase,
+              successfulKeys: successfulToolKeys
+            }) ||
+            recentSignatures.includes(sig)
+          ) {
             orderedResults.push({ call: next, result: null, skippedDup: true })
             i += 1
             continue
@@ -1806,7 +1849,16 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
           call.function.name,
           repairToolArguments(call.function.arguments)
         )
-        if (call.function.name !== 'set_phase' && recentSignatures.includes(sig)) {
+        if (
+          call.function.name !== 'set_phase' &&
+          (shouldSkipDuplicateToolCall({
+            name: call.function.name,
+            signature: sig,
+            phase,
+            successfulKeys: successfulToolKeys
+          }) ||
+            recentSignatures.includes(sig))
+        ) {
           orderedResults.push({ call, result: null, skippedDup: true })
           continue
         }
@@ -1838,8 +1890,9 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
         const { call } = row
         if (row.skippedDup || !row.result) {
           const dup = JSON.stringify({
-            ok: false,
-            error: 'duplicate tool call skipped — change path/query or advance phase'
+            ok: true,
+            duplicate: true,
+            note: 'duplicate tool call skipped — already succeeded or recently attempted with same args; change path/query or advance phase'
           })
           onEvent({
             type: 'tool_call',
@@ -1851,11 +1904,10 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
             type: 'tool_result',
             id: call.id,
             name: call.function.name,
-            ok: false,
+            ok: true,
             summary: 'duplicate skipped'
           })
           messages.push({ role: 'tool', tool_call_id: call.id, content: dup })
-          consecutiveToolFailures += 1
           continue
         }
 
@@ -1876,6 +1928,12 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
 
         if (result.ok) {
           consecutiveToolFailures = 0
+          const sig = toolSignature(
+            call.function.name,
+            repairToolArguments(call.function.arguments)
+          )
+          successfulToolKeys.add(successfulToolKey(phase, sig))
+          if (isInvestigationTool(call.function.name)) investigated = true
         } else {
           consecutiveToolFailures += 1
           recentFailures.push(`${call.function.name}: ${result.content.slice(0, 240)}`)
@@ -2015,10 +2073,11 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
           verifyNudgeCount < 5
         ) {
           verifyNudgeCount = 5
+          verifyFinalNudgeSent = true
           messages.push({
             role: 'user',
             content:
-              'システム: read + run_shell 成功です。最終回答を日本語でまとめ、エディタ上部の「変更候補」から差分を適用するよう促してください（「Composer」という語は使わない）。'
+              'システム: read + run_shell 成功です。追加のツール呼び出しは不要です。最終回答を日本語でまとめ、エディタ上部の「変更候補」から差分を適用するよう促してください（「Composer」という語は使わない）。'
           })
         }
       }
@@ -2049,11 +2108,36 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
         })
         consecutiveToolFailures = 0
       }
+
+      // Only cut AFTER a prior verify-success nudge. Do not treat the success batch itself as redundant.
+      if (
+        verifyFinalNudgeSentBeforeBatch &&
+        isRedundantPostVerifyBatch({
+          verifyComplete: true,
+          rows: orderedResults.map((row) => ({
+            name: row.call.function.name,
+            skippedDup: Boolean(row.skippedDup),
+            ok: row.result ? row.result.ok : row.skippedDup ? true : null
+          }))
+        })
+      ) {
+        finalText =
+          (message.content ?? '').trim() || buildPostVerifySuccessFinal(editedPaths)
+        break
+      }
       continue
     }
 
     // Empty tool_calls: dedicated retry before treating as prose-only answer.
-    if (toolCalls.length === 0 && emptyToolRetries < MAX_EMPTY_TOOL_RETRIES) {
+    if (
+      toolCalls.length === 0 &&
+      shouldRetryEmptyToolCalls({
+        emptyToolRetries,
+        maxEmptyToolRetries: MAX_EMPTY_TOOL_RETRIES,
+        verifyComplete,
+        investigationComplete
+      })
+    ) {
       emptyToolRetries += 1
       recordFeedback({
         kind: 'agent_signal',
@@ -2078,7 +2162,14 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
     // Model tried to answer in prose without any tool calls — block hard in Agent mode.
     const prose = (message.content ?? '').trim()
     const fakingTools = looksLikeFakeToolProse(prose)
-    if (!anyToolCall || editedPaths.size === 0 || fakingTools) {
+    const mayAcceptFinal = shouldAcceptAgentFinal({
+      anyToolCall,
+      editedCount: editedPaths.size,
+      verifyComplete,
+      investigationComplete,
+      fakingTools
+    })
+    if (!mayAcceptFinal && (!anyToolCall || editedPaths.size === 0 || fakingTools)) {
       if (proseOnlyBlocks < MAX_PROSE_ONLY_BLOCKS) {
         proseOnlyBlocks += 1
         messages.push({
@@ -2090,7 +2181,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
           content: fakingTools
             ? 'システム: ツール名を文章や bash コードブロックで書くのは無効です。API の function/tool_calls として set_phase / read_file / edit_file / run_shell を実際に呼び出してください。説明手順は禁止です。'
             : editedPaths.size === 0
-              ? 'システム: Agent モードでは説明や markdown コード提示だけでは終了できません。必ずツールを呼び出してください（set_phase → read_file/search_code → edit_file）。edit_file なしの「修正案の説明」は無効です。'
+              ? 'システム: Agent モードでは説明や markdown コード提示だけでは終了できません。必ずツールを呼び出してください（set_phase → read_file/search_code）。修正依頼のときだけ edit_file が必要です。調査のみなら read/search のあと最終回答して構いません。'
               : 'システム: まだツール実行が不十分です。verify のため run_shell を実行するか、追加の edit_file を行ってください。文章だけの最終回答は禁止です。'
         })
         continue
