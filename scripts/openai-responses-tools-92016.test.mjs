@@ -180,7 +180,9 @@ test('Unit 5 — gpt-5.3-codex routes to Responses; other OpenAI models stay Com
   assert.match(responsesSrc, /previous_response_id/)
   assert.match(responsesSrc, /function_call_output/)
   assert.match(responsesSrc, /call_id/)
-  assert.doesNotMatch(responsesSrc, /stream:\s*true/)
+  // Phase 3: Agent Responses path streams inside the adapter, then returns AgentChatCompletion.
+  assert.match(responsesSrc, /stream:\s*true/)
+  assert.match(responsesSrc, /response\.completed/)
 
   const toolAgent = await read('electron/main/toolAgent.ts')
   assert.doesNotMatch(toolAgent, /openaiResponses|previous_response_id|function_call_output/)

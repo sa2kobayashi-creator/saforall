@@ -56,6 +56,7 @@ const tests = [
   'scripts/model-catalog-fetch.test.mjs',
   'scripts/openai-ask-temperature.test.mjs',
   'scripts/openai-responses-tools-92016.test.mjs',
+  'scripts/openai-responses-streaming-92018.test.mjs',
   'scripts/chat-latency.test.mjs',
   'scripts/session-heal.test.mjs',
   'scripts/edit-guards.test.mjs',
