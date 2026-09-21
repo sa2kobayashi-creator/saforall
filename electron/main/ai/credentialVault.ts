@@ -2,7 +2,8 @@ import { AIError } from './errors'
 import {
   LLM_PROVIDER_IDS,
   isLlmProviderId,
-  type LlmProviderId
+  type LlmProviderId,
+  type ProviderId
 } from './types'
 import {
   ByokVaultEngine,
@@ -129,14 +130,49 @@ export async function listByokPublic(): Promise<ByokPublicStatus[]> {
   }
 }
 
-export function peekByokRecord(providerId: LlmProviderId): VaultRecord | null {
+export function peekByokRecord(providerId: ProviderId): VaultRecord | null {
   if (!engine) return null
   return engine.peekRecord(providerId)
 }
 
-export function hasByokRecord(providerId?: LlmProviderId): boolean {
+export function hasByokRecord(providerId?: ProviderId): boolean {
   if (!engine) return false
   return engine.hasRecord(providerId)
+}
+
+/** Persist any provider secret (incl. Cursor) into the encrypted vault. */
+export async function saveVaultSecret(
+  providerId: ProviderId,
+  secret: string,
+  extra: Record<string, string> = {},
+  baseUrl = ''
+): Promise<void> {
+  try {
+    await requireEngine().saveSecret(providerId, secret, extra, baseUrl)
+  } catch (error) {
+    if (error instanceof Error && error.message === encryptionUnavailableMessage()) {
+      throw new AIError('AUTH_ERROR', encryptionUnavailableMessage(), { providerId })
+    }
+    mapVaultError(error, providerId)
+  }
+}
+
+export async function deleteVaultSecret(providerId: ProviderId): Promise<void> {
+  try {
+    await requireEngine().deleteSecret(providerId)
+  } catch (error) {
+    mapVaultError(error, providerId)
+  }
+}
+
+export function loadVaultSecretSync(providerId: ProviderId): {
+  id: string
+  secret: string
+  baseUrl: string
+  extra: Record<string, string>
+} | null {
+  if (!engine) return null
+  return engine.getSecret(providerId)
 }
 
 export async function saveByokSecret(
@@ -148,34 +184,40 @@ export async function saveByokSecret(
   if (!isLlmProviderId(providerId)) {
     throw new AIError('AUTH_ERROR', 'BYOK 対象外の Provider です', { providerId })
   }
+  await saveVaultSecret(providerId, secret, extra, baseUrl)
   try {
-    const fields = await requireEngine().saveSecret(providerId, secret, extra, baseUrl)
-    return statusFromFields(fields, providerId)
-  } catch (error) {
-    if (error instanceof Error && error.message === encryptionUnavailableMessage()) {
-      throw new AIError('AUTH_ERROR', encryptionUnavailableMessage(), { providerId })
-    }
-    mapVaultError(error, providerId)
+    const { clearProviderSecretsFromMemory } = await import('../settingsStore')
+    clearProviderSecretsFromMemory(providerId)
+    await import('../settingsStore').then((m) => m.flushLocalSettings())
+  } catch {
+    // settings strip is best-effort; vault already holds the secret
   }
+  const fields = publicFieldsFromRecord(requireEngine().peekRecord(providerId) ?? undefined, providerId)
+  return statusFromFields(fields, providerId)
 }
 
 export async function deleteByokSecret(providerId: LlmProviderId): Promise<ByokPublicStatus> {
-  try {
-    const fields = await requireEngine().deleteSecret(providerId)
-    return statusFromFields(fields, providerId)
-  } catch (error) {
-    mapVaultError(error, providerId)
+  if (!isLlmProviderId(providerId)) {
+    throw new AIError('AUTH_ERROR', 'BYOK 対象外の Provider です', { providerId })
   }
+  await deleteVaultSecret(providerId)
+  try {
+    const settings = await import('../settingsStore')
+    settings.clearProviderSecretsFromMemory(providerId)
+    await settings.flushLocalSettings()
+  } catch {
+    // ignore
+  }
+  return statusFromFields(publicFieldsFromRecord(undefined, providerId), providerId)
 }
 
-export function loadByokSecretSync(providerId: LlmProviderId): {
+export function loadByokSecretSync(providerId: ProviderId): {
   id: string
   secret: string
   baseUrl: string
   extra: Record<string, string>
 } | null {
-  if (!engine) return null
-  return engine.getSecret(providerId)
+  return loadVaultSecretSync(providerId)
 }
 
 export async function warmByokCache(): Promise<void> {

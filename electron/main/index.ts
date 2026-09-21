@@ -106,11 +106,12 @@ app.whenReady().then(() => {
     configureLocalDb(join(userData, 'local-db'))
     void ensureLocalDbReady()
   })
-  void import('./settingsStore').then(({ configureSettingsStore, ensureSettingsLoaded }) => {
+  void (async () => {
+    const { configureSettingsStore, ensureSettingsLoaded } = await import('./settingsStore')
     configureSettingsStore(join(userData, 'settings-cache.json'))
-    void ensureSettingsLoaded()
-  })
-  void import('./ai/credentialVault').then(async ({ configureCredentialVault, warmByokCache }) => {
+    await ensureSettingsLoaded()
+
+    const { configureCredentialVault, warmByokCache } = await import('./ai/credentialVault')
     const { safeStorage } = await import('electron')
     configureCredentialVault({
       filePath: join(userData, 'credentials-vault.json'),
@@ -120,7 +121,12 @@ app.whenReady().then(() => {
         unwrap: (wrapped) => safeStorage.decryptString(Buffer.from(wrapped, 'base64'))
       }
     })
-    void warmByokCache()
+    await warmByokCache()
+
+    const { migrateLegacySettingsSecretsToVault } = await import('./ai/migrateSettingsSecrets')
+    await migrateLegacySettingsSecretsToVault()
+  })().catch((error) => {
+    console.error('[saforall] settings/vault init failed', error)
   })
   void loadPersistedJobs()
   setupApplicationMenu('ja')
@@ -411,12 +417,12 @@ ipcMain.handle('settings:exportFile', async () => {
   if (picked.canceled || !picked.filePath) {
     return { ok: false as const, message: 'キャンセルしました' }
   }
-  const { getLocalSettingsRaw } = await import('./settingsStore')
-  const settings = await getLocalSettingsRaw()
+  const { getLocalSettingsForExport } = await import('./settingsStore')
+  const settings = await getLocalSettingsForExport()
   const payload = {
     version: 1 as const,
     exportedAt: new Date().toISOString(),
-    warning: 'API キー等の秘密情報が含まれます。共有しないでください。',
+    warning: 'API keys are stored in the encrypted vault and are not included in this export.',
     settings
   }
   await writeFile(picked.filePath, JSON.stringify(payload, null, 2), 'utf8')

@@ -148,7 +148,8 @@ function loadByokCredential(providerId: ProviderId): Credential | null {
 
 /**
  * Priority: BYOK → Development settings → Development env.
- * Cursor is never resolved from BYOK.
+ * Cursor is never billed as BYOK, but its API key may live in the encrypted vault
+ * (migrated out of settings-cache) and is resolved here as a coding-agent credential.
  */
 export function resolveCredential(input: ResolveInput | ProviderId): ResolveResult {
   const providerId = typeof input === 'string' ? input : input.providerId
@@ -160,6 +161,25 @@ export function resolveCredential(input: ResolveInput | ProviderId): ResolveResu
         available: true,
         billingMode: 'BYOK',
         reason: 'byok'
+      }
+    }
+  } else {
+    const stored = loadByokSecretSync('cursor')
+    if (stored?.secret) {
+      return {
+        credential: {
+          id: stored.id,
+          providerId: 'cursor',
+          ownerType: 'user',
+          billingMode: 'DEVELOPMENT',
+          source: 'byok',
+          secret: stored.secret,
+          baseUrl: stored.baseUrl || defaultBaseUrl('cursor'),
+          extra: { ...stored.extra }
+        },
+        available: true,
+        billingMode: 'DEVELOPMENT',
+        reason: 'vault'
       }
     }
   }
