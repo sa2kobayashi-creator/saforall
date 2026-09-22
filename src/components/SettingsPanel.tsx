@@ -6,6 +6,7 @@ import {
   DEFAULT_CURSOR_MODEL,
   DEFAULT_ENABLED_MODELS,
   DEFAULT_GEMINI_MODEL,
+  DEFAULT_GROK_MODEL,
   DEFAULT_LLM_MODEL,
   DEFAULT_ROUTER_ENGINES,
   DEFAULT_ROUTER_PROFILE,
@@ -57,7 +58,7 @@ type Props = {
 
 type SettingsMap = Record<string, string | boolean>
 
-type ByokProviderId = 'openai' | 'claude' | 'gemini' | 'workers'
+type ByokProviderId = 'openai' | 'claude' | 'gemini' | 'grok' | 'workers'
 type ByokPublicStatus = {
   providerId: ByokProviderId
   credentialId: string | null
@@ -74,6 +75,7 @@ const BYOK_PROVIDERS: Array<{ id: ByokProviderId; label: string }> = [
   { id: 'openai', label: 'OpenAI' },
   { id: 'claude', label: 'Claude' },
   { id: 'gemini', label: 'Gemini' },
+  { id: 'grok', label: 'Grok' },
   { id: 'workers', label: 'Workers AI' }
 ]
 
@@ -147,6 +149,10 @@ export function SettingsPanel({
   const [claudeKeySet, setClaudeKeySet] = useState(false)
   const [claudeModels, setClaudeModels] = useState<string[]>([...DEFAULT_ENABLED_MODELS.claude])
 
+  const [grokKey, setGrokKey] = useState('')
+  const [grokKeySet, setGrokKeySet] = useState(false)
+  const [grokModels, setGrokModels] = useState<string[]>([...DEFAULT_ENABLED_MODELS.grok])
+
   const [cursorKey, setCursorKey] = useState('')
   const [cursorKeySet, setCursorKeySet] = useState(false)
   const [cursorModels, setCursorModels] = useState<string[]>([...DEFAULT_ENABLED_MODELS.cursor])
@@ -162,6 +168,7 @@ export function SettingsPanel({
   const [limitOpenai, setLimitOpenai] = useState(String(DEFAULT_COST_LIMITS.openai))
   const [limitGemini, setLimitGemini] = useState(String(DEFAULT_COST_LIMITS.gemini))
   const [limitClaude, setLimitClaude] = useState(String(DEFAULT_COST_LIMITS.claude))
+  const [limitGrok, setLimitGrok] = useState(String(DEFAULT_COST_LIMITS.grok))
   const [limitWorkers, setLimitWorkers] = useState(String(DEFAULT_COST_LIMITS.workers))
   const [claudePrepaid, setClaudePrepaid] = useState('')
   const [claudePrepaidWarn, setClaudePrepaidWarn] = useState('1')
@@ -199,6 +206,7 @@ export function SettingsPanel({
     openai: '',
     claude: '',
     gemini: '',
+    grok: '',
     workers: ''
   })
   const [byokBusy, setByokBusy] = useState<ByokProviderId | null>(null)
@@ -229,6 +237,9 @@ export function SettingsPanel({
         )
         setClaudeModels(
           parseModelList(settings['llm.claude.models'], DEFAULT_ENABLED_MODELS.claude)
+        )
+        setGrokModels(
+          parseModelList(settings['llm.grok.models'], DEFAULT_ENABLED_MODELS.grok)
         )
         setCursorModels(
           parseModelList(settings['llm.cursor.models'], DEFAULT_ENABLED_MODELS.cursor)
@@ -261,6 +272,7 @@ export function SettingsPanel({
         )
         setGeminiKeySet(settings['llm.gemini.api_key_set'] === true)
         setClaudeKeySet(settings['llm.claude.api_key_set'] === true)
+        setGrokKeySet(settings['llm.grok.api_key_set'] === true)
         setCursorKeySet(settings['llm.cursor.api_key_set'] === true)
         {
           const runtime = settings['llm.cursor.runtime']
@@ -289,6 +301,9 @@ export function SettingsPanel({
         }
         if (typeof settings['cost.claude.monthly_usd'] === 'string') {
           setLimitClaude(settings['cost.claude.monthly_usd'])
+        }
+        if (typeof settings['cost.grok.monthly_usd'] === 'string') {
+          setLimitGrok(settings['cost.grok.monthly_usd'])
         }
         if (typeof settings['cost.workers.monthly_usd'] === 'string') {
           setLimitWorkers(settings['cost.workers.monthly_usd'])
@@ -412,9 +427,11 @@ export function SettingsPanel({
           ? geminiKey.trim() !== ''
           : engine === 'claude'
             ? claudeKey.trim() !== ''
-            : engine === 'cursor'
-              ? cursorKey.trim() !== ''
-              : workersToken.trim() !== ''
+            : engine === 'grok'
+              ? grokKey.trim() !== ''
+              : engine === 'cursor'
+                ? cursorKey.trim() !== ''
+                : workersToken.trim() !== ''
 
     if (pendingKey) {
       setEngineTestStatus(
@@ -432,9 +449,11 @@ export function SettingsPanel({
           ? geminiKeySet
           : engine === 'claude'
             ? claudeKeySet
-            : engine === 'cursor'
-              ? cursorKeySet
-              : workersTokenSet && workersAccountId.trim() !== ''
+            : engine === 'grok'
+              ? grokKeySet
+              : engine === 'cursor'
+                ? cursorKeySet
+                : workersTokenSet && workersAccountId.trim() !== ''
 
     if (!configured) {
       setEngineTestStatus(engine, false, '設定が不足しています（キー等を保存してください）')
@@ -448,9 +467,11 @@ export function SettingsPanel({
           ? preferred('gemini', geminiModels, DEFAULT_GEMINI_MODEL)
           : engine === 'claude'
             ? preferred('claude', claudeModels, DEFAULT_CLAUDE_MODEL)
-            : engine === 'cursor'
-              ? preferred('cursor', cursorModels, DEFAULT_CURSOR_MODEL)
-              : preferred('workers', workersModels, DEFAULT_WORKERS_MODEL)
+            : engine === 'grok'
+              ? preferred('grok', grokModels, DEFAULT_GROK_MODEL)
+              : engine === 'cursor'
+                ? preferred('cursor', cursorModels, DEFAULT_CURSOR_MODEL)
+                : preferred('workers', workersModels, DEFAULT_WORKERS_MODEL)
 
     setTestingEngine(engine)
     setTestStatus((prev) => {
@@ -551,6 +572,8 @@ export function SettingsPanel({
       'llm.gemini.model': preferred('gemini', geminiModels, DEFAULT_GEMINI_MODEL),
       'llm.claude.models': JSON.stringify(claudeModels),
       'llm.claude.model': preferred('claude', claudeModels, DEFAULT_CLAUDE_MODEL),
+      'llm.grok.models': JSON.stringify(grokModels),
+      'llm.grok.model': preferred('grok', grokModels, DEFAULT_GROK_MODEL),
       'llm.cursor.models': JSON.stringify(cursorModels),
       'llm.cursor.model': preferred('cursor', cursorModels, DEFAULT_CURSOR_MODEL),
       'llm.cursor.runtime': cursorRuntime,
@@ -566,6 +589,7 @@ export function SettingsPanel({
       'cost.openai.monthly_usd': limitOpenai.trim() || String(DEFAULT_COST_LIMITS.openai),
       'cost.gemini.monthly_usd': limitGemini.trim() || String(DEFAULT_COST_LIMITS.gemini),
       'cost.claude.monthly_usd': limitClaude.trim() || String(DEFAULT_COST_LIMITS.claude),
+      'cost.grok.monthly_usd': limitGrok.trim() || String(DEFAULT_COST_LIMITS.grok),
       'cost.workers.monthly_usd': limitWorkers.trim() || String(DEFAULT_COST_LIMITS.workers),
       'llm.claude.prepaid_remaining_usd': claudePrepaid.trim(),
       'llm.claude.prepaid_warn_usd': claudePrepaidWarn.trim() || '1',
@@ -580,6 +604,9 @@ export function SettingsPanel({
     }
     if (claudeKey.trim() !== '') {
       settings['llm.claude.api_key'] = claudeKey.trim()
+    }
+    if (grokKey.trim() !== '') {
+      settings['llm.grok.api_key'] = grokKey.trim()
     }
     if (cursorKey.trim() !== '') {
       settings['llm.cursor.api_key'] = cursorKey.trim()
@@ -612,6 +639,10 @@ export function SettingsPanel({
       if (claudeKey.trim() !== '') {
         setClaudeKeySet(true)
         setClaudeKey('')
+      }
+      if (grokKey.trim() !== '') {
+        setGrokKeySet(true)
+        setGrokKey('')
       }
       if (cursorKey.trim() !== '') {
         setCursorKeySet(true)
@@ -646,6 +677,10 @@ export function SettingsPanel({
     if (claudeKey.trim() !== '') {
       setClaudeKeySet(true)
       setClaudeKey('')
+    }
+    if (grokKey.trim() !== '') {
+      setGrokKeySet(true)
+      setGrokKey('')
     }
     if (cursorKey.trim() !== '') {
       setCursorKeySet(true)
@@ -1052,6 +1087,14 @@ export function SettingsPanel({
                 />
               </label>
               <label className="settings-budget-item">
+                <span>Grok</span>
+                <input
+                  inputMode="decimal"
+                  value={limitGrok}
+                  onChange={(event) => setLimitGrok(event.target.value)}
+                />
+              </label>
+              <label className="settings-budget-item">
                 <span>Workers AI</span>
                 <input
                   inputMode="decimal"
@@ -1142,6 +1185,7 @@ export function SettingsPanel({
             <li>OpenAI: {openaiKeySet || openaiKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
             <li>Gemini: {geminiKeySet || geminiKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
             <li>Claude: {claudeKeySet || claudeKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
+            <li>Grok: {grokKeySet || grokKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
             <li>
               Workers AI: {workersTokenSet || workersToken.trim() ? 'Connected' : 'Not configured'} ·
               Development
@@ -1381,6 +1425,42 @@ export function SettingsPanel({
               type="password"
               value={claudeKey}
               onChange={(event) => setClaudeKey(event.target.value)}
+              autoComplete="off"
+            />
+          </label>
+
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">Grok モデル（複数選択）</h3>
+            <button
+              type="button"
+              className="settings-test-btn"
+              disabled={
+                !backendConnected ||
+                (!grokKeySet && grokKey.trim() === '') ||
+                testingEngine !== null
+              }
+              onClick={() => void testEngine('grok')}
+            >
+              {testingEngine === 'grok' ? 'テスト中…' : '接続テスト'}
+            </button>
+          </div>
+          {renderTestResult('grok')}
+          <p className="settings-hint">
+            xAI Grok（Chat Completions + function calling）。API Key は XAI_API_KEY または下の入力から。
+          </p>
+          <ModelMultiSelect
+            engine="grok"
+            enabled={grokModels}
+            onChange={setGrokModels}
+            disabled={!backendConnected}
+            canFetchLatest={false}
+          />
+          <label>
+            API Key {grokKeySet ? '（設定済み）' : '（未設定）'}
+            <input
+              type="password"
+              value={grokKey}
+              onChange={(event) => setGrokKey(event.target.value)}
               autoComplete="off"
             />
           </label>

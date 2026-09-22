@@ -151,6 +151,7 @@ function loadEngine(): AiEngine {
     saved === 'openai' ||
     saved === 'gemini' ||
     saved === 'claude' ||
+    saved === 'grok' ||
     saved === 'workers' ||
     saved === 'auto'
   ) {
@@ -379,6 +380,7 @@ export function ChatPanel({
           openai: parseModelList(settings['llm.openai.models'], DEFAULT_ENABLED_MODELS.openai),
           gemini: parseModelList(settings['llm.gemini.models'], DEFAULT_ENABLED_MODELS.gemini),
           claude: parseModelList(settings['llm.claude.models'], DEFAULT_ENABLED_MODELS.claude),
+          grok: parseModelList(settings['llm.grok.models'], DEFAULT_ENABLED_MODELS.grok),
           workers: parseModelList(
             settings['llm.workers.models'] ?? settings['llm.simple.models'],
             DEFAULT_ENABLED_MODELS.workers
@@ -2130,6 +2132,7 @@ export function ChatPanel({
                   <option value="openai">OpenAI</option>
                   <option value="gemini">Gemini</option>
                   <option value="claude">Claude</option>
+                  <option value="grok">Grok</option>
                   <option value="cursor">Cursor</option>
                   <option
                     value="workers"
@@ -2245,9 +2248,11 @@ export function ChatPanel({
                       ? 'Gemini（ツール Agent 可）'
                       : engine === 'claude'
                         ? 'Claude（ツール Agent 可）'
-                        : engine === 'workers'
-                          ? 'Workers（Agentでは利用できません）'
-                          : 'OpenAI'}
+                        : engine === 'grok'
+                          ? 'Grok（ツール Agent 可）'
+                          : engine === 'workers'
+                            ? 'Workers（Agentでは利用できません）'
+                            : 'OpenAI'}
                 {routeLabel ? ` · ${routeLabel}` : ''}
               </span>
               <button

@@ -5,6 +5,7 @@ import { openaiAdapter } from './adapters/openai'
 import { geminiAdapter } from './adapters/gemini'
 import { claudeAdapter } from './adapters/claude'
 import { workersAdapter } from './adapters/workers'
+import { grokAdapter } from './adapters/grok'
 
 const adapters = new Map<LlmProviderId, AIProviderAdapter>()
 let defaultsRegistered = false
@@ -43,5 +44,6 @@ export function ensureDefaultProviders(): void {
   if (!adapters.has('gemini')) registerProvider(geminiAdapter)
   if (!adapters.has('claude')) registerProvider(claudeAdapter)
   if (!adapters.has('workers')) registerProvider(workersAdapter)
+  if (!adapters.has('grok')) registerProvider(grokAdapter)
   defaultsRegistered = true
 }

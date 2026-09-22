@@ -99,7 +99,7 @@ function resolveLocalEngine(requested: string): {
 } | null {
   const order =
     requested === 'auto'
-      ? ['openai', 'claude', 'gemini', 'cursor']
+      ? ['openai', 'claude', 'gemini', 'grok', 'cursor']
       : [requested]
 
   for (const engine of order) {
@@ -112,7 +112,7 @@ function resolveLocalEngine(requested: string): {
       return { engine: 'cursor', model: models[0] || 'composer-2' }
     }
     const id =
-      engine === 'openai' || engine === 'claude' || engine === 'gemini' || engine === 'workers'
+      engine === 'openai' || engine === 'claude' || engine === 'gemini' || engine === 'workers' || engine === 'grok'
         ? engine
         : null
     if (!id) continue
@@ -131,6 +131,10 @@ function resolveLocalEngine(requested: string): {
             ? parseJsonModels(getLocalSetting('llm.gemini.models', ''), [
                 getLocalSetting('llm.gemini.model', 'gemini-2.0-flash')
               ])
+            : id === 'grok'
+              ? parseJsonModels(getLocalSetting('llm.grok.models', ''), [
+                  getLocalSetting('llm.grok.model', 'grok-4.6')
+                ])
             : parseJsonModels(getLocalSetting('llm.workers.models', ''), [
                 getLocalSetting('llm.workers.model', '@cf/meta/llama-3.1-8b-instruct')
               ])
@@ -149,7 +153,7 @@ export function resolveCompletionEngine(): {
   model: string
   baseUrl?: string
 } | null {
-  for (const engine of ['openai', 'gemini', 'claude']) {
+  for (const engine of ['openai', 'gemini', 'claude', 'grok']) {
     const resolved = resolveLocalEngine(engine)
     if (resolved) return resolved
   }
@@ -406,11 +410,11 @@ export async function streamChatDirect(
         })
         return true
       }
-      if (resolved.engine !== 'openai' && resolved.engine !== 'claude' && resolved.engine !== 'gemini') {
+      if (resolved.engine !== 'openai' && resolved.engine !== 'claude' && resolved.engine !== 'gemini' && resolved.engine !== 'grok') {
         onEvent({
           type: 'error',
           code: 'AGENT_TOOLS_UNAVAILABLE',
-          message: 'オフライン Agent は OpenAI、Claude、または Gemini のみ対応です'
+          message: 'オフライン Agent は OpenAI、Claude、Gemini、または Grok のみ対応です'
         })
         return true
       }
@@ -428,7 +432,9 @@ export async function streamChatDirect(
             ? 'https://api.anthropic.com'
             : resolved.engine === 'gemini'
               ? 'gemini-native'
-              : resolved.baseUrl || 'https://api.openai.com/v1',
+              : resolved.engine === 'grok'
+                ? resolved.baseUrl || 'https://api.x.ai/v1'
+                : resolved.baseUrl || 'https://api.openai.com/v1',
         model: resolved.model,
         extraHeaders: [],
         messages,

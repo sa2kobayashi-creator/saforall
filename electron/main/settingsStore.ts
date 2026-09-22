@@ -12,6 +12,7 @@ export const SECRET_SETTING_KEYS = [
   'llm.openai.api_key',
   'llm.gemini.api_key',
   'llm.claude.api_key',
+  'llm.grok.api_key',
   'llm.cursor.api_key',
   'llm.workers.api_token',
   'llm.simple.api_token'
@@ -24,6 +25,7 @@ const SECRET_KEY_TO_PROVIDER: Record<SecretKey, ProviderId> = {
   'llm.openai.api_key': 'openai',
   'llm.gemini.api_key': 'gemini',
   'llm.claude.api_key': 'claude',
+  'llm.grok.api_key': 'grok',
   'llm.cursor.api_key': 'cursor',
   'llm.workers.api_token': 'workers',
   'llm.simple.api_token': 'workers'
@@ -106,6 +108,8 @@ export function maskSettingsForRenderer(settings: SettingsMap): Record<string, s
     providerSecretPresent('gemini', settings) || Boolean(envTrim('GEMINI_API_KEY'))
   out['llm.claude.api_key_set'] =
     providerSecretPresent('claude', settings) || Boolean(envTrim('ANTHROPIC_API_KEY'))
+  out['llm.grok.api_key_set'] =
+    providerSecretPresent('grok', settings) || Boolean(envTrim('XAI_API_KEY'))
   out['llm.cursor.api_key_set'] =
     providerSecretPresent('cursor', settings) || Boolean(envTrim('CURSOR_API_KEY'))
   const workersPresent =
@@ -127,6 +131,11 @@ export function maskSettingsForRenderer(settings: SettingsMap): Record<string, s
     ['ANTHROPIC_API_KEY'],
     'claude'
   )
+  out['llm.grok.credential_source'] = credentialSource(
+    settings['llm.grok.api_key'],
+    ['XAI_API_KEY'],
+    'grok'
+  )
   out['llm.cursor.credential_source'] = credentialSource(
     settings['llm.cursor.api_key'],
     ['CURSOR_API_KEY'],
@@ -145,11 +154,13 @@ export function hasUsableLocalLlm(settings: SettingsMap = memory): boolean {
     providerSecretPresent('openai', settings) ||
       providerSecretPresent('claude', settings) ||
       providerSecretPresent('gemini', settings) ||
+      providerSecretPresent('grok', settings) ||
       providerSecretPresent('cursor', settings) ||
       providerSecretPresent('workers', settings) ||
       envTrim('OPENAI_API_KEY') ||
       envTrim('GEMINI_API_KEY') ||
       envTrim('ANTHROPIC_API_KEY') ||
+      envTrim('XAI_API_KEY') ||
       envTrim('CURSOR_API_KEY') ||
       envTrim('CLOUDFLARE_API_TOKEN')
   )

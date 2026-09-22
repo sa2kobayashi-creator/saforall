@@ -26,7 +26,7 @@ import {
 } from './types'
 import { recordUsage, type UsageFailoverMeta } from './usage'
 
-const LLM_AUTO_ORDER: LlmProviderId[] = ['openai', 'claude', 'gemini', 'workers']
+const LLM_AUTO_ORDER: LlmProviderId[] = ['openai', 'claude', 'gemini', 'workers', 'grok']
 
 /** Ensure Failover uses CredentialResolver even when router is imported without ai/index. */
 configureFailoverResolve((input) => {

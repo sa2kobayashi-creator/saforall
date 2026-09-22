@@ -475,6 +475,9 @@ export function isToolAgentCompatibleEndpoint(engine: string, baseUrl: string, m
   if (engine === 'gemini' || u === 'gemini-native') {
     return true
   }
+  if (engine === 'grok' || u.includes('api.x.ai')) {
+    return true
+  }
   if (!u) return false
   if (engine === 'claude' || u.includes('anthropic.com')) {
     return true
@@ -497,9 +500,15 @@ function isGeminiEndpoint(engine: string, baseUrl: string): boolean {
   return (baseUrl || '').trim().toLowerCase() === 'gemini-native'
 }
 
-function agentLlmProvider(engine: string, baseUrl: string): 'openai' | 'claude' | 'gemini' {
+function isGrokEndpoint(engine: string, baseUrl: string): boolean {
+  if (engine === 'grok') return true
+  return (baseUrl || '').toLowerCase().includes('api.x.ai')
+}
+
+function agentLlmProvider(engine: string, baseUrl: string): 'openai' | 'claude' | 'gemini' | 'grok' {
   if (isGeminiEndpoint(engine, baseUrl)) return 'gemini'
   if (isAnthropicEndpoint(engine, baseUrl)) return 'claude'
+  if (isGrokEndpoint(engine, baseUrl)) return 'grok'
   return 'openai'
 }
 
@@ -1434,7 +1443,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
       code: 'AGENT_UNSUPPORTED',
       message:
         'このエンドポイントはツール Agent 非対応です（Cloudflare Workers AI など）。' +
-        '設定で OpenAI、Claude、または Gemini を選んで再実行してください。'
+        '設定で OpenAI、Claude、Gemini、または Grok を選んで再実行してください。'
     })
     return
   }

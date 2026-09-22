@@ -394,7 +394,7 @@ export type ChatStreamEvent =
   | { type: 'error'; code: string; message: string }
 
 type RouteData = {
-  engine: 'cursor' | 'openai' | 'gemini' | 'claude' | 'workers'
+  engine: 'cursor' | 'openai' | 'gemini' | 'claude' | 'workers' | 'grok'
   requested: string
   task_type: string
   fallback_from: string | null
@@ -675,14 +675,14 @@ async function streamChatInner(
         workspacePath.trim() !== '' &&
         Boolean(decided.provider) &&
         hasUsableLlm(decided.engine) &&
-        (decided.engine === 'openai' || decided.engine === 'claude' || decided.engine === 'gemini')
+        (decided.engine === 'openai' || decided.engine === 'claude' || decided.engine === 'gemini' || decided.engine === 'grok')
 
       if (mode === 'agent' && !canToolAgent) {
         onEvent({
           type: 'error',
           code: 'AGENT_TOOLS_UNAVAILABLE',
           message:
-            'ローカル Agent は OpenAI / Claude / Gemini とワークスペースが必要です。Ask に切り替えるかキーを確認してください。'
+            'ローカル Agent は OpenAI / Claude / Gemini / Grok とワークスペースが必要です。Ask に切り替えるかキーを確認してください。'
         })
         return
       }

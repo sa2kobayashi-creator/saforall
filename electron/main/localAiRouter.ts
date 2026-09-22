@@ -430,6 +430,13 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
         parseModels(getLocalSetting('llm.workers.models', ''), 'llm.workers.model')[0] ||
         getLocalSetting('llm.workers.model', '@cf/meta/llama-3.1-8b-instruct')
     }
+  } else if (engine === 'grok') {
+    baseUrl = cred?.baseUrl || getLocalSetting('llm.grok.base_url', 'https://api.x.ai/v1')
+    if (!model) {
+      model =
+        parseModels(getLocalSetting('llm.grok.models', ''), 'llm.grok.model')[0] ||
+        getLocalSetting('llm.grok.model', 'grok-4.6')
+    }
   } else if (engine === 'cursor') {
     if (!model) {
       model =
@@ -438,7 +445,7 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
     }
   }
 
-  if (engine === 'openai' || engine === 'claude' || engine === 'workers') {
+  if (engine === 'openai' || engine === 'claude' || engine === 'workers' || engine === 'grok') {
     const { parseContextImages, attachImagesToOpenAiMessages, attachImagesToClaudeMessages } =
       await import('./lib/visionMessages')
     let messages = buildHistoryMessages(prior, context, message, systemHint) as Array<{

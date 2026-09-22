@@ -1,4 +1,4 @@
-export type AiEngine = 'auto' | 'cursor' | 'openai' | 'gemini' | 'claude' | 'workers'
+export type AiEngine = 'auto' | 'cursor' | 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
 export type ProviderEngine = Exclude<AiEngine, 'auto'>
 export type ModelTier = 'cheap' | 'standard' | 'strong'
 
@@ -67,6 +67,11 @@ export const CLAUDE_MODEL_CATALOG: ModelOption[] = [
   { id: 'claude-opus-5', label: 'Claude Opus 5（強）', tier: 'strong', costRank: 3 }
 ]
 
+/** xAI Grok — keep UI catalog minimal (docs.x.ai flagship). */
+export const GROK_MODEL_CATALOG: ModelOption[] = [
+  { id: 'grok-4.6', label: 'Grok 4.6（標準・推奨）', tier: 'standard', costRank: 1 }
+]
+
 export const CURSOR_MODEL_CATALOG: ModelOption[] = [
   { id: 'auto', label: 'Auto（サーバ側選択）', tier: 'cheap', costRank: 1 },
   { id: 'auto-smart', label: 'Cursor Router auto-smart', tier: 'cheap', costRank: 2 },
@@ -98,6 +103,7 @@ export function optionsForEngine(engine: ProviderEngine, enabled: string[]): Mod
 export const DEFAULT_LLM_MODEL = 'gpt-4.1-mini'
 export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest'
 export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-5'
+export const DEFAULT_GROK_MODEL = 'grok-4.6'
 export const DEFAULT_CURSOR_MODEL = 'grok-4.6'
 export const DEFAULT_WORKERS_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8'
 
@@ -112,6 +118,7 @@ export const ENGINE_MODEL_CATALOG: Record<ProviderEngine, ModelOption[]> = {
   openai: OPENAI_MODEL_CATALOG,
   gemini: GEMINI_MODEL_CATALOG,
   claude: CLAUDE_MODEL_CATALOG,
+  grok: GROK_MODEL_CATALOG,
   workers: WORKERS_MODEL_CATALOG,
   cursor: CURSOR_MODEL_CATALOG
 }
@@ -120,6 +127,7 @@ export const DEFAULT_ENABLED_MODELS: Record<ProviderEngine, string[]> = {
   openai: ['gpt-5.3-codex', 'gpt-4.1-mini', 'gpt-4.1'],
   gemini: ['gemini-flash-latest', 'gemini-2.5-flash'],
   claude: ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+  grok: ['grok-4.6'],
   workers: ['@cf/meta/llama-3.1-8b-instruct-fp8', '@cf/qwen/qwen2.5-coder-32b-instruct'],
   cursor: [
     'auto',
@@ -200,6 +208,7 @@ export const DEFAULT_COST_LIMITS = {
   openai: 20,
   gemini: 10,
   claude: 10,
+  grok: 20,
   workers: 5
 } as const
 
@@ -228,12 +237,13 @@ export function parseUserPlan(raw: unknown): UserPlan {
   return DEFAULT_USER_PLAN
 }
 
-export const USAGE_ENGINE_KEYS = ['openai', 'gemini', 'claude', 'cursor', 'workers'] as const
+export const USAGE_ENGINE_KEYS = ['openai', 'gemini', 'claude', 'grok', 'cursor', 'workers'] as const
 
 export const ENGINE_LABELS: Record<(typeof USAGE_ENGINE_KEYS)[number], string> = {
   openai: 'OpenAI',
   gemini: 'Gemini',
   claude: 'Claude',
+  grok: 'Grok',
   cursor: 'Cursor',
   workers: 'Workers AI'
 }

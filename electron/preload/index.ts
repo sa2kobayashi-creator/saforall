@@ -563,7 +563,7 @@ const api = {
   listByokCredentials: (): Promise<{
     ok: boolean
     credentials: Array<{
-      providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
       credentialId: string | null
       billingMode: 'BYOK' | null
       configured: boolean
@@ -575,12 +575,12 @@ const api = {
     }>
   }> => ipcRenderer.invoke('credentials:listByok'),
   saveByokCredential: (input: {
-    providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+    providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
     secret: string
   }): Promise<{
     ok: boolean
     status?: {
-      providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
       credentialId: string | null
       billingMode: 'BYOK' | null
       configured: boolean
@@ -593,11 +593,11 @@ const api = {
     error?: { code: string; message: string }
   }> => ipcRenderer.invoke('credentials:saveByok', input),
   deleteByokCredential: (
-    providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+    providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
   ): Promise<{
     ok: boolean
     status?: {
-      providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
       credentialId: string | null
       billingMode: 'BYOK' | null
       configured: boolean
@@ -610,12 +610,12 @@ const api = {
     error?: { code: string; message: string }
   }> => ipcRenderer.invoke('credentials:deleteByok', providerId),
   testByokCredential: (
-    providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+    providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
   ): Promise<{
     ok: boolean
     message?: string
     status?: {
-      providerId: 'openai' | 'gemini' | 'claude' | 'workers'
+      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
       credentialId: string | null
       billingMode: 'BYOK' | null
       configured: boolean
@@ -1020,12 +1020,22 @@ const api = {
     electron?: string
     chrome?: string
     node?: string
-  } => ({
-    appVersion: '0.1.0',
-    electron: process.versions.electron,
-    chrome: process.versions.chrome,
-    node: process.versions.node
-  }),
+  } => {
+    const info = ipcRenderer.sendSync('app:getRuntimeInfo') as
+      | {
+          appVersion?: string
+          electron?: string
+          chrome?: string
+          node?: string
+        }
+      | undefined
+    return {
+      appVersion: typeof info?.appVersion === 'string' && info.appVersion ? info.appVersion : 'unknown',
+      electron: info?.electron ?? process.versions.electron,
+      chrome: info?.chrome ?? process.versions.chrome,
+      node: info?.node ?? process.versions.node
+    }
+  },
   onMenuCommand: (
     callback: (
       command:

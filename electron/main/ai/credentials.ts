@@ -24,6 +24,7 @@ export const PROVIDER_ENV: Record<ProviderId, string[]> = {
   gemini: ['GEMINI_API_KEY'],
   claude: ['ANTHROPIC_API_KEY'],
   workers: ['CLOUDFLARE_API_TOKEN'],
+  grok: ['XAI_API_KEY'],
   cursor: ['CURSOR_API_KEY']
 }
 
@@ -66,6 +67,7 @@ function settingsSecret(providerId: ProviderId): string {
   }
   if (providerId === 'gemini') return activeDeps.getSetting('llm.gemini.api_key')
   if (providerId === 'claude') return activeDeps.getSetting('llm.claude.api_key')
+  if (providerId === 'grok') return activeDeps.getSetting('llm.grok.api_key')
   if (providerId === 'cursor') return activeDeps.getSetting('llm.cursor.api_key')
   return (
     activeDeps.getSetting('llm.workers.api_token') ||
@@ -84,6 +86,9 @@ function defaultBaseUrl(providerId: ProviderId): string {
     return activeDeps.getSetting('llm.claude.base_url', 'https://api.anthropic.com')
   }
   if (providerId === 'gemini') return 'gemini-native'
+  if (providerId === 'grok') {
+    return activeDeps.getSetting('llm.grok.base_url', 'https://api.x.ai/v1')
+  }
   if (providerId === 'workers') {
     const accountId =
       activeDeps.getSetting('llm.workers.account_id') ||

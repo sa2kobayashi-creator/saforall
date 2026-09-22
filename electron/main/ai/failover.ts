@@ -5,13 +5,14 @@
  * so CredentialResolver stays the source of truth without secret plumbing here.
  */
 
-export type LlmProviderId = 'openai' | 'gemini' | 'claude' | 'workers'
+export type LlmProviderId = 'openai' | 'gemini' | 'claude' | 'workers' | 'grok'
 
 export const LLM_PROVIDER_IDS: readonly LlmProviderId[] = [
   'openai',
   'gemini',
   'claude',
-  'workers'
+  'workers',
+  'grok'
 ]
 
 export const DEFAULT_FAILOVER_ORDER: readonly LlmProviderId[] = [
