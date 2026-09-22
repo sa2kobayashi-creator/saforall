@@ -563,7 +563,7 @@ const api = {
   listByokCredentials: (): Promise<{
     ok: boolean
     credentials: Array<{
-      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
+      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'deepseek' | 'workers'
       credentialId: string | null
       billingMode: 'BYOK' | null
       configured: boolean
@@ -575,12 +575,12 @@ const api = {
     }>
   }> => ipcRenderer.invoke('credentials:listByok'),
   saveByokCredential: (input: {
-    providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
+    providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'deepseek' | 'workers'
     secret: string
   }): Promise<{
     ok: boolean
     status?: {
-      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
+      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'deepseek' | 'workers'
       credentialId: string | null
       billingMode: 'BYOK' | null
       configured: boolean
@@ -593,11 +593,11 @@ const api = {
     error?: { code: string; message: string }
   }> => ipcRenderer.invoke('credentials:saveByok', input),
   deleteByokCredential: (
-    providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
+    providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'deepseek' | 'workers'
   ): Promise<{
     ok: boolean
     status?: {
-      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
+      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'deepseek' | 'workers'
       credentialId: string | null
       billingMode: 'BYOK' | null
       configured: boolean
@@ -610,12 +610,12 @@ const api = {
     error?: { code: string; message: string }
   }> => ipcRenderer.invoke('credentials:deleteByok', providerId),
   testByokCredential: (
-    providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
+    providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'deepseek' | 'workers'
   ): Promise<{
     ok: boolean
     message?: string
     status?: {
-      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'workers'
+      providerId: 'openai' | 'gemini' | 'claude' | 'grok' | 'deepseek' | 'workers'
       credentialId: string | null
       billingMode: 'BYOK' | null
       configured: boolean

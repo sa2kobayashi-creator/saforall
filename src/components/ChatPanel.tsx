@@ -152,6 +152,7 @@ function loadEngine(): AiEngine {
     saved === 'gemini' ||
     saved === 'claude' ||
     saved === 'grok' ||
+    saved === 'deepseek' ||
     saved === 'workers' ||
     saved === 'auto'
   ) {
@@ -381,6 +382,7 @@ export function ChatPanel({
           gemini: parseModelList(settings['llm.gemini.models'], DEFAULT_ENABLED_MODELS.gemini),
           claude: parseModelList(settings['llm.claude.models'], DEFAULT_ENABLED_MODELS.claude),
           grok: parseModelList(settings['llm.grok.models'], DEFAULT_ENABLED_MODELS.grok),
+          deepseek: parseModelList(settings['llm.deepseek.models'], DEFAULT_ENABLED_MODELS.deepseek),
           workers: parseModelList(
             settings['llm.workers.models'] ?? settings['llm.simple.models'],
             DEFAULT_ENABLED_MODELS.workers
@@ -2133,6 +2135,7 @@ export function ChatPanel({
                   <option value="gemini">Gemini</option>
                   <option value="claude">Claude</option>
                   <option value="grok">Grok</option>
+                  <option value="deepseek">DeepSeek</option>
                   <option value="cursor">Cursor</option>
                   <option
                     value="workers"
@@ -2250,6 +2253,8 @@ export function ChatPanel({
                         ? 'Claude（ツール Agent 可）'
                         : engine === 'grok'
                           ? 'Grok（ツール Agent 可）'
+                          : engine === 'deepseek'
+                            ? 'DeepSeek（ツール Agent 可）'
                           : engine === 'workers'
                             ? 'Workers（Agentでは利用できません）'
                             : 'OpenAI'}

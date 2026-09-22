@@ -465,6 +465,26 @@ function isAgentPhase(value: string): value is AgentPhase {
   return value === 'plan' || value === 'explore' || value === 'edit' || value === 'verify'
 }
 
+function assistantMessageFromLlm(message: {
+  content?: string | null
+  tool_calls?: AgentToolCall[]
+  reasoning_content?: string | null
+}): AgentProviderMessage {
+  const out: AgentProviderMessage = {
+    role: 'assistant',
+    content: message.content ?? null
+  }
+  if (message.tool_calls && message.tool_calls.length > 0) {
+    out.tool_calls = message.tool_calls
+  }
+  if (typeof message.reasoning_content === 'string') {
+    out.reasoning_content = message.reasoning_content
+  } else if (message.reasoning_content === null) {
+    out.reasoning_content = null
+  }
+  return out
+}
+
 export function isToolAgentCompatibleEndpoint(engine: string, baseUrl: string, model: string): boolean {
   if (engine === 'workers' || engine === 'cursor') {
     return false
@@ -476,6 +496,9 @@ export function isToolAgentCompatibleEndpoint(engine: string, baseUrl: string, m
     return true
   }
   if (engine === 'grok' || u.includes('api.x.ai')) {
+    return true
+  }
+  if (engine === 'deepseek' || u.includes('api.deepseek.com')) {
     return true
   }
   if (!u) return false
@@ -505,10 +528,16 @@ function isGrokEndpoint(engine: string, baseUrl: string): boolean {
   return (baseUrl || '').toLowerCase().includes('api.x.ai')
 }
 
-function agentLlmProvider(engine: string, baseUrl: string): 'openai' | 'claude' | 'gemini' | 'grok' {
+function isDeepSeekEndpoint(engine: string, baseUrl: string): boolean {
+  if (engine === 'deepseek') return true
+  return (baseUrl || '').toLowerCase().includes('api.deepseek.com')
+}
+
+function agentLlmProvider(engine: string, baseUrl: string): 'openai' | 'claude' | 'gemini' | 'grok' | 'deepseek' {
   if (isGeminiEndpoint(engine, baseUrl)) return 'gemini'
   if (isAnthropicEndpoint(engine, baseUrl)) return 'claude'
   if (isGrokEndpoint(engine, baseUrl)) return 'grok'
+  if (isDeepSeekEndpoint(engine, baseUrl)) return 'deepseek'
   return 'openai'
 }
 
@@ -1443,7 +1472,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
       code: 'AGENT_UNSUPPORTED',
       message:
         'このエンドポイントはツール Agent 非対応です（Cloudflare Workers AI など）。' +
-        '設定で OpenAI、Claude、Gemini、または Grok を選んで再実行してください。'
+        '設定で OpenAI、Claude、Gemini、Grok、または DeepSeek を選んで再実行してください。'
     })
     return
   }
@@ -1766,11 +1795,13 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
     if (toolCalls.length > 0) {
       anyToolCall = true
       const verifyFinalNudgeSentBeforeBatch = verifyFinalNudgeSent
-      messages.push({
-        role: 'assistant',
-        content: message.content ?? null,
-        tool_calls: toolCalls
-      })
+      messages.push(
+        assistantMessageFromLlm({
+          content: message.content ?? null,
+          tool_calls: toolCalls,
+          reasoning_content: message.reasoning_content
+        })
+      )
 
       const canParallel = (name: string) =>
         name === 'read_file' ||
@@ -2156,10 +2187,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
         sessionKey,
         phase
       })
-      messages.push({
-        role: 'assistant',
-        content: message.content ?? null
-      })
+      messages.push(assistantMessageFromLlm({ content: message.content ?? null, reasoning_content: message.reasoning_content }))
       messages.push({
         role: 'user',
         content:
@@ -2181,10 +2209,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
     if (!mayAcceptFinal && (!anyToolCall || editedPaths.size === 0 || fakingTools)) {
       if (proseOnlyBlocks < MAX_PROSE_ONLY_BLOCKS) {
         proseOnlyBlocks += 1
-        messages.push({
-          role: 'assistant',
-          content: message.content ?? null
-        })
+        messages.push(assistantMessageFromLlm({ content: message.content ?? null, reasoning_content: message.reasoning_content }))
         messages.push({
           role: 'user',
           content: fakingTools
@@ -2206,10 +2231,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
     // Model attempted to finalize without tools
     if (editedPaths.size > 0 && phase !== 'verify' && blockPhase < MAX_BLOCK_PHASE) {
       blockPhase += 1
-      messages.push({
-        role: 'assistant',
-        content: message.content ?? null
-      })
+      messages.push(assistantMessageFromLlm({ content: message.content ?? null, reasoning_content: message.reasoning_content }))
       messages.push({
         role: 'user',
         content:
@@ -2222,10 +2244,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
       const pending = unverifiedEditPaths(editedPaths, verifiedPaths)
       if (pending.length > 0 && blockUnread < MAX_BLOCK_UNREAD) {
         blockUnread += 1
-        messages.push({
-          role: 'assistant',
-          content: message.content ?? null
-        })
+        messages.push(assistantMessageFromLlm({ content: message.content ?? null, reasoning_content: message.reasoning_content }))
         const hints = pending
           .slice(0, 8)
           .map((path) => {
@@ -2241,10 +2260,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
       }
       if (pending.length === 0 && shellState.attempts === 0 && blockNoShell < MAX_BLOCK_NO_SHELL) {
         blockNoShell += 1
-        messages.push({
-          role: 'assistant',
-          content: message.content ?? null
-        })
+        messages.push(assistantMessageFromLlm({ content: message.content ?? null, reasoning_content: message.reasoning_content }))
         messages.push({
           role: 'user',
           content: `システム: 最終回答の前に run_shell で検証してください${
@@ -2260,10 +2276,7 @@ async function runToolAgentSession(params: ToolAgentParams): Promise<void> {
         blockShellFail < MAX_BLOCK_SHELL_FAIL
       ) {
         blockShellFail += 1
-        messages.push({
-          role: 'assistant',
-          content: message.content ?? null
-        })
+        messages.push(assistantMessageFromLlm({ content: message.content ?? null, reasoning_content: message.reasoning_content }))
         const canRecover = shellState.editRecoveries < MAX_EDIT_RECOVERIES
         messages.push({
           role: 'user',

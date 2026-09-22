@@ -25,6 +25,7 @@ export const PROVIDER_ENV: Record<ProviderId, string[]> = {
   claude: ['ANTHROPIC_API_KEY'],
   workers: ['CLOUDFLARE_API_TOKEN'],
   grok: ['XAI_API_KEY'],
+  deepseek: ['DEEPSEEK_API_KEY'],
   cursor: ['CURSOR_API_KEY']
 }
 
@@ -68,6 +69,7 @@ function settingsSecret(providerId: ProviderId): string {
   if (providerId === 'gemini') return activeDeps.getSetting('llm.gemini.api_key')
   if (providerId === 'claude') return activeDeps.getSetting('llm.claude.api_key')
   if (providerId === 'grok') return activeDeps.getSetting('llm.grok.api_key')
+  if (providerId === 'deepseek') return activeDeps.getSetting('llm.deepseek.api_key')
   if (providerId === 'cursor') return activeDeps.getSetting('llm.cursor.api_key')
   return (
     activeDeps.getSetting('llm.workers.api_token') ||
@@ -88,6 +90,9 @@ function defaultBaseUrl(providerId: ProviderId): string {
   if (providerId === 'gemini') return 'gemini-native'
   if (providerId === 'grok') {
     return activeDeps.getSetting('llm.grok.base_url', 'https://api.x.ai/v1')
+  }
+  if (providerId === 'deepseek') {
+    return activeDeps.getSetting('llm.deepseek.base_url', 'https://api.deepseek.com')
   }
   if (providerId === 'workers') {
     const accountId =

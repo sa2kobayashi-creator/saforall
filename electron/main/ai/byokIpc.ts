@@ -14,7 +14,7 @@ import {
 function requireLlmProvider(value: unknown) {
   const id = parseProviderId(String(value ?? ''))
   if (!id || !isLlmProviderId(id)) {
-    throw new AIError('AUTH_ERROR', 'BYOK 対象は OpenAI / Claude / Gemini / Grok / Workers AI です')
+    throw new AIError('AUTH_ERROR', 'BYOK 対象は OpenAI / Claude / Gemini / Grok / DeepSeek / Workers AI です')
   }
   return id
 }

@@ -7,6 +7,7 @@ import {
   DEFAULT_ENABLED_MODELS,
   DEFAULT_GEMINI_MODEL,
   DEFAULT_GROK_MODEL,
+  DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_LLM_MODEL,
   DEFAULT_ROUTER_ENGINES,
   DEFAULT_ROUTER_PROFILE,
@@ -58,7 +59,7 @@ type Props = {
 
 type SettingsMap = Record<string, string | boolean>
 
-type ByokProviderId = 'openai' | 'claude' | 'gemini' | 'grok' | 'workers'
+type ByokProviderId = 'openai' | 'claude' | 'gemini' | 'grok' | 'deepseek' | 'workers'
 type ByokPublicStatus = {
   providerId: ByokProviderId
   credentialId: string | null
@@ -76,6 +77,7 @@ const BYOK_PROVIDERS: Array<{ id: ByokProviderId; label: string }> = [
   { id: 'claude', label: 'Claude' },
   { id: 'gemini', label: 'Gemini' },
   { id: 'grok', label: 'Grok' },
+  { id: 'deepseek', label: 'DeepSeek' },
   { id: 'workers', label: 'Workers AI' }
 ]
 
@@ -152,6 +154,9 @@ export function SettingsPanel({
   const [grokKey, setGrokKey] = useState('')
   const [grokKeySet, setGrokKeySet] = useState(false)
   const [grokModels, setGrokModels] = useState<string[]>([...DEFAULT_ENABLED_MODELS.grok])
+  const [deepseekKey, setDeepseekKey] = useState('')
+  const [deepseekKeySet, setDeepseekKeySet] = useState(false)
+  const [deepseekModels, setDeepseekModels] = useState<string[]>([...DEFAULT_ENABLED_MODELS.deepseek])
 
   const [cursorKey, setCursorKey] = useState('')
   const [cursorKeySet, setCursorKeySet] = useState(false)
@@ -169,6 +174,7 @@ export function SettingsPanel({
   const [limitGemini, setLimitGemini] = useState(String(DEFAULT_COST_LIMITS.gemini))
   const [limitClaude, setLimitClaude] = useState(String(DEFAULT_COST_LIMITS.claude))
   const [limitGrok, setLimitGrok] = useState(String(DEFAULT_COST_LIMITS.grok))
+  const [limitDeepseek, setLimitDeepseek] = useState(String(DEFAULT_COST_LIMITS.deepseek))
   const [limitWorkers, setLimitWorkers] = useState(String(DEFAULT_COST_LIMITS.workers))
   const [claudePrepaid, setClaudePrepaid] = useState('')
   const [claudePrepaidWarn, setClaudePrepaidWarn] = useState('1')
@@ -207,6 +213,7 @@ export function SettingsPanel({
     claude: '',
     gemini: '',
     grok: '',
+    deepseek: '',
     workers: ''
   })
   const [byokBusy, setByokBusy] = useState<ByokProviderId | null>(null)
@@ -241,6 +248,9 @@ export function SettingsPanel({
         setGrokModels(
           parseModelList(settings['llm.grok.models'], DEFAULT_ENABLED_MODELS.grok)
         )
+        setDeepseekModels(
+          parseModelList(settings['llm.deepseek.models'], DEFAULT_ENABLED_MODELS.deepseek)
+        )
         setCursorModels(
           parseModelList(settings['llm.cursor.models'], DEFAULT_ENABLED_MODELS.cursor)
         )
@@ -273,6 +283,7 @@ export function SettingsPanel({
         setGeminiKeySet(settings['llm.gemini.api_key_set'] === true)
         setClaudeKeySet(settings['llm.claude.api_key_set'] === true)
         setGrokKeySet(settings['llm.grok.api_key_set'] === true)
+        setDeepseekKeySet(settings['llm.deepseek.api_key_set'] === true)
         setCursorKeySet(settings['llm.cursor.api_key_set'] === true)
         {
           const runtime = settings['llm.cursor.runtime']
@@ -304,6 +315,9 @@ export function SettingsPanel({
         }
         if (typeof settings['cost.grok.monthly_usd'] === 'string') {
           setLimitGrok(settings['cost.grok.monthly_usd'])
+        }
+        if (typeof settings['cost.deepseek.monthly_usd'] === 'string') {
+          setLimitDeepseek(settings['cost.deepseek.monthly_usd'])
         }
         if (typeof settings['cost.workers.monthly_usd'] === 'string') {
           setLimitWorkers(settings['cost.workers.monthly_usd'])
@@ -427,6 +441,8 @@ export function SettingsPanel({
           ? geminiKey.trim() !== ''
           : engine === 'claude'
             ? claudeKey.trim() !== ''
+            : engine === 'deepseek'
+              ? deepseekKey.trim() !== ''
             : engine === 'grok'
               ? grokKey.trim() !== ''
               : engine === 'cursor'
@@ -449,6 +465,8 @@ export function SettingsPanel({
           ? geminiKeySet
           : engine === 'claude'
             ? claudeKeySet
+            : engine === 'deepseek'
+              ? deepseekKeySet
             : engine === 'grok'
               ? grokKeySet
               : engine === 'cursor'
@@ -467,6 +485,8 @@ export function SettingsPanel({
           ? preferred('gemini', geminiModels, DEFAULT_GEMINI_MODEL)
           : engine === 'claude'
             ? preferred('claude', claudeModels, DEFAULT_CLAUDE_MODEL)
+            : engine === 'deepseek'
+              ? preferred('deepseek', deepseekModels, DEFAULT_DEEPSEEK_MODEL)
             : engine === 'grok'
               ? preferred('grok', grokModels, DEFAULT_GROK_MODEL)
               : engine === 'cursor'
@@ -574,6 +594,8 @@ export function SettingsPanel({
       'llm.claude.model': preferred('claude', claudeModels, DEFAULT_CLAUDE_MODEL),
       'llm.grok.models': JSON.stringify(grokModels),
       'llm.grok.model': preferred('grok', grokModels, DEFAULT_GROK_MODEL),
+      'llm.deepseek.models': JSON.stringify(deepseekModels),
+      'llm.deepseek.model': preferred('deepseek', deepseekModels, DEFAULT_DEEPSEEK_MODEL),
       'llm.cursor.models': JSON.stringify(cursorModels),
       'llm.cursor.model': preferred('cursor', cursorModels, DEFAULT_CURSOR_MODEL),
       'llm.cursor.runtime': cursorRuntime,
@@ -590,6 +612,7 @@ export function SettingsPanel({
       'cost.gemini.monthly_usd': limitGemini.trim() || String(DEFAULT_COST_LIMITS.gemini),
       'cost.claude.monthly_usd': limitClaude.trim() || String(DEFAULT_COST_LIMITS.claude),
       'cost.grok.monthly_usd': limitGrok.trim() || String(DEFAULT_COST_LIMITS.grok),
+      'cost.deepseek.monthly_usd': limitDeepseek.trim() || String(DEFAULT_COST_LIMITS.deepseek),
       'cost.workers.monthly_usd': limitWorkers.trim() || String(DEFAULT_COST_LIMITS.workers),
       'llm.claude.prepaid_remaining_usd': claudePrepaid.trim(),
       'llm.claude.prepaid_warn_usd': claudePrepaidWarn.trim() || '1',
@@ -607,6 +630,9 @@ export function SettingsPanel({
     }
     if (grokKey.trim() !== '') {
       settings['llm.grok.api_key'] = grokKey.trim()
+    }
+    if (deepseekKey.trim() !== '') {
+      settings['llm.deepseek.api_key'] = deepseekKey.trim()
     }
     if (cursorKey.trim() !== '') {
       settings['llm.cursor.api_key'] = cursorKey.trim()
@@ -643,6 +669,10 @@ export function SettingsPanel({
       if (grokKey.trim() !== '') {
         setGrokKeySet(true)
         setGrokKey('')
+      }
+      if (deepseekKey.trim() !== '') {
+        setDeepseekKeySet(true)
+        setDeepseekKey('')
       }
       if (cursorKey.trim() !== '') {
         setCursorKeySet(true)
@@ -681,6 +711,10 @@ export function SettingsPanel({
     if (grokKey.trim() !== '') {
       setGrokKeySet(true)
       setGrokKey('')
+    }
+    if (deepseekKey.trim() !== '') {
+      setDeepseekKeySet(true)
+      setDeepseekKey('')
     }
     if (cursorKey.trim() !== '') {
       setCursorKeySet(true)
@@ -1095,6 +1129,14 @@ export function SettingsPanel({
                 />
               </label>
               <label className="settings-budget-item">
+                <span>DeepSeek</span>
+                <input
+                  inputMode="decimal"
+                  value={limitDeepseek}
+                  onChange={(event) => setLimitDeepseek(event.target.value)}
+                />
+              </label>
+              <label className="settings-budget-item">
                 <span>Workers AI</span>
                 <input
                   inputMode="decimal"
@@ -1186,6 +1228,7 @@ export function SettingsPanel({
             <li>Gemini: {geminiKeySet || geminiKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
             <li>Claude: {claudeKeySet || claudeKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
             <li>Grok: {grokKeySet || grokKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
+            <li>DeepSeek: {deepseekKeySet || deepseekKey.trim() ? 'Connected' : 'Not configured'} · Development</li>
             <li>
               Workers AI: {workersTokenSet || workersToken.trim() ? 'Connected' : 'Not configured'} ·
               Development
@@ -1464,6 +1507,44 @@ export function SettingsPanel({
               autoComplete="off"
             />
           </label>
+
+
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">DeepSeek モデル（複数選択）</h3>
+            <button
+              type="button"
+              className="settings-test-btn"
+              disabled={
+                !backendConnected ||
+                (!deepseekKeySet && deepseekKey.trim() === '') ||
+                testingEngine !== null
+              }
+              onClick={() => void testEngine('deepseek')}
+            >
+              {testingEngine === 'deepseek' ? 'テスト中…' : '接続テスト'}
+            </button>
+          </div>
+          {renderTestResult('deepseek')}
+          <p className="settings-hint">
+            DeepSeek（Chat Completions + function calling）。API Key は DEEPSEEK_API_KEY または下の入力から。
+          </p>
+          <ModelMultiSelect
+            engine="deepseek"
+            enabled={deepseekModels}
+            onChange={setDeepseekModels}
+            disabled={!backendConnected}
+            canFetchLatest={false}
+          />
+          <label>
+            API Key {deepseekKeySet ? '（設定済み）' : '（未設定）'}
+            <input
+              type="password"
+              value={deepseekKey}
+              onChange={(event) => setDeepseekKey(event.target.value)}
+              autoComplete="off"
+            />
+          </label>
+
 
           {status && <p className="settings-status">{status}</p>}
 

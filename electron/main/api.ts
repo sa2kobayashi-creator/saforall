@@ -394,7 +394,7 @@ export type ChatStreamEvent =
   | { type: 'error'; code: string; message: string }
 
 type RouteData = {
-  engine: 'cursor' | 'openai' | 'gemini' | 'claude' | 'workers' | 'grok'
+  engine: 'cursor' | 'openai' | 'gemini' | 'claude' | 'workers' | 'grok' | 'deepseek'
   requested: string
   task_type: string
   fallback_from: string | null
@@ -675,7 +675,7 @@ async function streamChatInner(
         workspacePath.trim() !== '' &&
         Boolean(decided.provider) &&
         hasUsableLlm(decided.engine) &&
-        (decided.engine === 'openai' || decided.engine === 'claude' || decided.engine === 'gemini' || decided.engine === 'grok')
+        (decided.engine === 'openai' || decided.engine === 'claude' || decided.engine === 'gemini' || decided.engine === 'grok' || decided.engine === 'deepseek')
 
       if (mode === 'agent' && !canToolAgent) {
         onEvent({

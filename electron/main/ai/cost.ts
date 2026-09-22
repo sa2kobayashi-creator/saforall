@@ -6,8 +6,10 @@ const RATES: Record<string, { in: number; out: number }> = {
   gemini: { in: 0.75, out: 3.75 },
   claude: { in: 2.0, out: 10.0 },
   workers: { in: 0.05, out: 0.15 },
-  // docs.x.ai Models grok-4.6 (<200k):   grok: { in: 2.0, out: 6.0 }, in / $6 out per 1M — estimate only (not billing)
+  // docs.x.ai Models grok-4.6 (<200k): $2 in / $6 out per 1M — estimate only (not billing)
   grok: { in: 2.0, out: 6.0 },
+  // api-docs.deepseek.com deepseek-flash off-peak cache-miss (2026-09-22): estimate only (peak/cache not modeled)
+  deepseek: { in: 0.15, out: 0.6 },
   cursor: { in: 1.25, out: 10.0 }
 }
 

@@ -99,7 +99,7 @@ function resolveLocalEngine(requested: string): {
 } | null {
   const order =
     requested === 'auto'
-      ? ['openai', 'claude', 'gemini', 'grok', 'cursor']
+      ? ['openai', 'claude', 'gemini', 'grok', 'deepseek', 'cursor']
       : [requested]
 
   for (const engine of order) {
@@ -112,7 +112,7 @@ function resolveLocalEngine(requested: string): {
       return { engine: 'cursor', model: models[0] || 'composer-2' }
     }
     const id =
-      engine === 'openai' || engine === 'claude' || engine === 'gemini' || engine === 'workers' || engine === 'grok'
+      engine === 'openai' || engine === 'claude' || engine === 'gemini' || engine === 'workers' || engine === 'grok' || engine === 'deepseek'
         ? engine
         : null
     if (!id) continue
@@ -131,7 +131,11 @@ function resolveLocalEngine(requested: string): {
             ? parseJsonModels(getLocalSetting('llm.gemini.models', ''), [
                 getLocalSetting('llm.gemini.model', 'gemini-2.0-flash')
               ])
-            : id === 'grok'
+            : id === 'deepseek'
+              ? parseJsonModels(getLocalSetting('llm.deepseek.models', ''), [
+                  getLocalSetting('llm.deepseek.model', 'deepseek-flash')
+                ])
+              : id === 'grok'
               ? parseJsonModels(getLocalSetting('llm.grok.models', ''), [
                   getLocalSetting('llm.grok.model', 'grok-4.6')
                 ])
@@ -153,7 +157,7 @@ export function resolveCompletionEngine(): {
   model: string
   baseUrl?: string
 } | null {
-  for (const engine of ['openai', 'gemini', 'claude', 'grok']) {
+  for (const engine of ['openai', 'gemini', 'claude', 'grok', 'deepseek']) {
     const resolved = resolveLocalEngine(engine)
     if (resolved) return resolved
   }
@@ -410,7 +414,7 @@ export async function streamChatDirect(
         })
         return true
       }
-      if (resolved.engine !== 'openai' && resolved.engine !== 'claude' && resolved.engine !== 'gemini' && resolved.engine !== 'grok') {
+      if (resolved.engine !== 'openai' && resolved.engine !== 'claude' && resolved.engine !== 'gemini' && resolved.engine !== 'grok' && resolved.engine !== 'deepseek') {
         onEvent({
           type: 'error',
           code: 'AGENT_TOOLS_UNAVAILABLE',
@@ -432,7 +436,9 @@ export async function streamChatDirect(
             ? 'https://api.anthropic.com'
             : resolved.engine === 'gemini'
               ? 'gemini-native'
-              : resolved.engine === 'grok'
+              : resolved.engine === 'deepseek'
+                ? getLocalSetting('llm.deepseek.model', 'deepseek-flash')
+                : resolved.engine === 'grok'
                 ? resolved.baseUrl || 'https://api.x.ai/v1'
                 : resolved.baseUrl || 'https://api.openai.com/v1',
         model: resolved.model,

@@ -430,6 +430,12 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
         parseModels(getLocalSetting('llm.workers.models', ''), 'llm.workers.model')[0] ||
         getLocalSetting('llm.workers.model', '@cf/meta/llama-3.1-8b-instruct')
     }
+  } else if (engine === 'deepseek') {
+    baseUrl = cred?.baseUrl || getLocalSetting('llm.deepseek.base_url', 'https://api.deepseek.com')
+    model =
+      model ||
+      parseModels(getLocalSetting('llm.deepseek.models', ''), 'llm.deepseek.model')[0] ||
+      getLocalSetting('llm.deepseek.model', 'deepseek-flash')
   } else if (engine === 'grok') {
     baseUrl = cred?.baseUrl || getLocalSetting('llm.grok.base_url', 'https://api.x.ai/v1')
     if (!model) {
@@ -445,7 +451,7 @@ export async function prepareLocalRoute(body: Record<string, unknown>): Promise<
     }
   }
 
-  if (engine === 'openai' || engine === 'claude' || engine === 'workers' || engine === 'grok') {
+  if (engine === 'openai' || engine === 'claude' || engine === 'workers' || engine === 'grok' || engine === 'deepseek') {
     const { parseContextImages, attachImagesToOpenAiMessages, attachImagesToClaudeMessages } =
       await import('./lib/visionMessages')
     let messages = buildHistoryMessages(prior, context, message, systemHint) as Array<{

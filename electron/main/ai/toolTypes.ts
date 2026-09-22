@@ -18,6 +18,8 @@ export type AgentProviderMessage =
       role: 'system' | 'user' | 'assistant'
       content: string | null | unknown[]
       tool_calls?: AgentToolCall[]
+      /** DeepSeek thinking: echo on later turns when tools are present. */
+      reasoning_content?: string | null
     }
   | { role: 'tool'; tool_call_id: string; content: string | null | unknown[] }
 
@@ -27,6 +29,7 @@ export type AgentChatCompletion = {
       role?: string
       content?: string | null
       tool_calls?: AgentToolCall[]
+      reasoning_content?: string | null
     }
     finish_reason?: string
   }>

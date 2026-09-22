@@ -226,6 +226,9 @@ export function normalizeMessagesForLlm(
     if (row.tool_calls && row.tool_calls.length > 0) {
       out.tool_calls = row.tool_calls
     }
+    if ('reasoning_content' in row && row.reasoning_content != null) {
+      out.reasoning_content = row.reasoning_content
+    }
     return out
   })
 }

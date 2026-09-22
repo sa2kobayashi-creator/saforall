@@ -1,5 +1,5 @@
 /** LLM API providers. Cursor is a coding agent, not an LLM adapter. */
-export type LlmProviderId = 'openai' | 'gemini' | 'claude' | 'workers' | 'grok'
+export type LlmProviderId = 'openai' | 'gemini' | 'claude' | 'workers' | 'grok' | 'deepseek'
 export type CodingAgentId = 'cursor'
 export type ProviderId = LlmProviderId | CodingAgentId
 export type ProviderKind = 'llm' | 'coding_agent'
@@ -14,7 +14,8 @@ export const LLM_PROVIDER_IDS: readonly LlmProviderId[] = [
   'gemini',
   'claude',
   'workers',
-  'grok'
+  'grok',
+  'deepseek'
 ]
 
 export const PROVIDER_KIND: Record<ProviderId, ProviderKind> = {
@@ -23,6 +24,7 @@ export const PROVIDER_KIND: Record<ProviderId, ProviderKind> = {
   claude: 'llm',
   workers: 'llm',
   grok: 'llm',
+  deepseek: 'llm',
   cursor: 'coding_agent'
 }
 
@@ -32,6 +34,7 @@ export const PROVIDER_NAMES: Record<ProviderId, string> = {
   claude: 'Claude',
   workers: 'Cloudflare Workers AI',
   grok: 'Grok (xAI)',
+  deepseek: 'DeepSeek',
   cursor: 'Cursor'
 }
 
@@ -101,7 +104,7 @@ export function isLlmProviderId(value: string): value is LlmProviderId {
 
 export function parseProviderId(value: string): ProviderId | null {
   const id = value.trim().toLowerCase()
-  if (id === 'openai' || id === 'gemini' || id === 'claude' || id === 'workers' || id === 'grok' || id === 'cursor') {
+  if (id === 'openai' || id === 'gemini' || id === 'claude' || id === 'workers' || id === 'grok' || id === 'deepseek' || id === 'cursor') {
     return id
   }
   return null
