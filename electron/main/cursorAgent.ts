@@ -101,6 +101,12 @@ export type CursorAgentImage = {
   mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | string
 }
 
+function createChatAbortError(): Error {
+  const err = new Error('Chat cancelled by user')
+  err.name = 'AbortError'
+  return err
+}
+
 export async function runCursorAgent(options: {
   apiKey: string
   model: string
@@ -110,7 +116,12 @@ export async function runCursorAgent(options: {
   onDelta: (text: string) => void
   runtime?: CursorRuntimePreference
   autoCreatePR?: boolean
+  /** User Cancel / stream abort — wired to Cursor SDK Run.cancel(). */
+  signal?: AbortSignal | null
 }): Promise<CursorAgentResult> {
+  const { throwIfChatAborted } = await import('./chatAbort')
+  throwIfChatAborted(options.signal)
+
   const preference = options.runtime ?? 'auto'
   const repoUrl =
     preference === 'local' ? null : await detectGithubRemoteUrl(options.cwd)
@@ -147,6 +158,8 @@ export async function runCursorAgent(options: {
           id?: string
           stream: () => AsyncIterable<unknown>
           wait: () => Promise<{ status?: string }>
+          cancel?: () => Promise<void>
+          supports?: (operation: string) => boolean
         }>
         [Symbol.asyncDispose]?: () => Promise<void>
       }>
@@ -171,7 +184,9 @@ export async function runCursorAgent(options: {
     options.prompt.trim() ||
     (images.length > 0 ? '添付画像を確認して、必要な修正を提案してください。' : '')
 
+  let removeAbortListener: (() => void) | null = null
   try {
+    throwIfChatAborted(options.signal)
     const run = await agent.send(
       images.length > 0
         ? {
@@ -183,15 +198,51 @@ export async function runCursorAgent(options: {
           }
         : promptText
     )
+
+    let cancelRequested = false
+    const requestCancel = (): void => {
+      cancelRequested = true
+      const canCancel =
+        typeof run.cancel === 'function' &&
+        (typeof run.supports !== 'function' || run.supports('cancel'))
+      if (!canCancel) return
+      void run.cancel!().catch(() => {
+        // Cancel races with natural completion — ignore.
+      })
+    }
+    if (options.signal) {
+      if (options.signal.aborted) {
+        requestCancel()
+      } else {
+        options.signal.addEventListener('abort', requestCancel, { once: true })
+        removeAbortListener = () => {
+          options.signal?.removeEventListener('abort', requestCancel)
+        }
+      }
+    }
+
     let text = ''
     for await (const event of run.stream()) {
+      if (cancelRequested || options.signal?.aborted) {
+        throw createChatAbortError()
+      }
+      throwIfChatAborted(options.signal)
       const chunk = textFromUnknown(event)
       if (chunk !== '') {
         text += chunk
         options.onDelta(chunk)
       }
     }
+
+    if (cancelRequested || options.signal?.aborted) {
+      throw createChatAbortError()
+    }
+    throwIfChatAborted(options.signal)
+
     const result = await run.wait()
+    if (cancelRequested || options.signal?.aborted || result.status === 'cancelled') {
+      throw createChatAbortError()
+    }
     const status = result.status ?? 'finished'
     if (status === 'error' && text.trim() === '') {
       throw new Error('Cursor Agent の実行に失敗しました')
@@ -209,6 +260,7 @@ export async function runCursorAgent(options: {
       runtime: shape.kind
     }
   } finally {
+    removeAbortListener?.()
     const dispose = agent[Symbol.asyncDispose]
     if (typeof dispose === 'function') {
       await dispose.call(agent)

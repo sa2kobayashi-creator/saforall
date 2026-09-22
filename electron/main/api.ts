@@ -623,7 +623,7 @@ async function streamChatInner(
             engine: decided.engine,
             model: decided.model
           })
-        })
+        }, signal)
         return
       }
 
@@ -881,7 +881,7 @@ async function streamChatInner(
   })
 
   if (decided.engine === 'cursor') {
-    await runCursorStream(requestBody, decided, onEvent)
+    await runCursorStream(requestBody, decided, onEvent, undefined, signal)
     return
   }
 
@@ -1202,7 +1202,8 @@ async function runCursorStream(
     assistant_message: Record<string, unknown>
     estimated_usd?: number
     usage?: MonthUsage
-  } | null>
+  } | null>,
+  signal?: AbortSignal | null
 ): Promise<void> {
   const cwd =
     typeof requestBody.workspace_path === 'string'
@@ -1247,6 +1248,8 @@ async function runCursorStream(
 
   try {
     const { runCursorAgent } = await import('./cursorAgent')
+    const { throwIfChatAborted } = await import('./chatAbort')
+    throwIfChatAborted(signal)
     const result = await runCursorAgent({
       apiKey,
       model: decided.model,
@@ -1255,10 +1258,17 @@ async function runCursorStream(
       images: cursorImages,
       runtime,
       autoCreatePR,
+      signal,
       onDelta: (text) => {
+        if (signal?.aborted) return
         onEvent({ type: 'delta', text })
       }
     })
+    // Cancel after agent: do not verify/complete/done as success.
+    if (signal?.aborted) {
+      throw Object.assign(new Error('Chat cancelled by user'), { name: 'AbortError' })
+    }
+    throwIfChatAborted(signal)
 
     // Post-run local verify so Cursor path also surfaces pass/fail.
     // Cloud Agent edits remote VM / PR — skip local verify.
@@ -1353,6 +1363,14 @@ async function runCursorStream(
       assistant_message: completed.assistant_message
     })
   } catch (error) {
+    const { isChatAbortError } = await import('./chatAbort')
+    if (isChatAbortError(error) || signal?.aborted) {
+      onEvent({
+        type: 'cancelled',
+        message: 'ユーザーが応答を取り消しました'
+      })
+      return
+    }
     onEvent({
       type: 'error',
       code: 'CURSOR_SDK_FAILED',
