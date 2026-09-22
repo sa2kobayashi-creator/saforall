@@ -47,6 +47,13 @@ npm run dist
 
 詳細・未署名ビルドと SmartScreen の注意は [`docs/PACKAGING.md`](./docs/PACKAGING.md)。
 
+現在の公開版は **v0.1.2**（Portable ZIP: `saForAll-0.1.2-win-x64.zip`）です。Cursor Agent の Cancel 時に Cloud 実行も停止します。
+
+### Known Issues（v0.1.2）
+
+- **Provider Ask Cancel race（OpenAI / Gemini / Claude）**  
+  Ask モードで Cancel 後に UI 上は止まっても、まれにストリームが `done` として完了扱いに見えることがあります。Cursor Agent Cancel は修正済みです。次期で改善予定です。
+
 ## ドキュメント
 
 | 文書 | 内容 |

@@ -40,7 +40,8 @@ npm run pack
 - インストール版は既定で PHP（`localhost:8081`）を探しません。開発用 XAMPP を使いたい場合は環境変数 `SAFORALL_API_BASE_URL=http://localhost:8081/saforall/api` を設定してください。
 - 開発時のみ任意で `server/` を XAMPP DocumentRoot に置けます。
 - `node-pty` / `@cursor/sdk` は native・実行ファイルのため `asarUnpack` 対象です。
-- **バージョンを上げてから `dist` する**と、古い Setup.exe と区別できます（例: `0.1.1`）。
+- **バージョンを上げてから `dist` する**と、古い Setup.exe と区別できます（例: `0.1.2`）。
+- Portable 配布の基本成果物例: `saForAll-0.1.2-win-x64.zip`（`win-unpacked` を ZIP したもの）。
 
 ## トラブル: インストール版だけチャットが遅い／動かない
 

@@ -1,6 +1,6 @@
 {
   "name": "saforall",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AI-powered code editor inspired by Cursor",
   "main": "./out/main/index.js",
   "author": "sa2kobayashi-creator",
