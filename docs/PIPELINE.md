@@ -1,8 +1,12 @@
-# saforall AI パイプライン仕様（AI Router）
+# saforall AI Router 仕様（旧称: AI パイプライン）
+
+> **重要（92048）:** 本ファイルは **AI Router**（Provider 自動選択・予算・Failover・Usage）の正本である。  
+> 製品の最大の売りである **ユーザー定義 Multi-Step Pipeline** の正本は **[PIPELINE_PRODUCT.md](./PIPELINE_PRODUCT.md)**。  
+> UI の「Auto パイプライン」は本 Router 設定を指す歴史的名称であり、製品 Pipeline ではない。
 
 実装の正本（AI Router / Provider / Usage の意味論）。永続化・秘密情報の配置は [ARCHITECTURE.md](./ARCHITECTURE.md) / [DESIGN.md](./DESIGN.md) も参照。
 
-関連: [設計書 §7](./DESIGN.md#7-ai-サブシステム設計目標) / [仕様書](./SPECIFICATION.md) / [アーキテクチャ概要](./ARCHITECTURE.md) / [Packaging](./PACKAGING.md)
+関連: [設計書 §7](./DESIGN.md#7-ai-サブシステム設計目標) / [仕様書](./SPECIFICATION.md) / [アーキテクチャ概要](./ARCHITECTURE.md) / [Packaging](./PACKAGING.md) / [Pipeline 製品仕様](./PIPELINE_PRODUCT.md)
 
 ---
 

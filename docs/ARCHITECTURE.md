@@ -6,7 +6,9 @@
 | --- | --- |
 | [仕様書](./SPECIFICATION.md) | 機能要件・非機能要件・フェーズ |
 | [設計書](./DESIGN.md) | システム構成・IPC・AI・シーケンス |
-| [AI パイプライン](./PIPELINE.md) | AI Router（OpenAI / Cursor / Gemini） |
+| [Pipeline 製品仕様](./PIPELINE_PRODUCT.md) | **製品の本命:** Multi-Step Pipeline（92048 正本） |
+| [Pipeline Architecture](./PIPELINE_ARCHITECTURE.md) | Spec→Implement→Verify 内部構造（92049 設計） |
+| [AI Router](./PIPELINE.md) | Provider 自動選択・予算・Failover（旧称「AI パイプライン」） |
 | [サーバーセットアップ](../server/README.md) | XAMPP（Apache / MySQL）手順 |
 
 ---
