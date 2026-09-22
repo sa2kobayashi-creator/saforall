@@ -1,4 +1,5 @@
 import { useEffect, useMemo, type ReactNode } from 'react'
+import { version as APP_VERSION } from '../../package.json'
 import './HelpDialogs.css'
 
 type DialogShellProps = {
@@ -209,7 +210,7 @@ export function KeyboardShortcutsDialog({ open, onClose }: SimpleProps) {
 export function AboutDialog({ open, onClose }: SimpleProps) {
   const info = useMemo(() => {
     if (typeof window.saforall?.getRuntimeInfo !== 'function') {
-      return { appVersion: '0.1.0' as string, electron: undefined, chrome: undefined, node: undefined }
+      return { appVersion: APP_VERSION, electron: undefined, chrome: undefined, node: undefined }
     }
     return window.saforall.getRuntimeInfo()
   }, [])

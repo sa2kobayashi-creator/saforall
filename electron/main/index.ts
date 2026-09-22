@@ -142,6 +142,15 @@ ipcMain.handle('app:setLocale', (_event, locale: unknown) => {
   return true
 })
 
+ipcMain.on('app:getRuntimeInfo', (event) => {
+  event.returnValue = {
+    appVersion: app.getVersion(),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node
+  }
+})
+
 app.on('window-all-closed', () => {
   killAllTerminals()
   void stopUnifiedDebug()

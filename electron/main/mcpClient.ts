@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { delimiter, join } from 'path'
+import { version as APP_VERSION } from '../../package.json'
 
 /** Candidate node_modules roots for packaged Electron (asar + unpacked). */
 export function mcpNodeModulesRoots(cwd = process.cwd()): string[] {
@@ -466,7 +467,7 @@ export class McpSession {
       {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        clientInfo: { name: 'saforall', version: '0.1.0' }
+        clientInfo: { name: 'saforall', version: APP_VERSION }
       },
       timeoutMs
     )
@@ -759,7 +760,7 @@ export class McpHttpSession {
       {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        clientInfo: { name: 'saforall', version: '0.1.0' }
+        clientInfo: { name: 'saforall', version: APP_VERSION }
       },
       timeoutMs
     )

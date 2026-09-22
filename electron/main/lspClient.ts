@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { EventEmitter } from 'events'
+import { version as APP_VERSION } from '../../package.json'
 
 export type LspDiagnostic = {
   path: string
@@ -330,7 +331,7 @@ export class LspClient extends EventEmitter {
           }
         }
       },
-      clientInfo: { name: 'saforall', version: '0.1.0' }
+      clientInfo: { name: 'saforall', version: APP_VERSION }
     })
     this.notify('initialized', {})
   }
