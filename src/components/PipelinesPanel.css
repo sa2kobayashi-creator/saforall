@@ -34,7 +34,8 @@
 .pipelines-actions button,
 .pipelines-name-row button,
 .pipelines-create button,
-.pipelines-empty button {
+.pipelines-empty button,
+.pipelines-empty-state button {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
@@ -50,6 +51,75 @@
   cursor: default;
 }
 
+.pipelines-intro {
+  padding: 10px 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pipelines-intro-lead {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.pipelines-value-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.pipelines-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pipelines-compare > div {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--bg-elevated, var(--bg));
+}
+
+.pipelines-compare p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  opacity: 0.85;
+  line-height: 1.4;
+}
+
+.pipelines-can-list {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.pipelines-example {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0.9;
+}
+
+.pipelines-linkish {
+  align-self: flex-start;
+  border: none !important;
+  background: transparent !important;
+  color: var(--accent, #4fc1ff);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 !important;
+  text-decoration: underline;
+}
+
 .pipelines-error {
   margin: 8px 12px 0;
   padding: 8px;
@@ -61,6 +131,7 @@
 }
 
 .pipelines-empty,
+.pipelines-empty-state,
 .pipelines-create,
 .pipelines-detail {
   padding: 12px;
@@ -73,6 +144,45 @@
   margin: 0;
   font-size: 11px;
   opacity: 0.75;
+  line-height: 1.45;
+}
+
+.pipelines-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pipelines-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.pipelines-flow-preview {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pipelines-flow-preview li {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.pipelines-flow-preview span {
+  font-size: 11px;
+  opacity: 0.7;
 }
 
 .pipelines-list {
@@ -97,12 +207,18 @@
 .pipelines-item-main {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   font-size: 12px;
 }
 
-.pipelines-item-main span,
-.pipelines-empty-row {
+.pipelines-item-blurb {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
+.pipelines-item-main span {
   font-size: 11px;
   opacity: 0.7;
 }
@@ -128,15 +244,27 @@
   resize: vertical;
 }
 
+.pipelines-name-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .pipelines-name-row input {
   flex: 1;
   min-width: 0;
 }
 
-.pipelines-section {
+.pipelines-flow-line {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pipelines-run-prep {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   font-size: 12px;
 }
 
@@ -157,18 +285,26 @@
   border-radius: 6px;
   padding: 8px;
   background: var(--bg);
+  position: relative;
 }
 
 .pipelines-steps li div {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
-.pipelines-steps em {
+.pipelines-step-role {
   font-style: normal;
-  opacity: 0.7;
-  font-size: 11px;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.pipelines-step-meta {
+  font-size: 10px;
+  opacity: 0.65;
+  line-height: 1.35;
 }
 
 .pipelines-step-mark {
@@ -176,12 +312,24 @@
   line-height: 1.2;
   width: 1.2em;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .pipelines-step-status {
   font-size: 10px;
   opacity: 0.65;
-  text-transform: uppercase;
+}
+
+.pipelines-flow-arrow {
+  position: absolute;
+  left: 14px;
+  bottom: -10px;
+  font-size: 10px;
+  opacity: 0.45;
+}
+
+.pipelines-steps-live li {
+  margin-bottom: 4px;
 }
 
 .pipelines-run {
@@ -263,4 +411,10 @@
 .pipelines-runs em {
   font-style: normal;
   opacity: 0.65;
+}
+
+@media (max-width: 360px) {
+  .pipelines-compare {
+    grid-template-columns: 1fr;
+  }
 }
