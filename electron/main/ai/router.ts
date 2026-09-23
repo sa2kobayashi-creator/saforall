@@ -243,7 +243,13 @@ export async function executeAi(request: AIRequest): Promise<AIResponse> {
             reason,
             chainActive,
             mode: 'ask'
-          })
+          }),
+          pipelineRunId: request.metadata?.pipelineRunId
+            ? String(request.metadata.pipelineRunId)
+            : null,
+          stepRunId: request.metadata?.stepRunId
+            ? String(request.metadata.stepRunId)
+            : null
         })
       }
     }

@@ -21,6 +21,7 @@ const tests = [
   'scripts/gh-auth.test.mjs',
   'scripts/apply-proposals.test.mjs',
   'scripts/background-jobs.test.mjs',
+  'scripts/pipeline-phase1.test.mjs',
   'scripts/codebase-rank.test.mjs',
   'scripts/tab-lsp.test.mjs',
   'scripts/cursor-cloud.test.mjs',

@@ -113,6 +113,9 @@ export type UsageEvent = {
   credentialId?: string | null
   userId?: string | null
   failover?: UsageFailoverMeta | null
+  /** Optional Pipeline correlation (Phase 92050). */
+  pipelineRunId?: string | null
+  stepRunId?: string | null
 }
 
 type UsageFile = {
@@ -197,6 +200,8 @@ export async function recordUsage(input: {
   credentialId?: string | null
   userId?: string | null
   failover?: UsageFailoverMeta | null
+  pipelineRunId?: string | null
+  stepRunId?: string | null
   /** Test-only clock; production omits (Date.now). */
   nowMs?: number
 }): Promise<UsageEvent> {
@@ -220,7 +225,9 @@ export async function recordUsage(input: {
     billingMode: input.billingMode ?? null,
     credentialId: input.credentialId ?? null,
     userId: input.userId ?? null,
-    failover: input.failover ?? null
+    failover: input.failover ?? null,
+    pipelineRunId: input.pipelineRunId ?? null,
+    stepRunId: input.stepRunId ?? null
   }
   memoryEvents.push(event)
   const prunedMemory = pruneUsageEventsForRetention(memoryEvents, nowMs, {

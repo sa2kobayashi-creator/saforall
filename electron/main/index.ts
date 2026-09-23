@@ -1026,3 +1026,42 @@ ipcMain.handle(
     }
   }
 )
+
+// --- Pipeline Phase 1 (92050) ---
+ipcMain.handle('pipeline:list', async () => {
+  const { pipelineList } = await import('./pipeline')
+  return pipelineList()
+})
+ipcMain.handle('pipeline:get', async (_event, id: string) => {
+  const { pipelineGet } = await import('./pipeline')
+  return pipelineGet(String(id || ''))
+})
+ipcMain.handle('pipeline:ensureFlagship', async () => {
+  const { pipelineEnsureFlagship } = await import('./pipeline')
+  return pipelineEnsureFlagship()
+})
+ipcMain.handle('pipeline:start', async (_event, params: unknown) => {
+  const { pipelineStart } = await import('./pipeline')
+  return pipelineStart(params as { pipelineId: string; input: { task: string; workspacePath: string } })
+})
+ipcMain.handle('pipeline:runFlagship', async (_event, input: unknown) => {
+  const { pipelineRunFlagship } = await import('./pipeline')
+  return pipelineRunFlagship(input as { task: string; workspacePath: string })
+})
+ipcMain.handle('pipeline:cancel', async (_event, runId: string) => {
+  const { pipelineCancel } = await import('./pipeline')
+  return pipelineCancel(String(runId || ''))
+})
+ipcMain.handle('pipeline:getRun', async (_event, runId: string) => {
+  const { pipelineGetRun } = await import('./pipeline')
+  return pipelineGetRun(String(runId || ''))
+})
+ipcMain.handle('pipeline:listRuns', async () => {
+  const { pipelineListRuns } = await import('./pipeline')
+  return pipelineListRuns()
+})
+ipcMain.handle('pipeline:selfCheck', async () => {
+  const { pipelineSelfCheck } = await import('./pipeline')
+  return pipelineSelfCheck()
+})
+

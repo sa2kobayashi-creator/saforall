@@ -953,6 +953,37 @@ const api = {
     id: string
     status: string
   } | null> => ipcRenderer.invoke('jobs:complete', payload),
+  listPipelines: (): Promise<unknown[]> => ipcRenderer.invoke('pipeline:list'),
+  getPipeline: (id: string): Promise<unknown | null> => ipcRenderer.invoke('pipeline:get', id),
+  ensureFlagshipPipeline: (): Promise<unknown> => ipcRenderer.invoke('pipeline:ensureFlagship'),
+  startPipeline: (params: {
+    pipelineId: string
+    input: { task: string; workspacePath: string; targetPaths?: string[]; notes?: string }
+  }): Promise<unknown> => ipcRenderer.invoke('pipeline:start', params),
+  runFlagshipPipeline: (input: {
+    task: string
+    workspacePath: string
+    targetPaths?: string[]
+    notes?: string
+  }): Promise<unknown> => ipcRenderer.invoke('pipeline:runFlagship', input),
+  cancelPipeline: (runId: string): Promise<{ ok: boolean; active: boolean }> =>
+    ipcRenderer.invoke('pipeline:cancel', runId),
+  getPipelineRun: (runId: string): Promise<unknown | null> =>
+    ipcRenderer.invoke('pipeline:getRun', runId),
+  listPipelineRuns: (): Promise<unknown[]> => ipcRenderer.invoke('pipeline:listRuns'),
+  pipelineSelfCheck: (): Promise<{
+    ok: boolean
+    checks: Record<string, { status: string; detail?: string }>
+  }> => ipcRenderer.invoke('pipeline:selfCheck'),
+  onPipelineEvent: (callback: (event: unknown) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('pipeline:event', listener)
+    return () => {
+      ipcRenderer.removeListener('pipeline:event', listener)
+    }
+  },
   onJobRun: (
     callback: (payload: {
       id: string
