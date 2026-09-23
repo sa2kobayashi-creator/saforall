@@ -956,6 +956,10 @@ const api = {
   listPipelines: (): Promise<unknown[]> => ipcRenderer.invoke('pipeline:list'),
   getPipeline: (id: string): Promise<unknown | null> => ipcRenderer.invoke('pipeline:get', id),
   ensureFlagshipPipeline: (): Promise<unknown> => ipcRenderer.invoke('pipeline:ensureFlagship'),
+  savePipeline: (pipeline: unknown): Promise<unknown> =>
+    ipcRenderer.invoke('pipeline:save', pipeline),
+  createPipeline: (params?: { name?: string }): Promise<unknown> =>
+    ipcRenderer.invoke('pipeline:create', params || {}),
   startPipeline: (params: {
     pipelineId: string
     input: { task: string; workspacePath: string; targetPaths?: string[]; notes?: string }

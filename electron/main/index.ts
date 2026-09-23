@@ -1040,6 +1040,14 @@ ipcMain.handle('pipeline:ensureFlagship', async () => {
   const { pipelineEnsureFlagship } = await import('./pipeline')
   return pipelineEnsureFlagship()
 })
+ipcMain.handle('pipeline:save', async (_event, pipeline: unknown) => {
+  const { pipelineSave } = await import('./pipeline')
+  return pipelineSave(pipeline as import('./pipeline').PipelineDefinition)
+})
+ipcMain.handle('pipeline:create', async (_event, params: unknown) => {
+  const { pipelineCreate } = await import('./pipeline')
+  return pipelineCreate((params || {}) as { name?: string })
+})
 ipcMain.handle('pipeline:start', async (_event, params: unknown) => {
   const { pipelineStart } = await import('./pipeline')
   return pipelineStart(params as { pipelineId: string; input: { task: string; workspacePath: string } })

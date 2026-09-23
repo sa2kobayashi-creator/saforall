@@ -16,6 +16,8 @@ export {
   pipelineList,
   pipelineGet,
   pipelineEnsureFlagship,
+  pipelineSave,
+  pipelineCreate,
   pipelineStart,
   pipelineCancel,
   pipelineGetRun,

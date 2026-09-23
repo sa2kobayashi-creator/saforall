@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityBar, type SidebarView } from './components/ActivityBar'
 import { RulesPanel } from './components/RulesPanel'
+import { PipelinesPanel } from './components/PipelinesPanel'
 import { Sidebar } from './components/Sidebar'
 import { SearchPanel } from './components/SearchPanel'
 import { SourceControlPanel } from './components/SourceControlPanel'
@@ -1810,6 +1811,17 @@ export default function App() {
                 setStatus(message)
                 showNotice(message)
               }}
+            />
+          ) : sidebarView === 'pipelines' ? (
+            <PipelinesPanel
+              workspacePath={workspacePath}
+              width={sidebarWidth}
+              onOpenWorkspace={openWorkspace}
+              onStatusMessage={(message) => {
+                setStatus(message)
+                showNotice(message)
+              }}
+              onApplyCode={applyCode}
             />
           ) : (
             <div
